@@ -58,8 +58,10 @@ library
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -fno-warn-unused-top-binds -fwrite-ide-info -hiedir=.hie
   build-depends:
       base >=4.12 && <5
+    , containers
     , deepseq
     , hashable
+    , unordered-containers
   default-language: Haskell2010
 
 test-suite overeasy-test
@@ -98,9 +100,11 @@ test-suite overeasy-test
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -fno-warn-unused-top-binds -fwrite-ide-info -hiedir=.hie -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.12 && <5
+    , containers
     , deepseq
     , hashable
     , overeasy
     , tasty
     , tasty-hunit
+    , unordered-containers
   default-language: Haskell2010

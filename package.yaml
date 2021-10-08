@@ -15,8 +15,10 @@ description: Please see the README on GitHub at <https://github.com/ejconlon/ove
 
 dependencies:
 - base >= 4.12 && < 5
+- containers
 - deepseq
 - hashable
+- unordered-containers
 
 default-extensions:
 - BangPatterns
