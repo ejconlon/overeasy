@@ -1,43 +1,73 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Overeasy.EGraph
-  ( EGraph
+  ( EClassId
+  , ENodeId
+  , EGraph
   , egNew
+  , egCanonicalize
+  , egAddTerm
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (MonadState (..), State, modify', runState, state)
-import Data.Hashable (Hashable)
+import Control.Monad.State.Strict (State, gets, modify')
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
+import Data.HashSet (HashSet)
+import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
-import Overeasy.Source (Source, sourceNew)
-import Overeasy.UnionFind (UnionFind, ufFind, ufFindState, ufNew)
+import Lens.Micro.TH (makeLensesFor)
+import Overeasy.Assoc (Assoc, AssocEnsureResult (..), assocEnsure, assocNew)
+import Overeasy.Recursion (RecursiveWhole, foldWholeM)
+import Overeasy.Source (Source, sourceAdd, sourceNew)
+import Overeasy.StateUtil (stateLens)
+import Overeasy.UnionFind (UnionFind, ufFind, ufNew)
+
+newtype EClassId = EClassId { unEClassId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
+
+newtype ENodeId = ENodeId { unENodeId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
 
 -- private ctor
-data EGraph x f a = EGraph
-  { egSource :: Source x
-  , egUnionFind :: UnionFind x
-  , egClassMap :: HashMap x a
-  , egHashCons :: HashMap (f x) x
-  } deriving stock (Eq, Show, Generic)
-    deriving anyclass (NFData)
+data EGraph f = EGraph
+  { egSource :: !(Source EClassId)
+  , egUnionFind :: !(UnionFind EClassId)
+  , egClassMap :: !(HashMap EClassId (HashSet ENodeId))
+  , egNodeAssoc :: !(Assoc ENodeId (f EClassId))
+  , egHashCons :: !(HashMap ENodeId EClassId)
+  } deriving stock (Generic)
 
-egNew :: x -> EGraph x f a
-egNew x = EGraph (sourceNew x) ufNew HashMap.empty HashMap.empty
+deriving stock instance Eq (f EClassId) => Eq (EGraph f)
+deriving stock instance Show (f EClassId) => Show (EGraph f)
+deriving anyclass instance NFData (f EClassId) => NFData (EGraph f)
+
+makeLensesFor
+  [ ("egSource", "egSourceL")
+  , ("egUnionFind", "egUnionFindL")
+  , ("egClassMap", "egClassMapL")
+  , ("egNodeAssoc", "egNodeAssocL")
+  , ("egHashCons", "egHashConsL")
+  ] ''EGraph
+
+egNew :: EGraph f
+egNew = EGraph (sourceNew (EClassId 0)) ufNew HashMap.empty (assocNew (ENodeId 0)) HashMap.empty
+
+egCanonicalize :: Traversable f => f EClassId -> State (EGraph f) (Maybe (f EClassId))
+egCanonicalize = stateLens egUnionFindL . fmap sequence . traverse ufFind
 
 -- private
-egUfState :: State (UnionFind x) b -> State (EGraph x f a) b
-egUfState act = state (\eg -> fmap (\u' -> eg { egUnionFind = u' }) (runState act (egUnionFind eg)))
+egAddNode :: (Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> State (EGraph f) EClassId
+egAddNode fc = do
+  (n, r) <- stateLens egNodeAssocL (assocEnsure fc)
+  case r of
+    AssocEnsureExists -> do
+      hc <- gets egHashCons
+      pure (hc HashMap.! n)
+    AssocEnsureAdded -> do
+      c <- stateLens egSourceL sourceAdd
+      stateLens egHashConsL (modify' (HashMap.insert n c))
+      pure c
 
-egCanonicalize :: (Eq x, Hashable x, Traversable f) => f x -> EGraph x f a -> Maybe (f x)
-egCanonicalize fx eg = traverse (`ufFind` egUnionFind eg) fx
-
--- egCanonicalizeInc :: (Eq x, Hashable x, Traversable f) => f x -> EGraph x f a -> Maybe (f x, EGraph x f a)
--- egCanonicalizeInc fx eg =
---   let u = egUnionFind eg
---       (mfx', u') = runState (traverse ufFindState fx) u
---   in fmap (, eg { egUnionFind = u' }) mfx'
-
--- egCanonicalizeState :: (Eq x, Hashable x, Traversable f) => f x -> State (EGraph x f a) (Maybe (f x))
--- egCanonicalizeState = egUfState . traverse ufFindState
+egAddTerm :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> State (EGraph f) EClassId
+egAddTerm = foldWholeM egAddNode

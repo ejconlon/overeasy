@@ -8,6 +8,7 @@ module Overeasy.Source
   ) where
 
 import Control.DeepSeq (NFData)
+import Control.Monad.State.Strict (State, state)
 import GHC.Generics (Generic)
 
 -- private ctor
@@ -20,5 +21,8 @@ data Source x = Source
 sourceNew :: x -> Source x
 sourceNew = Source 0
 
-sourceAdd :: Enum x => Source x -> (x, Source x)
-sourceAdd (Source s x) = (x, Source (succ s) (succ x))
+sourceAddInc :: Enum x => Source x -> (x, Source x)
+sourceAddInc (Source s x) = (x, Source (succ s) (succ x))
+
+sourceAdd :: Enum x => State (Source x) x
+sourceAdd = state sourceAddInc

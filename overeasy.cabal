@@ -27,8 +27,9 @@ library
       Overeasy.Assoc
       Overeasy.EGraph
       Overeasy.Example
+      Overeasy.Recursion
       Overeasy.Source
-      Overeasy.StateFail
+      Overeasy.StateUtil
       Overeasy.UnionFind
   other-modules:
       Paths_overeasy
@@ -67,6 +68,8 @@ library
     , data-fix
     , deepseq
     , hashable
+    , microlens
+    , microlens-th
     , mtl
     , recursion-schemes
     , transformers
@@ -113,6 +116,8 @@ test-suite overeasy-test
     , data-fix
     , deepseq
     , hashable
+    , microlens
+    , microlens-th
     , mtl
     , overeasy
     , recursion-schemes

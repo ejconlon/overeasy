@@ -19,6 +19,9 @@ dependencies:
 - data-fix
 - deepseq
 - hashable
+- microlens
+# - microlens-mtl
+- microlens-th
 - mtl
 - recursion-schemes
 - transformers
