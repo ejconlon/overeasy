@@ -16,8 +16,10 @@ description: Please see the README on GitHub at <https://github.com/ejconlon/ove
 dependencies:
 - base >= 4.12 && < 5
 - containers
+- data-fix
 - deepseq
 - hashable
+- recursion-schemes
 - unordered-containers
 
 default-extensions:

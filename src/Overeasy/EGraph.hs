@@ -2,19 +2,24 @@
 
 module Overeasy.EGraph
   ( EGraph
+  , egNew
   ) where
 
 import Control.DeepSeq (NFData)
-import Data.Hashable (Hashable)
+import Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as HashMap
 import GHC.Generics (Generic)
-import Overeasy.Source
-import Overeasy.UnionFind
+import Overeasy.Source (Source, sourceNew)
+import Overeasy.UnionFind (UnionFind, ufNew)
 
 -- private ctor
-newtype EClassId x = EClassId { unEClassId :: Int } deriving newtype (Enum, Eq, Ord, Show, Hashable, NFData)
-
-data EGraph x a = EGraph
+data EGraph x f a = EGraph
   { egSource :: Source x
-  , egClasses :: UnionFind x
+  , egUnionFind :: UnionFind x
+  , egClassMap :: HashMap x a
+  , egHashCons :: HashMap (f x) x
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
+
+egNew :: x -> EGraph x f a
+egNew x = EGraph (sourceNew x) ufNew HashMap.empty HashMap.empty

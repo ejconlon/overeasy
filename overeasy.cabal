@@ -24,9 +24,9 @@ source-repository head
 
 library
   exposed-modules:
-      Overeasy
       Overeasy.Assoc
       Overeasy.EGraph
+      Overeasy.Example
       Overeasy.Source
       Overeasy.UnionFind
   other-modules:
@@ -63,8 +63,10 @@ library
   build-depends:
       base >=4.12 && <5
     , containers
+    , data-fix
     , deepseq
     , hashable
+    , recursion-schemes
     , unordered-containers
   default-language: Haskell2010
 
@@ -105,9 +107,11 @@ test-suite overeasy-test
   build-depends:
       base >=4.12 && <5
     , containers
+    , data-fix
     , deepseq
     , hashable
     , overeasy
+    , recursion-schemes
     , tasty
     , tasty-hunit
     , unordered-containers
