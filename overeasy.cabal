@@ -25,6 +25,10 @@ source-repository head
 library
   exposed-modules:
       Overeasy
+      Overeasy.Assoc
+      Overeasy.EGraph
+      Overeasy.Source
+      Overeasy.UnionFind
   other-modules:
       Paths_overeasy
   hs-source-dirs:
