@@ -19,7 +19,9 @@ dependencies:
 - data-fix
 - deepseq
 - hashable
+- mtl
 - recursion-schemes
+- transformers
 - unordered-containers
 
 default-extensions:
