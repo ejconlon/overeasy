@@ -21,6 +21,7 @@ data Source x = Source
 sourceNew :: x -> Source x
 sourceNew = Source 0
 
+-- private
 sourceAddInc :: Enum x => Source x -> (x, Source x)
 sourceAddInc (Source s x) = (x, Source (succ s) (succ x))
 

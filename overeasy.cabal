@@ -25,6 +25,7 @@ source-repository head
 library
   exposed-modules:
       Overeasy.Assoc
+      Overeasy.Classes
       Overeasy.EGraph
       Overeasy.Example
       Overeasy.Recursion

@@ -4,12 +4,9 @@ module Overeasy.Recursion
   , foldWhole
   , foldWholeM
   , foldWholeTrackM
-  , foldStateChangeM
   ) where
 
-import Control.Monad.State.Strict (State)
 import Data.Functor.Foldable (Base, Recursive (..), fold)
-import Overeasy.StateUtil (Changed)
 
 type Whole t f = (f ~ Base t)
 
@@ -33,6 +30,3 @@ foldWholeTrackM h = go where
     let (c1, fa) = sequenceA fca
     (c2, a) <- h fa
     pure (c1 <> c2, a)
-
-foldStateChangeM :: (RecursiveWhole t f, Traversable f) => (f a -> State s (Changed, a)) -> t -> State s (Changed, a)
-foldStateChangeM = foldWholeTrackM

@@ -5,6 +5,10 @@
 module Overeasy.EGraph
   ( EClassId
   , ENodeId
+  , EGraphModify
+  , EGC
+  , EGM
+  , runEGM
   , EGraph
   , egNew
   , egAddTerm
@@ -14,7 +18,7 @@ module Overeasy.EGraph
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (State, gets, modify')
+import Control.Monad.State.Strict (gets, modify')
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
@@ -23,17 +27,27 @@ import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocEnsure, assocNew)
-import Overeasy.Recursion (RecursiveWhole, foldStateChangeM)
+import Overeasy.Classes (ApplyAction, BoundedJoinSemilattice)
+import Overeasy.Recursion (RecursiveWhole, foldWholeTrackM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
-import Overeasy.StateUtil (Changed (..), stateLens)
+import Overeasy.StateUtil (Changed (..), RSM, runRSM, stateLens)
 import Overeasy.UnionFind (UnionFind, ufFind, ufMerge, ufNew)
 
 newtype EClassId = EClassId { unEClassId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
 
 newtype ENodeId = ENodeId { unENodeId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
 
+type EGraphModify d f p = EClassId -> EGraph d f -> p
+
+type EGC d f p = (BoundedJoinSemilattice d, ApplyAction d (EGraph d f))
+
+type EGM d f p = RSM (EGraphModify d f p) (EGraph d f)
+
+runEGM :: EGM d f p a -> EGraphModify d f p -> EGraph d f -> (a, EGraph d f)
+runEGM = runRSM
+
 -- private ctor
-data EGraph f = EGraph
+data EGraph d f = EGraph
   { egSource :: !(Source EClassId)
   , egUnionFind :: !(UnionFind EClassId)
   , egClassMap :: !(HashMap EClassId (HashSet ENodeId))
@@ -42,9 +56,9 @@ data EGraph f = EGraph
   , egWorkList :: !(HashSet EClassId)
   } deriving stock (Generic)
 
-deriving stock instance Eq (f EClassId) => Eq (EGraph f)
-deriving stock instance Show (f EClassId) => Show (EGraph f)
-deriving anyclass instance NFData (f EClassId) => NFData (EGraph f)
+deriving stock instance Eq (f EClassId) => Eq (EGraph d f)
+deriving stock instance Show (f EClassId) => Show (EGraph d f)
+deriving anyclass instance NFData (f EClassId) => NFData (EGraph d f)
 
 makeLensesFor
   [ ("egSource", "egSourceL")
@@ -55,15 +69,15 @@ makeLensesFor
   , ("egWorkList", "egWorkListL")
   ] ''EGraph
 
-egNew :: EGraph f
+egNew :: EGraph d f
 egNew = EGraph (sourceNew (EClassId 0)) ufNew HashMap.empty (assocNew (ENodeId 0)) HashMap.empty HashSet.empty
 
 -- private
-egCanonicalize :: Traversable f => f EClassId -> State (EGraph f) (Maybe (f EClassId))
+egCanonicalize :: Traversable f => f EClassId -> EGM d f p (Maybe (f EClassId))
 egCanonicalize = stateLens egUnionFindL . fmap sequence . traverse ufFind
 
 -- private
-egAddNode :: (Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> State (EGraph f) (Changed, EClassId)
+egAddNode :: (Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGM d f p (Changed, EClassId)
 egAddNode fc = do
   (c, n) <- stateLens egNodeAssocL (assocEnsure fc)
   x <- case c of
@@ -77,10 +91,10 @@ egAddNode fc = do
           pure x
   pure (c, x)
 
-egAddTerm :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> State (EGraph f) (Changed, EClassId)
-egAddTerm = foldStateChangeM egAddNode
+egAddTerm :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGM d f p (Changed, EClassId)
+egAddTerm = foldWholeTrackM egAddNode
 
-egMerge :: EClassId -> EClassId -> State (EGraph f) (Maybe (Changed, EClassId))
+egMerge :: EClassId -> EClassId -> EGM d f p (Maybe (Changed, EClassId))
 egMerge i j = do
   mx <- stateLens egUnionFindL (ufMerge i j)
   case mx of
@@ -88,8 +102,8 @@ egMerge i j = do
     _ -> pure ()
   pure mx
 
-egNeedsRebuild :: EGraph f -> Bool
+egNeedsRebuild :: EGraph d f -> Bool
 egNeedsRebuild = not . HashSet.null . egWorkList
 
-egRebuild :: State (EGraph f) ()
+egRebuild :: EGM d f p ()
 egRebuild = error "TODO"
