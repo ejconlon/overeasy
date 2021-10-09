@@ -18,7 +18,7 @@ import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
-import Overeasy.StateUtil (stateFail, stateFailBool)
+import Overeasy.StateUtil (Changed (..), stateFail)
 
 -- private ctor
 -- Not the best union-find... requires at least 2 lookups to find the root.
@@ -56,10 +56,11 @@ ufAdd = modify' . ufAddInc
 -- private
 ufFindRootAcc :: (Eq x, Hashable x) => HashMap x x -> [x] -> x -> ([x], x)
 ufFindRootAcc p acc x1 =
-    let x2 = p HashMap.! x1
-    in if x1 == x2
-      then (acc, x2)
-      else ufFindRootAcc p (x1:acc) x2
+  -- partial: should exist in map by construction (all xs added in ufAddInc)
+  let x2 = p HashMap.! x1
+  in if x1 == x2
+    then (acc, x2)
+    else ufFindRootAcc p (x1:acc) x2
 
 -- private
 ufFindRootInc :: (Eq x, Hashable x) => UnionFind x -> x -> (x, UnionFind x)
@@ -79,23 +80,23 @@ ufFind :: (Eq x, Hashable x) => x -> State (UnionFind x) (Maybe x)
 ufFind x = stateFail (ufFindInc x)
 
 -- private
-ufMergeInc :: (Ord x, Hashable x) => x -> x -> UnionFind x -> Maybe (UnionFind x)
+ufMergeInc :: (Ord x, Hashable x) => x -> x -> UnionFind x -> Maybe ((Changed, x), UnionFind x)
 ufMergeInc i j u@(UnionFind z p) = if HashMap.member i p && HashMap.member j p then Just (go i j) else Nothing where
   go ix1 jx1 =
     let (iacc, ix2) = ufFindRootAcc p [] ix1
         (acc, jx2) = ufFindRootAcc p iacc jx1
     in if ix2 == jx2
       then case acc of
-        [] -> u
+        [] -> ((ChangedNo, ix2), u)
         _ -> let p' = foldr (`HashMap.insert` ix2) p acc
-             in UnionFind z p'
+             in ((ChangedNo, ix2), UnionFind z p')
       else
         let (kacc, kx) =
               if ix2 < jx2
                 then (if jx1 == jx2 then jx1:acc else jx2:jx1:acc, ix2)
                 else (if ix1 == ix2 then ix1:acc else ix2:ix1:acc, jx2)
             p' = foldr (`HashMap.insert` kx) p kacc
-        in UnionFind (z - 1) p'
+        in ((ChangedYes, kx), UnionFind (z - 1) p')
 
-ufMerge :: (Ord x, Hashable x) => x -> x -> State (UnionFind x) Bool
-ufMerge i j = stateFailBool (ufMergeInc i j)
+ufMerge :: (Ord x, Hashable x) => x -> x -> State (UnionFind x) (Maybe (Changed, x))
+ufMerge i j = stateFail (ufMergeInc i j)
