@@ -21,7 +21,8 @@ import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
-import Overeasy.StateUtil (Changed (..), stateFail)
+import Overeasy.Classes (Changed (..))
+import Overeasy.StateUtil (stateFail)
 
 -- private ctor
 data UnionFind x = UnionFind

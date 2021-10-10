@@ -32,20 +32,28 @@ import Data.Kind (Type)
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocEnsure, assocNew)
+import Overeasy.Classes (BoundedJoinSemilattice, Changed (..))
 import Overeasy.Recursion (RecursiveWhole, foldWholeTrackM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
-import Overeasy.StateUtil (Changed (..), RSM, runRSM, stateLens)
+import Overeasy.StateUtil (RSM, runRSM, stateLens)
 import Overeasy.UnionFind (UnionFind, ufFind, ufMerge, ufNew)
 
+-- | An opaque class id
 newtype EClassId = EClassId { unEClassId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
 
+-- | An opaque node id
 newtype ENodeId = ENodeId { unENodeId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
 
-class EAnalysis q where
+-- | The definition of an 'EGraph' analysis.
+-- We thread the analysis definition 'q' through the 'EGM' monad to perform analyses as we construct
+-- and manipulate the graph. Only its data 'EAData' is persisted in the graph itself.
+-- Should obey:
+--   The related data must obey 'BoundedJoinSemilattice'
+--   'eaModify' is idempotent
+class BoundedJoinSemilattice (EAData q) => EAnalysis q where
   type EAData q :: Type
   type EAFunctor q :: Type -> Type
   eaMake :: q -> EAFunctor q EClassId -> EAGraph q -> EAData q
-  eaMerge :: q -> EAData q -> EAData q -> (Changed, EAData q)
   eaModify :: q -> EClassId -> EAGraph q -> EAGraph q
 
 type EAGraph q = EGraph (EAData q) (EAFunctor q)
@@ -56,7 +64,6 @@ instance EAnalysis (EAnalysisOff f) where
   type EAData (EAnalysisOff f) = ()
   type EAFunctor (EAnalysisOff f) = f
   eaMake _ _ _ = ()
-  eaMerge _ _ _ = (ChangedNo, ())
   eaModify _ _ g = g
 
 type EGC d f q = (d ~ EAData q, f ~ EAFunctor q, EAnalysis q)

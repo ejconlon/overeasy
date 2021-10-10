@@ -19,8 +19,9 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
+import Overeasy.Classes (Changed (..))
 import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize)
-import Overeasy.StateUtil (Changed (..), stateFail, stateFailChanged)
+import Overeasy.StateUtil (stateFail, stateFailChanged)
 
 -- private ctor
 data Assoc x a = Assoc
