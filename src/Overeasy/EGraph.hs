@@ -5,7 +5,9 @@
 module Overeasy.EGraph
   ( EClassId
   , ENodeId
-  , EGraphModify
+  , EAnalysis (..)
+  , EAGraph
+  , EAnalysisOff (..)
   , EGC
   , EGM
   , runEGM
@@ -18,16 +20,17 @@ module Overeasy.EGraph
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (gets, modify')
+import Control.Monad.Reader (ask)
+import Control.Monad.State.Strict (get, gets, modify')
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
+import Data.Kind (Type)
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocEnsure, assocNew)
-import Overeasy.Classes (ApplyAction, BoundedJoinSemilattice)
 import Overeasy.Recursion (RecursiveWhole, foldWholeTrackM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (Changed (..), RSM, runRSM, stateLens)
@@ -37,28 +40,50 @@ newtype EClassId = EClassId { unEClassId :: Int } deriving newtype (Eq, Ord, Sho
 
 newtype ENodeId = ENodeId { unENodeId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
 
-type EGraphModify d f p = EClassId -> EGraph d f -> p
+class EAnalysis q where
+  type EAData q :: Type
+  type EAFunctor q :: Type -> Type
+  eaMake :: q -> EAFunctor q EClassId -> EAGraph q -> EAData q
+  eaMerge :: q -> EAData q -> EAData q -> (Changed, EAData q)
+  eaModify :: q -> EClassId -> EAGraph q -> EAGraph q
 
-type EGC d f p = (BoundedJoinSemilattice d, ApplyAction d (EGraph d f))
+type EAGraph q = EGraph (EAData q) (EAFunctor q)
 
-type EGM d f p = RSM (EGraphModify d f p) (EGraph d f)
+data EAnalysisOff (f :: Type -> Type) = EAnalysisOff
 
-runEGM :: EGM d f p a -> EGraphModify d f p -> EGraph d f -> (a, EGraph d f)
+instance EAnalysis (EAnalysisOff f) where
+  type EAData (EAnalysisOff f) = ()
+  type EAFunctor (EAnalysisOff f) = f
+  eaMake _ _ _ = ()
+  eaMerge _ _ _ = (ChangedNo, ())
+  eaModify _ _ g = g
+
+type EGC d f q = (d ~ EAData q, f ~ EAFunctor q, EAnalysis q)
+
+type EGM d f q = RSM q (EGraph d f)
+
+runEGM :: EGM d f q a -> q -> EGraph d f -> (a, EGraph d f)
 runEGM = runRSM
+
+data EClassInfo d = EClassInfo
+  { eciData :: !d
+  , eciNodes :: !(HashSet ENodeId)
+  } deriving stock (Eq, Show, Generic)
+    deriving anyclass (NFData)
 
 -- private ctor
 data EGraph d f = EGraph
   { egSource :: !(Source EClassId)
   , egUnionFind :: !(UnionFind EClassId)
-  , egClassMap :: !(HashMap EClassId (HashSet ENodeId))
+  , egClassMap :: !(HashMap EClassId (EClassInfo d))
   , egNodeAssoc :: !(Assoc ENodeId (f EClassId))
   , egHashCons :: !(HashMap ENodeId EClassId)
   , egWorkList :: !(HashSet EClassId)
   } deriving stock (Generic)
 
-deriving stock instance Eq (f EClassId) => Eq (EGraph d f)
-deriving stock instance Show (f EClassId) => Show (EGraph d f)
-deriving anyclass instance NFData (f EClassId) => NFData (EGraph d f)
+deriving stock instance (Eq d, Eq (f EClassId)) => Eq (EGraph d f)
+deriving stock instance (Show d, Show (f EClassId)) => Show (EGraph d f)
+deriving anyclass instance (NFData d, NFData (f EClassId)) => NFData (EGraph d f)
 
 makeLensesFor
   [ ("egSource", "egSourceL")
@@ -73,28 +98,41 @@ egNew :: EGraph d f
 egNew = EGraph (sourceNew (EClassId 0)) ufNew HashMap.empty (assocNew (ENodeId 0)) HashMap.empty HashSet.empty
 
 -- private
-egCanonicalize :: Traversable f => f EClassId -> EGM d f p (Maybe (f EClassId))
+egCanonicalize :: Traversable f => f EClassId -> EGM d f q (Maybe (f EClassId))
 egCanonicalize = stateLens egUnionFindL . fmap sequence . traverse ufFind
 
 -- private
-egAddNode :: (Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGM d f p (Changed, EClassId)
+egMake :: EGC d f q => f EClassId -> EGM d f q d
+egMake fc = do
+  q <- ask
+  fmap (eaMake q fc) get
+
+-- private
+egAddNode :: (EGC d f q, Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGM d f q (Changed, EClassId)
 egAddNode fc = do
   (c, n) <- stateLens egNodeAssocL (assocEnsure fc)
   x <- case c of
         ChangedNo -> do
+          -- node already exists; just return existing class id
           hc <- gets egHashCons
           -- partial: should exist in hashcons by construction (next case)
           pure (hc HashMap.! n)
         ChangedYes -> do
+          -- node does not exist; get a new class id
           x <- stateLens egSourceL sourceAdd
+          -- map the node to the class id
           stateLens egHashConsL (modify' (HashMap.insert n x))
+          -- analyze the node and put that info in the class map
+          d <- egMake fc
+          let i = EClassInfo d (HashSet.singleton n)
+          stateLens egClassMapL (modify' (HashMap.insert x i))
           pure x
   pure (c, x)
 
-egAddTerm :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGM d f p (Changed, EClassId)
+egAddTerm :: (EGC d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGM d f q (Changed, EClassId)
 egAddTerm = foldWholeTrackM egAddNode
 
-egMerge :: EClassId -> EClassId -> EGM d f p (Maybe (Changed, EClassId))
+egMerge :: EClassId -> EClassId -> EGM d f q (Maybe (Changed, EClassId))
 egMerge i j = do
   mx <- stateLens egUnionFindL (ufMerge i j)
   case mx of
@@ -105,5 +143,6 @@ egMerge i j = do
 egNeedsRebuild :: EGraph d f -> Bool
 egNeedsRebuild = not . HashSet.null . egWorkList
 
-egRebuild :: EGM d f p ()
+-- TODO implement rebuild + repair from the paper (fig 9)
+egRebuild :: EGM d f q ()
 egRebuild = error "TODO"

@@ -12,8 +12,15 @@ module Overeasy.Classes
 --     and returns least upper bound
 class (Ord d, Monoid d) => BoundedJoinSemilattice d
 
+-- The trivial lattice
+instance BoundedJoinSemilattice ()
+
 -- Should obey:
 --   applyAction mempty = id
 --   applyAction (p1 <> p2) = applyAction p2 . applyAction p1
 class Monoid p => ApplyAction p s where
   applyAction :: p -> s -> s
+
+-- The trivial action
+instance ApplyAction () s where
+  applyAction = const id
