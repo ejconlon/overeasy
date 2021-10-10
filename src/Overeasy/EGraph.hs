@@ -9,6 +9,7 @@ module Overeasy.EGraph
   , EAnalysis (..)
   , EAGraph
   , EAnalysisOff (..)
+  , EAnalysisC
   , EGC
   , EGM
   , runEGM
@@ -21,8 +22,8 @@ module Overeasy.EGraph
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.Reader (ask)
-import Control.Monad.State.Strict (get, gets, modify')
+import Control.Monad.Reader (MonadReader, ask)
+import Control.Monad.State.Strict (MonadState, get, gets, modify')
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
@@ -58,6 +59,7 @@ class BoundedJoinSemilattice (EAData q) => EAnalysis q where
 
 type EAGraph q = EGraph (EAData q) (EAFunctor q)
 
+-- | A disabled analysis
 data EAnalysisOff (f :: Type -> Type) = EAnalysisOff
 
 instance EAnalysis (EAnalysisOff f) where
@@ -66,13 +68,22 @@ instance EAnalysis (EAnalysisOff f) where
   eaMake _ _ _ = ()
   eaModify _ _ g = g
 
-type EGC d f q = (d ~ EAData q, f ~ EAFunctor q, EAnalysis q)
+-- | A parametric constraint equivalent to 'EAnalysis'
+type EAnalysisC d f q = (d ~ EAData q, f ~ EAFunctor q, EAnalysis q)
 
+-- | Constraints implemented by 'EGM'.
+type EGC d f q m = (MonadReader q m, MonadState (EGraph d f) m)
+
+-- | The 'EGraph' monad - carries the definition of the analysis in the reader layer and the graph itself
+-- in the state layer. Use it like 'm' in 'EGC d f q m' and use constraint 'EAnalysisC d f q' when necessary.
+-- Run with 'runEGM'.
 type EGM d f q = RSM q (EGraph d f)
 
+-- | Runs the 'EGraph' monad.
 runEGM :: EGM d f q a -> q -> EGraph d f -> (a, EGraph d f)
 runEGM = runRSM
 
+-- | Info stored for every class: analysis data and class members.
 data EClassInfo d = EClassInfo
   { eciData :: !d
   , eciNodes :: !(HashSet ENodeId)
@@ -102,6 +113,7 @@ makeLensesFor
   , ("egWorkList", "egWorkListL")
   ] ''EGraph
 
+-- | Creates a new 'EGraph'
 egNew :: EGraph d f
 egNew = EGraph (sourceNew (EClassId 0)) ufNew HashMap.empty (assocNew (ENodeId 0)) HashMap.empty HashSet.empty
 
@@ -110,13 +122,13 @@ egCanonicalize :: Traversable f => f EClassId -> EGM d f q (Maybe (f EClassId))
 egCanonicalize = stateLens egUnionFindL . fmap sequence . traverse ufFind
 
 -- private
-egMake :: EGC d f q => f EClassId -> EGM d f q d
+egMake :: EAnalysisC d f q => f EClassId -> EGM d f q d
 egMake fc = do
   q <- ask
   fmap (eaMake q fc) get
 
 -- private
-egAddNode :: (EGC d f q, Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGM d f q (Changed, EClassId)
+egAddNode :: (EAnalysisC d f q, Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGM d f q (Changed, EClassId)
 egAddNode fc = do
   (c, n) <- stateLens egNodeAssocL (assocEnsure fc)
   x <- case c of
@@ -137,9 +149,16 @@ egAddNode fc = do
           pure x
   pure (c, x)
 
-egAddTerm :: (EGC d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGM d f q (Changed, EClassId)
+-- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
+-- returns 'ChangedYes' and a new class id.
+egAddTerm :: (EAnalysisC d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGM d f q (Changed, EClassId)
 egAddTerm = foldWholeTrackM egAddNode
 
+-- | Merges two classes:
+-- Returns 'Nothing' if the classes are not found
+-- Otherwise returns the merged class id and whether anything has changed
+-- If things have changed, then you must call 'egRebuild' before adding more terms.
+-- (You can use 'egNeedsRebuild' to query this.)
 egMerge :: EClassId -> EClassId -> EGM d f q (Maybe (Changed, EClassId))
 egMerge i j = do
   mx <- stateLens egUnionFindL (ufMerge i j)
@@ -148,9 +167,11 @@ egMerge i j = do
     _ -> pure ()
   pure mx
 
+-- | Have we merged classes and do we need to rebuild before adding more terms?
 egNeedsRebuild :: EGraph d f -> Bool
 egNeedsRebuild = not . HashSet.null . egWorkList
 
--- TODO implement rebuild + repair from the paper (fig 9)
+-- | Rebuilds the 'EGraph' after merging to allow adding more terms. (Always safe to call.)
 egRebuild :: EGM d f q ()
 egRebuild = error "TODO"
+-- TODO implement rebuild + repair from the paper (fig 9)
