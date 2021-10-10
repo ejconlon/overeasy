@@ -56,18 +56,6 @@ instance EAnalysis () f (EAnalysisOff f) where
   eaMake _ _ _ = ()
   eaModify _ _ g = g
 
--- -- | Constraints implemented by 'EGM'.
--- type EGC d f q m = (MonadReader q m, MonadState (EGraph d f) m)
-
--- -- | The 'EGraph' monad - carries the definition of the analysis in the reader layer and the graph itself
--- -- in the state layer. Use it like 'm' in 'EGC d f q m' and use constraint 'EAnalysis d f q' when necessary.
--- -- Run with 'runEGM'.
--- type EGM d f q = RSM q (EGraph d f)
-
--- -- | Runs the 'EGraph' monad.
--- runEGM :: EGM d f q a -> q -> EGraph d f -> (a, EGraph d f)
--- runEGM = runRSM
-
 -- | Info stored for every class: analysis data and class members.
 data EClassInfo d = EClassInfo
   { eciData :: !d
@@ -111,6 +99,14 @@ egCanonicalize :: Traversable f => f EClassId -> State (EGraph d f) (Maybe (f EC
 egCanonicalize = stateLens egUnionFindL . fmap sequence . traverse ufFind
 
 -- private
+egMake :: EAnalysis d f q => q -> f EClassId -> State (EGraph d f) d
+egMake q fc = fmap (eaMake q fc) get
+
+-- private
+egModify :: EAnalysis d f q => q -> EClassId -> State (EGraph d f) ()
+egModify q x = modify' (eaModify q x)
+
+-- private
 egAddNode :: (EAnalysis d f q, Eq (f EClassId), Hashable (f EClassId)) => q -> f EClassId -> State (EGraph d f) (Changed, EClassId)
 egAddNode q fc = do
   (c, n) <- stateLens egNodeAssocL (assocEnsure fc)
@@ -126,11 +122,11 @@ egAddNode q fc = do
           -- map the node to the class id
           stateLens egHashConsL (modify' (HashMap.insert n x))
           -- analyze the node and put that info in the class map
-          d <- fmap (eaMake q fc) get
+          d <- egMake q fc
           let i = EClassInfo d (HashSet.singleton n)
           stateLens egClassMapL (modify' (HashMap.insert x i))
           -- call analysis modify
-          modify' (eaModify q x)
+          egModify q x
           pure x
   pure (c, x)
 
