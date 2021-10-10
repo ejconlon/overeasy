@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+
+-- | Some useful functions for state
 module Overeasy.StateUtil
   ( Changed (..)
   , sequenceChanged
@@ -16,6 +19,7 @@ import GHC.Generics (Generic)
 import Lens.Micro (Lens', set)
 import Lens.Micro.Extras (view)
 
+-- | A nicely-named 'Bool' for tracking state changes
 data Changed = ChangedNo | ChangedYes
   deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass (Hashable, NFData)
@@ -30,9 +34,11 @@ instance Monoid Changed where
   mempty = ChangedNo
   mappend = (<>)
 
+-- | It's just 'sequenceA'.
 sequenceChanged :: Traversable f => f (Changed, a) -> (Changed, f a)
 sequenceChanged = sequenceA
 
+-- | Embeds a function that may fail in a stateful context
 stateFail :: MonadState s m => (s -> Maybe (b, s)) -> m (Maybe b)
 stateFail f = do
   s <- get
@@ -40,6 +46,7 @@ stateFail f = do
     Nothing -> pure Nothing
     Just (b, s') -> put s' >> pure (Just b)
 
+-- | Embeds a function that may fail in a stateful context with change tracking
 stateFailChanged :: MonadState s m => (s -> Maybe s) -> m Changed
 stateFailChanged f = do
   s <- get
@@ -47,14 +54,17 @@ stateFailChanged f = do
     Nothing -> pure ChangedNo
     Just s' -> put s' >> pure ChangedYes
 
+-- | Embeds a stateful action in a larger context
 stateLens :: MonadState s m => Lens' s a -> State a b -> m b
 stateLens l act = state $ \s ->
   let (b, a') = runState act (view l s)
       s' = set l a' s
   in (b, s')
 
+-- | A Reader-State monad
 newtype RSM r s a = RSM { unRSM :: ReaderT r (State s) a }
   deriving newtype (Functor, Applicative, Monad, MonadReader r, MonadState s)
 
+-- | Runs the Reader-State monad
 runRSM :: RSM r s a -> r -> s -> (a, s)
 runRSM (RSM m) = runState . runReaderT m

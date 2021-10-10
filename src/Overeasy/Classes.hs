@@ -1,3 +1,4 @@
+-- | Assorted abstract nonsense
 module Overeasy.Classes
   ( BoundedJoinSemilattice
   , ApplyAction (..)
@@ -15,6 +16,7 @@ class (Ord d, Monoid d) => BoundedJoinSemilattice d
 -- The trivial lattice
 instance BoundedJoinSemilattice ()
 
+-- A monoidal action to update state
 -- Should obey:
 --   applyAction mempty = id
 --   applyAction (p1 <> p2) = applyAction p2 . applyAction p1

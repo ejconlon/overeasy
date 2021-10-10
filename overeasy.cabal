@@ -39,7 +39,6 @@ library
   default-extensions:
       BangPatterns
       ConstraintKinds
-      DeriveAnyClass
       DeriveFunctor
       DeriveFoldable
       DeriveGeneric
@@ -87,7 +86,6 @@ test-suite overeasy-test
   default-extensions:
       BangPatterns
       ConstraintKinds
-      DeriveAnyClass
       DeriveFunctor
       DeriveFoldable
       DeriveGeneric

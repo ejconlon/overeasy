@@ -1,5 +1,8 @@
 {-# LANGUAGE DeriveAnyClass #-}
 
+-- | A Union-Find implementation.
+-- Not the best - requires at least 2 lookups to find the root.
+-- But at least it's a persistent impl, and it compresses paths as it goes.
 module Overeasy.UnionFind
   ( UnionFind
   , ufSize
@@ -21,14 +24,17 @@ import GHC.Generics (Generic)
 import Overeasy.StateUtil (Changed (..), stateFail)
 
 -- private ctor
--- Not the best union-find... requires at least 2 lookups to find the root.
--- But at least it's a persistent impl.
 data UnionFind x = UnionFind
-  { ufSize :: !Int
+  { ufSize :: !Int  -- ^ How many classes are there?
   , ufParents :: !(HashMap x x)
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
+-- | How many discrete members have ever been added? (Number of classes via 'ufSize' is always LTE.)
+ufTotalSize :: UnionFind x -> Int
+ufTotalSize = HashMap.size . ufParents
+
+-- | Creates a new UF
 ufNew :: UnionFind x
 ufNew = UnionFind 0 HashMap.empty
 
@@ -40,6 +46,7 @@ ufMembersInc u@(UnionFind _ p) = foldr go (HashMap.empty, u) (HashMap.keys p) wh
         m' = HashMap.insert x2 (maybe (HashSet.singleton x1) (HashSet.insert x1) (HashMap.lookup x2 m)) m
     in (m', v')
 
+-- | Enumerates the members of the UF per-class
 ufMembers :: (Eq x, Hashable x) => State (UnionFind x) (HashMap x (HashSet x))
 ufMembers = state ufMembersInc
 
@@ -50,6 +57,7 @@ ufAddInc x u@(UnionFind z p) =
     then u
     else UnionFind (z + 1) (HashMap.insert x x p)
 
+-- | Adds a new member to the UF
 ufAdd :: (Eq x, Hashable x) => x -> State (UnionFind x) ()
 ufAdd = modify' . ufAddInc
 
@@ -76,6 +84,7 @@ ufFindRootInc u@(UnionFind z p) x1 =
 ufFindInc :: (Eq x, Hashable x) => x -> UnionFind x -> Maybe (x, UnionFind x)
 ufFindInc a u@(UnionFind _ p) = fmap (ufFindRootInc u) (HashMap.lookup a p)
 
+-- | Finds the canonical class member of the UF or 'Nothing' if not found
 ufFind :: (Eq x, Hashable x) => x -> State (UnionFind x) (Maybe x)
 ufFind x = stateFail (ufFindInc x)
 
@@ -98,5 +107,6 @@ ufMergeInc i j u@(UnionFind z p) = if HashMap.member i p && HashMap.member j p t
             p' = foldr (`HashMap.insert` kx) p kacc
         in ((ChangedYes, kx), UnionFind (z - 1) p')
 
+-- | Merge two classes in the UF
 ufMerge :: (Ord x, Hashable x) => x -> x -> State (UnionFind x) (Maybe (Changed, x))
 ufMerge i j = stateFail (ufMergeInc i j)

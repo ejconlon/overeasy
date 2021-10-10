@@ -2,6 +2,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+-- | An E-Graph implementation
 module Overeasy.EGraph
   ( EClassId
   , ENodeId
