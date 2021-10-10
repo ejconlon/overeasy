@@ -28,6 +28,7 @@ library
       Overeasy.Classes
       Overeasy.EGraph
       Overeasy.Example
+      Overeasy.Matching
       Overeasy.Recursion
       Overeasy.Source
       Overeasy.StateUtil

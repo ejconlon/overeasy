@@ -7,9 +7,7 @@ module Overeasy.EGraph
   ( EClassId
   , ENodeId
   , EAnalysis (..)
-  , EAGraph
   , EAnalysisOff (..)
-  , EAnalysisC
   , EGC
   , EGM
   , runEGM
@@ -37,7 +35,7 @@ import Overeasy.Classes (BoundedJoinSemilattice, Changed (..))
 import Overeasy.Recursion (RecursiveWhole, foldWholeTrackM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (RSM, runRSM, stateLens)
-import Overeasy.UnionFind (UnionFind, ufFind, ufMerge, ufNew)
+import Overeasy.UnionFind (UnionFind, ufFind, ufMerge, ufNew, ufRoots)
 
 -- | An opaque class id
 newtype EClassId = EClassId { unEClassId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
@@ -47,35 +45,26 @@ newtype ENodeId = ENodeId { unENodeId :: Int } deriving newtype (Eq, Ord, Show, 
 
 -- | The definition of an 'EGraph' analysis.
 -- We thread the analysis definition 'q' through the 'EGM' monad to perform analyses as we construct
--- and manipulate the graph. Only its data 'EAData' is persisted in the graph itself.
+-- and manipulate the graph. Only its data 'd' is persisted in the graph itself.
 -- Should obey:
 --   The related data must obey 'BoundedJoinSemilattice'
 --   'eaModify' is idempotent
-class BoundedJoinSemilattice (EAData q) => EAnalysis q where
-  type EAData q :: Type
-  type EAFunctor q :: Type -> Type
-  eaMake :: q -> EAFunctor q EClassId -> EAGraph q -> EAData q
-  eaModify :: q -> EClassId -> EAGraph q -> EAGraph q
-
-type EAGraph q = EGraph (EAData q) (EAFunctor q)
+class BoundedJoinSemilattice d => EAnalysis d f q | q -> d f where
+  eaMake :: q -> f EClassId -> EGraph d f -> d
+  eaModify :: q -> EClassId -> EGraph d f -> EGraph d f
 
 -- | A disabled analysis
 data EAnalysisOff (f :: Type -> Type) = EAnalysisOff
 
-instance EAnalysis (EAnalysisOff f) where
-  type EAData (EAnalysisOff f) = ()
-  type EAFunctor (EAnalysisOff f) = f
+instance EAnalysis () f (EAnalysisOff f) where
   eaMake _ _ _ = ()
   eaModify _ _ g = g
-
--- | A parametric constraint equivalent to 'EAnalysis'
-type EAnalysisC d f q = (d ~ EAData q, f ~ EAFunctor q, EAnalysis q)
 
 -- | Constraints implemented by 'EGM'.
 type EGC d f q m = (MonadReader q m, MonadState (EGraph d f) m)
 
 -- | The 'EGraph' monad - carries the definition of the analysis in the reader layer and the graph itself
--- in the state layer. Use it like 'm' in 'EGC d f q m' and use constraint 'EAnalysisC d f q' when necessary.
+-- in the state layer. Use it like 'm' in 'EGC d f q m' and use constraint 'EAnalysis d f q' when necessary.
 -- Run with 'runEGM'.
 type EGM d f q = RSM q (EGraph d f)
 
@@ -117,18 +106,28 @@ makeLensesFor
 egNew :: EGraph d f
 egNew = EGraph (sourceNew (EClassId 0)) ufNew HashMap.empty (assocNew (ENodeId 0)) HashMap.empty HashSet.empty
 
+-- | Yields all root classes
+egClasses :: EGM d f q (HashSet EClassId)
+egClasses = stateLens egUnionFindL ufRoots
+
 -- private
 egCanonicalize :: Traversable f => f EClassId -> EGM d f q (Maybe (f EClassId))
 egCanonicalize = stateLens egUnionFindL . fmap sequence . traverse ufFind
 
 -- private
-egMake :: EAnalysisC d f q => f EClassId -> EGM d f q d
+egMake :: EAnalysis d f q => f EClassId -> EGM d f q d
 egMake fc = do
   q <- ask
   fmap (eaMake q fc) get
 
 -- private
-egAddNode :: (EAnalysisC d f q, Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGM d f q (Changed, EClassId)
+egModify :: EAnalysis d f q => EClassId -> EGM d f q ()
+egModify x = do
+  q <- ask
+  modify' (eaModify q x)
+
+-- private
+egAddNode :: (EAnalysis d f q, Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGM d f q (Changed, EClassId)
 egAddNode fc = do
   (c, n) <- stateLens egNodeAssocL (assocEnsure fc)
   x <- case c of
@@ -146,12 +145,14 @@ egAddNode fc = do
           d <- egMake fc
           let i = EClassInfo d (HashSet.singleton n)
           stateLens egClassMapL (modify' (HashMap.insert x i))
+          -- call analysis modify
+          egModify x
           pure x
   pure (c, x)
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
 -- returns 'ChangedYes' and a new class id.
-egAddTerm :: (EAnalysisC d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGM d f q (Changed, EClassId)
+egAddTerm :: (EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGM d f q (Changed, EClassId)
 egAddTerm = foldWholeTrackM egAddNode
 
 -- | Merges two classes:
@@ -161,6 +162,8 @@ egAddTerm = foldWholeTrackM egAddNode
 -- (You can use 'egNeedsRebuild' to query this.)
 egMerge :: EClassId -> EClassId -> EGM d f q (Maybe (Changed, EClassId))
 egMerge i j = do
+  -- merge classes in the uf
+  -- TODO get old roots for i and j, and for changed ones, join their data and modify
   mx <- stateLens egUnionFindL (ufMerge i j)
   case mx of
     Just (ChangedYes, x) -> stateLens egWorkListL (modify' (HashSet.insert x))

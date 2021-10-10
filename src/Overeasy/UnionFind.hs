@@ -8,6 +8,7 @@ module Overeasy.UnionFind
   , ufSize
   , ufNew
   , ufMembers
+  , ufRoots
   , ufAdd
   , ufFind
   , ufMerge
@@ -47,9 +48,21 @@ ufMembersInc u@(UnionFind _ p) = foldr go (HashMap.empty, u) (HashMap.keys p) wh
         m' = HashMap.insert x2 (maybe (HashSet.singleton x1) (HashSet.insert x1) (HashMap.lookup x2 m)) m
     in (m', v')
 
--- | Enumerates the members of the UF per-class
+-- | Enumerates the members of the UF per-class (keys are roots)
 ufMembers :: (Eq x, Hashable x) => State (UnionFind x) (HashMap x (HashSet x))
 ufMembers = state ufMembersInc
+
+-- private
+ufRootsInc :: (Eq x, Hashable x) => UnionFind x -> (HashSet x, UnionFind x)
+ufRootsInc u@(UnionFind _ p) = foldr go (HashSet.empty, u) (HashMap.keys p) where
+  go x1 (s, v) =
+    let (x2, v') = ufFindRootInc v x1
+        s' = HashSet.insert x2 s
+    in (s', v')
+
+-- | Enumerates the roots of the UF
+ufRoots :: (Eq x, Hashable x) => State (UnionFind x) (HashSet x)
+ufRoots = state ufRootsInc
 
 -- private
 ufAddInc :: (Eq x, Hashable x) => x -> UnionFind x -> UnionFind x
