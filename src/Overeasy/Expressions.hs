@@ -17,9 +17,13 @@ module Overeasy.Expressions
   , pattern SexpAtom
   , pattern SexpList
   , sexpAbstract
+  , TreeF (..)
+  , Tree
+  , TreeLike (..)
   ) where
 
 import Control.DeepSeq (NFData)
+import Control.Monad ((>=>))
 import Data.Bifoldable (Bifoldable (..))
 import Data.Bifunctor (Bifunctor (..))
 import Data.Bitraversable (Bitraversable (..))
@@ -28,7 +32,8 @@ import Data.Functor.Foldable (Base, Corecursive (..), Recursive (..))
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
-import Data.Sequence (Seq)
+import Data.Sequence (Seq (..))
+import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import GHC.Generics (Generic)
 
@@ -65,14 +70,6 @@ pattern FreeEmbed fr = Free (FreeEmbedF fr)
 
 {-# COMPLETE FreePure, FreeEmbed #-}
 
-type instance Base (Free f a) = (FreeF f a)
-
-instance Functor f => Recursive (Free f a) where
-  project = unFree
-
-instance Functor f => Corecursive (Free f a) where
-  embed = Free
-
 deriving newtype instance (Eq (f (Free f a)), Eq a) => Eq (Free f a)
 deriving newtype instance (Show (f (Free f a)), Show a) => Show (Free f a)
 deriving newtype instance (NFData (f (Free f a)), NFData a) => NFData (Free f a)
@@ -88,6 +85,14 @@ instance Foldable f => Foldable (Free f) where
 instance Traversable f => Traversable (Free f) where
   traverse f = go where
     go = fmap Free . bitraverse f go . unFree
+
+type instance Base (Free f a) = (FreeF f a)
+
+instance Functor f => Recursive (Free f a) where
+  project = unFree
+
+instance Functor f => Corecursive (Free f a) where
+  embed = Free
 
 -- | The set of all holes in this free functor
 freeVars :: (Foldable f, Eq a, Hashable a) => Free f a -> HashSet a
@@ -148,3 +153,68 @@ sexpAbstract f = go where
             Just v -> FreePure v
         _ -> FreeEmbed (SexpAtomF a)
     SexpList ss -> FreeEmbed (SexpListF (fmap go ss))
+
+data TreeF a r = TreeF !a !(Seq r)
+  deriving stock (Eq, Show, Functor, Foldable, Traversable, Generic)
+  deriving anyclass (NFData)
+
+instance Bifunctor TreeF where
+  bimap f g (TreeF a rs) = TreeF (f a) (fmap g rs)
+
+instance Bifoldable TreeF where
+  bifoldr f g z (TreeF a rs) = f a (foldr g z rs)
+
+instance Bitraversable TreeF where
+  bitraverse f g (TreeF a rs) = TreeF <$> f a <*> traverse g rs
+
+newtype Tree a = Tree { unTree :: TreeF a (Tree a) }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (NFData)
+
+instance Functor Tree where
+  fmap f = go where
+    go = Tree . bimap f go . unTree
+
+instance Foldable Tree where
+  foldr f z0 x0 = go x0 z0 where
+    go x z = bifoldr f go z (unTree x)
+
+instance Traversable Tree where
+  traverse f = go where
+    go = fmap Tree . bitraverse f go . unTree
+
+type instance Base (Tree a) = TreeF a
+
+instance Recursive (Tree a) where
+  project = unTree
+
+instance Corecursive (Tree a) where
+  embed = Tree
+
+class (Recursive t, Corecursive t, Monad n, Traversable (Base t)) => TreeLike a n t | t -> a n where
+  toTreeF :: Base t t -> TreeF a t
+  fromTreeF :: TreeF a t -> n (Base t t)
+  toTree :: t -> Tree a
+  toTree = Tree . fmap toTree . toTreeF . project
+  fromTree :: Tree a -> n t
+  fromTree = fmap embed . (traverse fromTree >=> fromTreeF) . unTree
+
+data SexpElem =
+    SexpElemList
+  | SexpElemAtom !Atom
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Hashable, NFData)
+
+instance TreeLike SexpElem Maybe Sexp where
+  toTreeF = \case
+    SexpAtomF a -> TreeF (SexpElemAtom a) Empty
+    SexpListF ss -> TreeF SexpElemList ss
+  fromTreeF = \case
+    TreeF (SexpElemAtom a) Empty -> Just (SexpAtomF a)
+    TreeF SexpElemList ss -> Just (SexpListF ss)
+    _ -> Nothing
+
+-- data UniLayer a = UniLayer
+-- data UniTree a = UniTree (HashMap a (UniLayer a))
+-- intoUni :: Tree a -> UniTree a
+-- intoUni = undefined
