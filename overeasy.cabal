@@ -28,6 +28,7 @@ library
       Overeasy.Classes
       Overeasy.EGraph
       Overeasy.Example
+      Overeasy.Expressions
       Overeasy.Matching
       Overeasy.Recursion
       Overeasy.Source
@@ -54,6 +55,7 @@ library
       LambdaCase
       KindSignatures
       MultiParamTypeClasses
+      PatternSynonyms
       Rank2Types
       ScopedTypeVariables
       StandaloneDeriving
@@ -73,6 +75,7 @@ library
     , microlens-th
     , mtl
     , recursion-schemes
+    , text
     , transformers
     , unordered-containers
   default-language: Haskell2010
@@ -101,6 +104,7 @@ test-suite overeasy-test
       LambdaCase
       KindSignatures
       MultiParamTypeClasses
+      PatternSynonyms
       Rank2Types
       ScopedTypeVariables
       StandaloneDeriving
@@ -123,6 +127,7 @@ test-suite overeasy-test
     , recursion-schemes
     , tasty
     , tasty-hunit
+    , text
     , transformers
     , unordered-containers
   default-language: Haskell2010

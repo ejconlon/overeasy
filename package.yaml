@@ -20,10 +20,10 @@ dependencies:
 - deepseq
 - hashable
 - microlens
-# - microlens-mtl
 - microlens-th
 - mtl
 - recursion-schemes
+- text
 - transformers
 - unordered-containers
 
@@ -44,6 +44,7 @@ default-extensions:
 - LambdaCase
 - KindSignatures
 - MultiParamTypeClasses
+- PatternSynonyms
 - Rank2Types
 - ScopedTypeVariables
 - StandaloneDeriving
