@@ -5,9 +5,9 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, runState)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.HashSet as HashSet
-import Overeasy.EGraph (EGraph, egNew)
+import Overeasy.EGraph (EAnalysisOff (..), EGraph, egAddTerm, egNew)
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufRoots, ufTotalSize)
-import Test.Overeasy.Example (ArithF)
+import Test.Overeasy.Example
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 
@@ -78,8 +78,12 @@ type EG = EGraph () ArithF
 runEG :: StateT EG IO () -> IO ()
 runEG = runS egNew
 
+noA :: EAnalysisOff ArithF
+noA = EAnalysisOff
+
 testEgSimple :: TestTree
 testEgSimple = testCase "EG simple" $ runEG $ do
+  applyTestS (egAddTerm noA (ArithConst 4)) $ \_ _ -> pure ()
   pure ()
 
 testEg :: TestTree
