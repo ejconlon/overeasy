@@ -8,12 +8,17 @@ module Overeasy.EGraph
   , ENodeId
   , EAnalysis (..)
   , EAnalysisOff (..)
+  , ENodePair (..)
+  , EClassInfo (..)
   , EGraph
   , egClassSize
   , egTotalClassSize
   , egNodeSize
+  , egFindNode
+  , egFindTerm
   , egClassInfo
   , egNew
+  -- , egAddNode
   , egAddTerm
   , egMerge
   , egNeedsRebuild
@@ -22,6 +27,8 @@ module Overeasy.EGraph
 
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (State, get, gets, modify')
+import Data.Foldable (for_)
+import Data.Functor.Foldable (project)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
@@ -29,11 +36,13 @@ import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
 import Data.Maybe (fromJust)
+import Data.Sequence (Seq (..))
+import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
-import Overeasy.Assoc (Assoc, assocEnsure, assocNew)
+import Overeasy.Assoc (Assoc, assocEnsure, assocFwd, assocNew)
 import Overeasy.Classes (BoundedJoinSemilattice, Changed (..))
-import Overeasy.Recursion (RecursiveWhole, foldWholeTrackM)
+import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateLens)
 import Overeasy.UnionFind (MergeRes (..), UnionFind, ufFind, ufMerge, ufNew, ufRoots, ufSize, ufTotalSize)
@@ -61,19 +70,22 @@ instance EAnalysis () f (EAnalysisOff f) where
   eaMake _ _ _ = ()
   eaModify _ _ g = g
 
+data ENodePair = ENodePair
+  { enpNode :: !ENodeId
+  , enpClass :: !EClassId
+  } deriving stock (Eq, Show, Generic)
+    deriving anyclass (NFData)
+
 -- | Info stored for every class: analysis data and class members.
 data EClassInfo d = EClassInfo
   { eciData :: !d
   , eciNodes :: !(HashSet ENodeId)
+  , eciParents :: !(HashMap ENodeId (HashSet EClassId))
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
 instance BoundedJoinSemilattice d => Semigroup (EClassInfo d) where
-  EClassInfo d1 n1 <> EClassInfo d2 n2 = EClassInfo (d1 <> d2) (n1 <> n2)
-
-instance BoundedJoinSemilattice d => Monoid (EClassInfo d) where
-  mempty = EClassInfo mempty mempty
-  mappend = (<>)
+  EClassInfo d1 n1 p1 <> EClassInfo d2 n2 p2 = EClassInfo (d1 <> d2) (n1 <> n2) (p1 <> p2)
 
 -- private ctor
 data EGraph d f = EGraph
@@ -114,11 +126,14 @@ egNodeSize = HashMap.size . egHashCons
 egClassInfo :: EClassId -> EGraph d f -> Maybe (EClassInfo d)
 egClassInfo c = HashMap.lookup c . egClassMap
 
--- egFind :: f EClassId -> EGraph d f -> Maybe EClassId
--- egFind = undefined
+-- | Find the class of the given node, if it exists.
+egFindNode :: (Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGraph d f -> Maybe EClassId
+egFindNode fc eg = do
+  n <- HashMap.lookup fc (assocFwd (egNodeAssoc eg))
+  HashMap.lookup n (egHashCons eg)
 
--- egFindTerm :: RecursiveWhole t f => t -> EGraph d f -> Maybe EClassId
--- egFindTerm = undefined
+egFindTerm :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGraph d f -> Maybe EClassId
+egFindTerm t eg = foldWholeM (`egFindNode` eg) t
 
 -- | Creates a new 'EGraph'
 egNew :: EGraph d f
@@ -140,9 +155,22 @@ egMake q fc = fmap (eaMake q fc) get
 egModify :: EAnalysis d f q => q -> EClassId -> State (EGraph d f) ()
 egModify q x = modify' (eaModify q x)
 
+data AddNodeRes = AddNodeRes !Changed !(Seq ENodePair)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (NFData)
+
+instance Semigroup AddNodeRes where
+  AddNodeRes c1 p1 <> AddNodeRes c2 p2 = AddNodeRes (c1 <> c2) (p1 <> p2)
+
+instance Monoid AddNodeRes where
+  mempty = AddNodeRes ChangedNo Seq.empty
+  mappend = (<>)
+
 -- private
-egAddNode :: (EAnalysis d f q, Eq (f EClassId), Hashable (f EClassId)) => q -> f EClassId -> State (EGraph d f) (Changed, EClassId)
-egAddNode q fc = do
+egAddNodeSub :: (EAnalysis d f q, Eq (f EClassId), Hashable (f EClassId)) => q -> f EClassId -> State (EGraph d f) (AddNodeRes, ENodePair)
+egAddNodeSub q fc = do
+  -- important: node should already be canonicalized!
+  -- first lookup the node in the assoc to ensure uniqueness
   (c, n) <- stateLens egNodeAssocL (assocEnsure fc)
   x <- case c of
         ChangedNo -> do
@@ -157,17 +185,40 @@ egAddNode q fc = do
           stateLens egHashConsL (modify' (HashMap.insert n x))
           -- analyze the node and put that info in the class map
           d <- egMake q fc
-          let i = EClassInfo d (HashSet.singleton n)
+          let i = EClassInfo d (HashSet.singleton n) HashMap.empty
           stateLens egClassMapL (modify' (HashMap.insert x i))
           -- call analysis modify
           egModify q x
           pure x
-  pure (c, x)
+  let p = ENodePair n x
+  pure (AddNodeRes c (Seq.singleton p), p)
+
+hmmInsert :: (Eq k, Hashable k, Eq v, Hashable v) => k -> v -> HashMap k (HashSet v) -> HashMap k (HashSet v)
+hmmInsert k v = HashMap.insertWith (<>) k (HashSet.singleton v)
+
+-- private
+-- Similar in structure to foldWholeTrackM
+egAddTermSub :: (EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (AddNodeRes, EClassId)
+egAddTermSub q = go where
+  go t = do
+    -- unwrap to work with the functor layer
+    let ft = project t
+    -- add all child nodes
+    frx <- traverse go ft
+    -- collect info generated from child nodes and leave pure structure
+    let (AddNodeRes changed1 children1, fx) = sequenceA frx
+    -- now fx should be canonicalized by construction
+    -- add the node to get its node and class ids
+    (AddNodeRes changed2 children2, ENodePair n x) <- egAddNodeSub q fx
+    -- now update all its children to add this as a parent
+    for_ children1 $ \(ENodePair _ c) ->
+      stateLens egClassMapL (modify' (HashMap.adjust (\v -> v { eciParents = hmmInsert n x (eciParents v) }) c))
+    pure (AddNodeRes (changed1 <> changed2) children2, x)
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
 -- returns 'ChangedYes' and a new class id.
 egAddTerm :: (EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (Changed, EClassId)
-egAddTerm = foldWholeTrackM . egAddNode
+egAddTerm q t = fmap (\(AddNodeRes c _, x) -> (c, x)) (egAddTermSub q t)
 
 -- | Merges two classes:
 -- Returns 'Nothing' if the classes are not found
@@ -181,7 +232,7 @@ egMerge _ i j = do
   case mx of
     MergeResMissing _ -> pure Nothing
     MergeResUnchanged x -> pure (Just (ChangedNo, x))
-    MergeResChanged leftRoot rightRoot mergedRoot  -> do
+    MergeResChanged leftRoot rightRoot mergedRoot -> do
       -- lookup and merge data for previous roots
       -- partial: guaranteed present by add and merge
       leftInfo <- gets (fromJust . egClassInfo leftRoot)
