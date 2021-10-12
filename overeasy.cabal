@@ -28,7 +28,10 @@ library
       Overeasy.Classes
       Overeasy.EGraph
       Overeasy.Example
-      Overeasy.Expressions
+      Overeasy.Expressions.Free
+      Overeasy.Expressions.Sexp
+      Overeasy.Expressions.Sop
+      Overeasy.Expressions.Tree
       Overeasy.Matching
       Overeasy.Recursion
       Overeasy.Source
