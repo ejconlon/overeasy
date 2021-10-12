@@ -21,6 +21,7 @@ dependencies:
 - hashable
 - microlens
 - microlens-th
+# - minisat
 - mtl
 - recursion-schemes
 - text
