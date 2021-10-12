@@ -6,6 +6,7 @@
 module Overeasy.UnionFind
   ( UnionFind
   , ufSize
+  , ufTotalSize
   , ufNew
   , ufMembers
   , ufRoots
