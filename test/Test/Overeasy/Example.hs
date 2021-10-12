@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 
--- | An example of equality saturation using E-Graphs.
-module Overeasy.Example where
+module Test.Overeasy.Example where
 
 import Control.DeepSeq (NFData)
 import Data.Functor.Foldable (Base, Corecursive (..), Recursive (..))
@@ -27,5 +26,3 @@ instance Recursive Arith where
 
 instance Corecursive Arith where
   embed = Arith
-
--- TODO implement equality saturation!

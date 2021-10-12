@@ -5,7 +5,9 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, runState)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.HashSet as HashSet
-import Overeasy.UnionFind
+import Overeasy.EGraph (EGraph, egNew)
+import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufRoots, ufTotalSize)
+import Test.Overeasy.Example (ArithF)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 
@@ -68,7 +70,20 @@ testUfRec = testCase "UF rec" $ runUF $ do
   applyTestS ufRoots $ \rs _ -> rs @?= HashSet.fromList "a"
   applyTestS ufMembers $ \rs _ -> rs @?= HashMap.fromList [('a', HashSet.fromList "abc")]
 
+testUf :: TestTree
+testUf = testGroup "UF" [testUfSimple, testUfRec]
+
+type EG = EGraph () ArithF
+
+runEG :: StateT EG IO () -> IO ()
+runEG = runS egNew
+
+testEgSimple :: TestTree
+testEgSimple = testCase "EG simple" $ runEG $ do
+  pure ()
+
+testEg :: TestTree
+testEg = testGroup "EG" [testEgSimple]
+
 main :: IO ()
-main = defaultMain $ testGroup "Overeasy"
-  [ testGroup "UF" [testUfSimple, testUfRec]
-  ]
+main = defaultMain (testGroup "Overeasy" [testUf , testEg])

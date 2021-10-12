@@ -27,7 +27,6 @@ library
       Overeasy.Assoc
       Overeasy.Classes
       Overeasy.EGraph
-      Overeasy.Example
       Overeasy.Expressions.Free
       Overeasy.Expressions.Sexp
       Overeasy.Expressions.Sop
@@ -87,6 +86,7 @@ test-suite overeasy-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Test.Overeasy.Example
       Paths_overeasy
   hs-source-dirs:
       test

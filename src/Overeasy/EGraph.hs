@@ -18,7 +18,6 @@ module Overeasy.EGraph
   , egFindTerm
   , egClassInfo
   , egNew
-  -- , egAddNode
   , egAddTerm
   , egMerge
   , egNeedsRebuild
