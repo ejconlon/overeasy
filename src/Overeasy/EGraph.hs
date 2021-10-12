@@ -9,6 +9,10 @@ module Overeasy.EGraph
   , EAnalysis (..)
   , EAnalysisOff (..)
   , EGraph
+  , egClassSize
+  , egTotalClassSize
+  , egNodeSize
+  , egClassInfo
   , egNew
   , egAddTerm
   , egMerge
@@ -24,6 +28,7 @@ import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
+import Data.Maybe (fromJust)
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocEnsure, assocNew)
@@ -31,7 +36,7 @@ import Overeasy.Classes (BoundedJoinSemilattice, Changed (..))
 import Overeasy.Recursion (RecursiveWhole, foldWholeTrackM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateLens)
-import Overeasy.UnionFind (UnionFind, ufFind, ufMerge, ufNew, ufRoots)
+import Overeasy.UnionFind (MergeRes (..), UnionFind, ufFind, ufMerge, ufNew, ufRoots, ufSize, ufTotalSize)
 
 -- | An opaque class id
 newtype EClassId = EClassId { unEClassId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
@@ -63,6 +68,13 @@ data EClassInfo d = EClassInfo
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
+instance BoundedJoinSemilattice d => Semigroup (EClassInfo d) where
+  EClassInfo d1 n1 <> EClassInfo d2 n2 = EClassInfo (d1 <> d2) (n1 <> n2)
+
+instance BoundedJoinSemilattice d => Monoid (EClassInfo d) where
+  mempty = EClassInfo mempty mempty
+  mappend = (<>)
+
 -- private ctor
 data EGraph d f = EGraph
   { egSource :: !(Source EClassId)
@@ -85,6 +97,28 @@ makeLensesFor
   , ("egHashCons", "egHashConsL")
   , ("egWorkList", "egWorkListL")
   ] ''EGraph
+
+-- | Number of equivalent classes in the 'EGraph' (see 'ufSize')
+egClassSize :: EGraph d f -> Int
+egClassSize = ufSize . egUnionFind
+
+-- | Number of total classes in the 'EGraph' (see 'ufTotalSize')
+egTotalClassSize :: EGraph d f -> Int
+egTotalClassSize = ufTotalSize . egUnionFind
+
+-- | Number of nodes in the 'EGraph'
+egNodeSize :: EGraph d f -> Int
+egNodeSize = HashMap.size . egHashCons
+
+-- | Lookup info for the given 'EClass'
+egClassInfo :: EClassId -> EGraph d f -> Maybe (EClassInfo d)
+egClassInfo c = HashMap.lookup c . egClassMap
+
+-- egFind :: f EClassId -> EGraph d f -> Maybe EClassId
+-- egFind = undefined
+
+-- egFindTerm :: RecursiveWhole t f => t -> EGraph d f -> Maybe EClassId
+-- egFindTerm = undefined
 
 -- | Creates a new 'EGraph'
 egNew :: EGraph d f
@@ -140,15 +174,23 @@ egAddTerm = foldWholeTrackM . egAddNode
 -- Otherwise returns the merged class id and whether anything has changed
 -- If things have changed, then you must call 'egRebuild' before adding more terms.
 -- (You can use 'egNeedsRebuild' to query this.)
-egMerge :: {- EAnalysis d f q => -} q -> EClassId -> EClassId -> State (EGraph d f) (Maybe (Changed, EClassId))
+egMerge :: EAnalysis d f q => q -> EClassId -> EClassId -> State (EGraph d f) (Maybe (Changed, EClassId))
 egMerge _ i j = do
   -- merge classes in the uf
-  -- TODO get old roots for i and j, and for changed ones, join their data and modify
   mx <- stateLens egUnionFindL (ufMerge i j)
   case mx of
-    Just (ChangedYes, x) -> stateLens egWorkListL (modify' (HashSet.insert x))
-    _ -> pure ()
-  pure mx
+    MergeResMissing _ -> pure Nothing
+    MergeResUnchanged x -> pure (Just (ChangedNo, x))
+    MergeResChanged leftRoot rightRoot mergedRoot  -> do
+      -- lookup and merge data for previous roots
+      -- partial: guaranteed present by add and merge
+      leftInfo <- gets (fromJust . egClassInfo leftRoot)
+      rightInfo <- gets (fromJust . egClassInfo rightRoot)
+      let mergedInfo = leftInfo <> rightInfo
+      stateLens egClassMapL (modify' (HashMap.insert mergedRoot mergedInfo))
+      -- add merged root to worklist
+      stateLens egWorkListL (modify' (HashSet.insert mergedRoot))
+      pure (Just (ChangedYes, mergedRoot))
 
 -- | Have we merged classes and do we need to rebuild before adding more terms?
 egNeedsRebuild :: EGraph d f -> Bool

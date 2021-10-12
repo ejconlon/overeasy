@@ -12,6 +12,7 @@ module Overeasy.UnionFind
   , ufRoots
   , ufAdd
   , ufFind
+  , MergeRes (..)
   , ufMerge
   ) where
 
@@ -23,7 +24,6 @@ import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
-import Overeasy.Classes (Changed (..))
 import Overeasy.StateUtil (stateFail)
 
 -- private ctor
@@ -33,7 +33,7 @@ data UnionFind x = UnionFind
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
--- | How many discrete members have ever been added? (Number of classes via 'ufSize' is always LTE.)
+-- | How many discrete members have ever been added? (Number of classes via 'ufSize' is always LTE total.)
 ufTotalSize :: UnionFind x -> Int
 ufTotalSize = HashMap.size . ufParents
 
@@ -103,25 +103,41 @@ ufFindInc a u@(UnionFind _ p) = fmap (ufFindRootInc u) (HashMap.lookup a p)
 ufFind :: (Eq x, Hashable x) => x -> State (UnionFind x) (Maybe x)
 ufFind x = stateFail (ufFindInc x)
 
+-- | The result of trying to merge two elements of the 'UnionFind'
+data MergeRes x =
+    MergeResMissing !x
+  | MergeResUnchanged !x
+  | MergeResChanged !x !x !x  -- ^ leftRoot rightRoot newRoot
+  deriving stock (Eq, Show, Functor, Foldable, Traversable, Generic)
+  deriving anyclass (NFData)
+
 -- private
-ufMergeInc :: (Ord x, Hashable x) => x -> x -> UnionFind x -> Maybe ((Changed, x), UnionFind x)
-ufMergeInc i j u@(UnionFind z p) = if HashMap.member i p && HashMap.member j p then Just (go i j) else Nothing where
+ufMergeInc :: (Ord x, Hashable x) => x -> x -> UnionFind x -> (MergeRes x, UnionFind x)
+ufMergeInc i j u@(UnionFind z p) = finalRes where
+  finalRes =
+    if HashMap.member i p
+      then if HashMap.member j p
+        then go i j
+        else (MergeResMissing j, u)
+      else (MergeResMissing i, u)
   go ix1 jx1 =
     let (iacc, ix2) = ufFindRootAcc p [] ix1
         (acc, jx2) = ufFindRootAcc p iacc jx1
     in if ix2 == jx2
-      then case acc of
-        [] -> ((ChangedNo, ix2), u)
-        _ -> let p' = foldr (`HashMap.insert` ix2) p acc
-             in ((ChangedNo, ix2), UnionFind z p')
+      then
+        let res = MergeResUnchanged ix2
+        in case acc of
+          [] -> (res, u)
+          _ -> let p' = foldr (`HashMap.insert` ix2) p acc
+              in (res, UnionFind z p')
       else
         let (kacc, kx) =
               if ix2 < jx2
                 then (if jx1 == jx2 then jx1:acc else jx2:jx1:acc, ix2)
                 else (if ix1 == ix2 then ix1:acc else ix2:ix1:acc, jx2)
             p' = foldr (`HashMap.insert` kx) p kacc
-        in ((ChangedYes, kx), UnionFind (z - 1) p')
+        in (MergeResChanged ix2 jx2 kx, UnionFind (z - 1) p')
 
 -- | Merge two classes in the UF
-ufMerge :: (Ord x, Hashable x) => x -> x -> State (UnionFind x) (Maybe (Changed, x))
-ufMerge i j = stateFail (ufMergeInc i j)
+ufMerge :: (Ord x, Hashable x) => x -> x -> State (UnionFind x) (MergeRes x)
+ufMerge i j = state (ufMergeInc i j)

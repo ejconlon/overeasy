@@ -5,7 +5,6 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, runState)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.HashSet as HashSet
-import Overeasy.Classes (Changed (..))
 import Overeasy.UnionFind
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
@@ -48,11 +47,13 @@ testUfSimple = testCase "UF simple" $ runUF $ do
   testS $ \uf -> ufTotalSize uf @?= 3
   applyTestS ufRoots $ \rs _ -> rs @?= HashSet.fromList "abc"
   applyTestS (ufMerge 'a' 'c') $ \res uf -> do
-    res @?= Just (ChangedYes, 'a')
+    res @?= MergeResChanged 'a' 'c' 'a'
     ufSize uf @?= 2
     ufTotalSize uf @?= 3
   applyTestS ufRoots $ \rs _ -> rs @?= HashSet.fromList "ab"
   applyTestS ufMembers $ \rs _ -> rs @?= HashMap.fromList [('a', HashSet.fromList "ac"), ('b', HashSet.fromList "b")]
+  applyTestS (ufMerge 'c' 'a') $ \res _ -> res @?= MergeResUnchanged 'a'
+  applyTestS (ufMerge 'b' 'z') $ \res _ -> res @?= MergeResMissing 'z'
 
 testUfRec :: TestTree
 testUfRec = testCase "UF rec" $ runUF $ do
