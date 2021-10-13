@@ -18,6 +18,8 @@ module Overeasy.EGraph
   , egFindTerm
   , egClassInfo
   , egNew
+  , egClasses
+  , egCanonicalize
   , egAddTerm
   , egMerge
   , egNeedsRebuild
@@ -44,7 +46,7 @@ import Overeasy.Classes (BoundedJoinSemilattice, Changed (..))
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateLens)
-import Overeasy.UnionFind (MergeRes (..), UnionFind, ufFind, ufMerge, ufNew, ufRoots, ufSize, ufTotalSize)
+import Overeasy.UnionFind (MergeRes (..), UnionFind, ufAdd, ufFind, ufMerge, ufNew, ufRoots, ufSize, ufTotalSize)
 
 -- | An opaque class id
 newtype EClassId = EClassId { unEClassId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
@@ -126,11 +128,13 @@ egClassInfo :: EClassId -> EGraph d f -> Maybe (EClassInfo d)
 egClassInfo c = HashMap.lookup c . egClassMap
 
 -- | Find the class of the given node, if it exists.
+-- Note that you may have to canonicalize first to find it!
 egFindNode :: (Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGraph d f -> Maybe EClassId
 egFindNode fc eg = do
   n <- HashMap.lookup fc (assocFwd (egNodeAssoc eg))
   HashMap.lookup n (egHashCons eg)
 
+-- | Find the class of the given term, if it exists
 egFindTerm :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGraph d f -> Maybe EClassId
 egFindTerm t eg = foldWholeM (`egFindNode` eg) t
 
@@ -142,7 +146,7 @@ egNew = EGraph (sourceNew (EClassId 0)) ufNew HashMap.empty (assocNew (ENodeId 0
 egClasses :: State (EGraph d f) (HashSet EClassId)
 egClasses = stateLens egUnionFindL ufRoots
 
--- private
+-- | Find the canonical form of a node
 egCanonicalize :: Traversable f => f EClassId -> State (EGraph d f) (Maybe (f EClassId))
 egCanonicalize = stateLens egUnionFindL . fmap sequence . traverse ufFind
 
@@ -180,6 +184,8 @@ egAddNodeSub q fc = do
         ChangedYes -> do
           -- node does not exist; get a new class id
           x <- stateLens egSourceL sourceAdd
+          -- add it to the uf
+          stateLens egUnionFindL (ufAdd x)
           -- map the node to the class id
           stateLens egHashConsL (modify' (HashMap.insert n x))
           -- analyze the node and put that info in the class map

@@ -5,7 +5,8 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, runState)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.HashSet as HashSet
-import Overeasy.EGraph (EAnalysisOff (..), EGraph, egAddTerm, egNew)
+import Overeasy.Classes (Changed (..))
+import Overeasy.EGraph (EAnalysisOff (..), EGraph, egAddTerm, egClassSize, egNew, egNodeSize, egTotalClassSize)
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufRoots, ufTotalSize)
 import Test.Overeasy.Example
 import Test.Tasty (TestTree, defaultMain, testGroup)
@@ -83,8 +84,28 @@ noA = EAnalysisOff
 
 testEgSimple :: TestTree
 testEgSimple = testCase "EG simple" $ runEG $ do
-  applyTestS (egAddTerm noA (ArithConst 4)) $ \_ _ -> pure ()
-  pure ()
+  testS $ \eg -> do
+    egClassSize eg @?= 0
+    egTotalClassSize eg @?= 0
+    egNodeSize eg @?= 0
+  cid4 <- applyTestS (egAddTerm noA (ArithConst 4)) $ \(c, x) eg -> do
+    c @?= ChangedYes
+    egClassSize eg @?= 1
+    egTotalClassSize eg @?= 1
+    egNodeSize eg @?= 1
+    pure x
+  _ <- applyTestS (egAddTerm noA (ArithConst 2)) $ \(c, x) eg -> do
+    c @?= ChangedYes
+    egClassSize eg @?= 2
+    egTotalClassSize eg @?= 2
+    egNodeSize eg @?= 2
+    pure x
+  applyTestS (egAddTerm noA (ArithConst 4)) $ \(c, x) eg -> do
+    c @?= ChangedNo
+    x @?= cid4
+    egClassSize eg @?= 2
+    egTotalClassSize eg @?= 2
+    egNodeSize eg @?= 2
 
 testEg :: TestTree
 testEg = testGroup "EG" [testEgSimple]
