@@ -42,7 +42,7 @@ import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocEnsure, assocFwd, assocNew)
-import Overeasy.Classes (BoundedJoinSemilattice, Changed (..))
+import Overeasy.Classes (Changed (..))
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateLens)
@@ -60,8 +60,9 @@ newtype ENodeId = ENodeId { unENodeId :: Int } deriving newtype (Eq, Ord, Show, 
 -- Should obey:
 --   The related data must obey 'BoundedJoinSemilattice'
 --   'eaModify' is idempotent
-class BoundedJoinSemilattice d => EAnalysis d f q | q -> d f where
+class EAnalysis d f q | q -> d f where
   eaMake :: q -> f EClassId -> EGraph d f -> d
+  eaJoin :: q -> d -> d -> d
   eaModify :: q -> EClassId -> EGraph d f -> EGraph d f
 
 -- | A disabled analysis
@@ -69,6 +70,7 @@ data EAnalysisOff (f :: Type -> Type) = EAnalysisOff
 
 instance EAnalysis () f (EAnalysisOff f) where
   eaMake _ _ _ = ()
+  eaJoin _ _ _ = ()
   eaModify _ _ g = g
 
 data ENodePair = ENodePair
@@ -85,8 +87,8 @@ data EClassInfo d = EClassInfo
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
-instance BoundedJoinSemilattice d => Semigroup (EClassInfo d) where
-  EClassInfo d1 n1 p1 <> EClassInfo d2 n2 p2 = EClassInfo (d1 <> d2) (n1 <> n2) (p1 <> p2)
+eciJoin :: EAnalysis d f q => q -> EClassInfo d -> EClassInfo d -> EClassInfo d
+eciJoin q (EClassInfo d1 n1 p1) (EClassInfo d2 n2 p2) = EClassInfo (eaJoin q d1 d2) (n1 <> n2) (p1 <> p2)
 
 -- private ctor
 data EGraph d f = EGraph
@@ -231,7 +233,7 @@ egAddTerm q t = fmap (\(AddNodeRes c _, x) -> (c, x)) (egAddTermSub q t)
 -- If things have changed, then you must call 'egRebuild' before adding more terms.
 -- (You can use 'egNeedsRebuild' to query this.)
 egMerge :: EAnalysis d f q => q -> EClassId -> EClassId -> State (EGraph d f) (Maybe (Changed, EClassId))
-egMerge _ i j = do
+egMerge q i j = do
   -- merge classes in the uf
   mx <- stateLens egUnionFindL (ufMerge i j)
   case mx of
@@ -242,7 +244,7 @@ egMerge _ i j = do
       -- partial: guaranteed present by add and merge
       leftInfo <- gets (fromJust . egClassInfo leftRoot)
       rightInfo <- gets (fromJust . egClassInfo rightRoot)
-      let mergedInfo = leftInfo <> rightInfo
+      let mergedInfo = eciJoin q leftInfo rightInfo
       stateLens egClassMapL (modify' (HashMap.insert mergedRoot mergedInfo))
       -- add merged root to worklist
       stateLens egWorkListL (modify' (HashSet.insert mergedRoot))
