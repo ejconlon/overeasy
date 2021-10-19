@@ -5,7 +5,8 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, runState)
 import Data.Char (chr, ord)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EGraph (EAnalysisOff (..), EGraph, egAddTerm, egClassSize, egNew, egNodeSize, egTotalClassSize)
+import Overeasy.EGraph (EAnalysisOff (..), EGraph, egAddTerm, egClassSize, egNeedsRebuild, egNew, egNodeSize,
+                        egTotalClassSize)
 import Overeasy.IntLikeMap (fromListIntLikeMap)
 import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet)
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufRoots, ufTotalSize)
@@ -104,17 +105,20 @@ testEgSimple = testCase "EG simple" $ runEG $ do
     egClassSize eg @?= 0
     egTotalClassSize eg @?= 0
     egNodeSize eg @?= 0
+    egNeedsRebuild eg @?= False
   cid4 <- applyTestS (egAddTerm noA (ArithConst 4)) $ \(c, x) eg -> do
     c @?= ChangedYes
     egClassSize eg @?= 1
     egTotalClassSize eg @?= 1
     egNodeSize eg @?= 1
+    egNeedsRebuild eg @?= False
     pure x
   _ <- applyTestS (egAddTerm noA (ArithConst 2)) $ \(c, x) eg -> do
     c @?= ChangedYes
     egClassSize eg @?= 2
     egTotalClassSize eg @?= 2
     egNodeSize eg @?= 2
+    egNeedsRebuild eg @?= False
     pure x
   applyTestS (egAddTerm noA (ArithConst 4)) $ \(c, x) eg -> do
     c @?= ChangedNo
@@ -122,6 +126,7 @@ testEgSimple = testCase "EG simple" $ runEG $ do
     egClassSize eg @?= 2
     egTotalClassSize eg @?= 2
     egNodeSize eg @?= 2
+    egNeedsRebuild eg @?= False
 
 testEg :: TestTree
 testEg = testGroup "EG" [testEgSimple]
