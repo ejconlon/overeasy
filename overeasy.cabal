@@ -90,6 +90,7 @@ test-suite overeasy-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+      Test.Overeasy.Assertions
       Test.Overeasy.Example
       Paths_overeasy
   hs-source-dirs:
