@@ -3,6 +3,8 @@
 -- | Assorted abstract nonsense
 module Overeasy.Classes
   ( Changed (..)
+  , PartialOrd (..)
+  , ordToPartialCompare
   , BoundedJoinSemilattice (..)
   , defaultJoinChanged
   , ApplyAction (..)
@@ -27,15 +29,27 @@ instance Monoid Changed where
   mempty = ChangedNo
   mappend = (<>)
 
+-- Should obey
+--   forall d1, d2. d1 == d2 -> partialCompare d1 d2 = Just EQ
+--   and all the rest of the standard partial order stuff
+class Eq d => PartialOrd d where
+  partialCompare :: d -> d -> Maybe Ordering
+
+instance PartialOrd () where
+  partialCompare _ _ = Just EQ
+
+ordToPartialCompare :: Ord d => d -> d -> Maybe Ordering
+ordToPartialCompare d1 d2 = Just (compare d1 d2)
+
 -- A "bounded join semilattice":
 -- mempty is bottom element of lattice, and mappend/<> is lattice join \/
 -- Should obey:
---   forall d. mempty <= d
---   forall d1, d2. d1 <= (d1 \/ d2), d2 <= (d1 \/ d2)
+--   forall d. partialCompare mempty d = Just LT
+--   forall d1, d2. partialCompare d1 (d1 \/ d2) = Just LT /\ partialCompare d2 (d1 \/ d2) = Just LT
 --   joinChanged = defaultJoinChanged
 --   join is idempotent, associative, commutative, has mempty as unit,
 --     and returns least upper bound
-class (Ord d, Monoid d) => BoundedJoinSemilattice d where
+class (PartialOrd d, Monoid d) => BoundedJoinSemilattice d where
   -- | Change-aware join (default is fine)
   joinChanged :: d -> d -> (Changed, d)
   joinChanged = defaultJoinChanged
