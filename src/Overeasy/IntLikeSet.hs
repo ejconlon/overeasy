@@ -1,6 +1,7 @@
 module Overeasy.IntLikeSet
   ( IntLikeSet (..)
   , emptyIntLikeSet
+  , singletonIntLikeSet
   , fromListIntLikeSet
   , sizeIntLikeSet
   , nullIntLikeSet
@@ -16,14 +17,18 @@ import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 
 newtype IntLikeSet x = IntLikeSet { unIntLikeSet :: IntSet }
-  deriving newtype (Eq, Show, NFData)
+  deriving newtype (Eq, Show, NFData, Semigroup, Monoid)
 
 emptyIntLikeSet :: IntLikeSet x
 emptyIntLikeSet = IntLikeSet IntSet.empty
 {-# INLINE emptyIntLikeSet #-}
 
+singletonIntLikeSet :: Coercible x Int => x -> IntLikeSet x
+singletonIntLikeSet = IntLikeSet . IntSet.singleton . coerce
+{-# INLINE singletonIntLikeSet #-}
+
 fromListIntLikeSet :: Coercible x Int => [x] -> IntLikeSet x
-fromListIntLikeSet = IntLikeSet . IntSet.fromList . fmap coerce
+fromListIntLikeSet = IntLikeSet . IntSet.fromList . coerce
 {-# INLINE fromListIntLikeSet #-}
 
 sizeIntLikeSet :: IntLikeSet x -> Int
@@ -39,7 +44,7 @@ memberIntLikeSet x = IntSet.member (coerce x) . unIntLikeSet
 {-# INLINE memberIntLikeSet #-}
 
 toListIntLikeSet :: Coercible x Int => IntLikeSet x -> [x]
-toListIntLikeSet = fmap coerce . IntSet.toList . unIntLikeSet
+toListIntLikeSet = coerce . IntSet.toList . unIntLikeSet
 {-# INLINE toListIntLikeSet #-}
 
 insertIntLikeSet :: Coercible x Int => x -> IntLikeSet x -> IntLikeSet x

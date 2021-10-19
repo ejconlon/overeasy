@@ -3,10 +3,11 @@ module Main (main) where
 import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, runState)
-import qualified Data.HashMap.Strict as HashMap
-import qualified Data.HashSet as HashSet
+import Data.Char (chr, ord)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisOff (..), EGraph, egAddTerm, egClassSize, egNew, egNodeSize, egTotalClassSize)
+import Overeasy.IntLikeMap (fromListIntLikeMap)
+import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet)
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufRoots, ufTotalSize)
 import Test.Overeasy.Example
 import Test.Tasty (TestTree, defaultMain, testGroup)
@@ -30,7 +31,22 @@ applyTestS act check = do
 runS :: s -> StateT s IO () -> IO ()
 runS = flip evalStateT
 
-type UF = UnionFind Char
+newtype V = V { unV :: Int }
+  deriving newtype (Eq, Ord)
+
+instance Show V where
+  show = show . fromV
+
+toV :: Char -> V
+toV = V . ord
+
+fromV :: V -> Char
+fromV = chr . unV
+
+setV :: String -> IntLikeSet V
+setV = fromListIntLikeSet . fmap toV
+
+type UF = UnionFind V
 
 runUF :: StateT UF IO () -> IO ()
 runUF = runS ufNew
@@ -39,37 +55,37 @@ testUfSimple :: TestTree
 testUfSimple = testCase "UF simple" $ runUF $ do
   testS $ \uf -> ufSize uf @?= 0
   testS $ \uf -> ufTotalSize uf @?= 0
-  applyTestS ufRoots $ \rs _ -> rs @?= HashSet.empty
-  applyS (ufAdd 'a')
+  applyTestS ufRoots $ \rs _ -> rs @?= emptyIntLikeSet
+  applyS (ufAdd (toV 'a'))
   testS $ \uf -> ufSize uf @?= 1
   testS $ \uf -> ufTotalSize uf @?= 1
-  applyTestS ufRoots $ \rs _ -> rs @?= HashSet.singleton 'a'
-  applyS (ufAdd 'b')
-  applyS (ufAdd 'c')
+  applyTestS ufRoots $ \rs _ -> rs @?= setV "a"
+  applyS (ufAdd (toV 'b'))
+  applyS (ufAdd (toV 'c'))
   testS $ \uf -> ufSize uf @?= 3
   testS $ \uf -> ufTotalSize uf @?= 3
-  applyTestS ufRoots $ \rs _ -> rs @?= HashSet.fromList "abc"
-  applyTestS (ufMerge 'a' 'c') $ \res uf -> do
-    res @?= MergeResChanged 'a' 'c' 'a'
+  applyTestS ufRoots $ \rs _ -> rs @?= setV "abc"
+  applyTestS (ufMerge (toV 'a') (toV 'c')) $ \res uf -> do
+    res @?= MergeResChanged (toV 'a') (toV 'c') (toV 'a')
     ufSize uf @?= 2
     ufTotalSize uf @?= 3
-  applyTestS ufRoots $ \rs _ -> rs @?= HashSet.fromList "ab"
-  applyTestS ufMembers $ \rs _ -> rs @?= HashMap.fromList [('a', HashSet.fromList "ac"), ('b', HashSet.fromList "b")]
-  applyTestS (ufMerge 'c' 'a') $ \res _ -> res @?= MergeResUnchanged 'a'
-  applyTestS (ufMerge 'b' 'z') $ \res _ -> res @?= MergeResMissing 'z'
+  applyTestS ufRoots $ \rs _ -> rs @?= setV "ab"
+  applyTestS ufMembers $ \rs _ -> rs @?= fromListIntLikeMap [(toV 'a', setV "ac"), (toV 'b', setV "b")]
+  applyTestS (ufMerge (toV 'c') (toV 'a')) $ \res _ -> res @?= MergeResUnchanged (toV 'a')
+  applyTestS (ufMerge (toV 'b') (toV 'z')) $ \res _ -> res @?= MergeResMissing (toV 'z')
 
 testUfRec :: TestTree
 testUfRec = testCase "UF rec" $ runUF $ do
-  applyS (ufAdd 'a')
-  applyS (ufAdd 'b')
-  applyS (ufAdd 'c')
-  applyS_ (ufMerge 'b' 'c')
-  applyS_ (ufMerge 'a' 'c')
+  applyS (ufAdd (toV 'a'))
+  applyS (ufAdd (toV 'b'))
+  applyS (ufAdd (toV 'c'))
+  applyS_ (ufMerge (toV 'b') (toV 'c'))
+  applyS_ (ufMerge (toV 'a') (toV 'c'))
   testS $ \uf -> do
     ufSize uf @?= 1
     ufTotalSize uf @?= 3
-  applyTestS ufRoots $ \rs _ -> rs @?= HashSet.fromList "a"
-  applyTestS ufMembers $ \rs _ -> rs @?= HashMap.fromList [('a', HashSet.fromList "abc")]
+  applyTestS ufRoots $ \rs _ -> rs @?= setV "a"
+  applyTestS ufMembers $ \rs _ -> rs @?= fromListIntLikeMap [(toV 'a', setV "abc")]
 
 testUf :: TestTree
 testUf = testGroup "UF" [testUfSimple, testUfRec]

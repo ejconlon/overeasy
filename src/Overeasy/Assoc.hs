@@ -9,8 +9,10 @@ module Overeasy.Assoc
   , assocEnsure
   , assocFwd
   , assocBwd
-  , assocRemoveByKey
-  , assocRemoveByValue
+  , assocLookupByKey
+  , assocLookupByValue
+  , assocDeleteByKey
+  , assocDeleteByValue
   ) where
 
 import Control.DeepSeq (NFData)
@@ -28,15 +30,15 @@ import Overeasy.StateUtil (stateFail, stateFailChanged)
 
 -- private ctor
 data Assoc x a = Assoc
-  { assocFwd :: !(HashMap a x)
-  , assocBwd :: !(IntLikeMap x a)
+  { assocFwd :: !(IntLikeMap x a)
+  , assocBwd :: !(HashMap a x)
   , assocSrc :: !(Source x)
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
 -- | How many elements are still in the map?
 assocSize :: Assoc x a -> Int
-assocSize = sizeIntLikeMap . assocBwd
+assocSize = sizeIntLikeMap . assocFwd
 
 -- | How many ids have ever been created?
 assocTotalSize :: Assoc x a -> Int
@@ -44,15 +46,15 @@ assocTotalSize = sourceSize . assocSrc
 
 -- | Creates a new 'Assoc' from a starting element
 assocNew :: Coercible x Int => x -> Assoc x a
-assocNew = Assoc HashMap.empty emptyIntLikeMap . sourceNew
+assocNew = Assoc emptyIntLikeMap HashMap.empty . sourceNew
 
 -- private
 assocAddInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> Maybe (x, Assoc x a)
 assocAddInc a (Assoc fwd bwd src) =
-  case HashMap.lookup a fwd of
+  case HashMap.lookup a bwd of
     Nothing ->
       let (n, src') = sourceAddInc src
-      in Just (n, Assoc (HashMap.insert a n fwd) (insertIntLikeMap n a bwd) src')
+      in Just (n, Assoc (insertIntLikeMap n a fwd) (HashMap.insert a n bwd) src')
     Just _ -> Nothing
 
 -- | Adds the given element to the 'Assoc' and returns a new id or 'Nothing' if it already exists
@@ -62,28 +64,36 @@ assocAdd = stateFail . assocAddInc
 -- private
 assocEnsureInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> ((Changed, x), Assoc x a)
 assocEnsureInc a w@(Assoc fwd bwd src) =
-  case HashMap.lookup a fwd of
+  case HashMap.lookup a bwd of
     Nothing ->
       let (n, src') = sourceAddInc src
-      in ((ChangedYes, n), Assoc (HashMap.insert a n fwd) (insertIntLikeMap n a bwd) src')
+      in ((ChangedYes, n), Assoc (insertIntLikeMap n a fwd) (HashMap.insert a n bwd) src')
     Just x -> ((ChangedNo, x), w)
 
 -- | Adds the given element to the 'Assoc' and returns a new id or the existing one on conflict
 assocEnsure :: (Coercible x Int, Eq a, Hashable a) => a -> State (Assoc x a) (Changed, x)
 assocEnsure = state . assocEnsureInc
 
+-- | Lookup foward
+assocLookupByKey :: (Coercible x Int) => x -> Assoc x a -> Maybe a
+assocLookupByKey x = lookupIntLikeMap x . assocFwd
+
+-- | Lookup backward
+assocLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> Maybe x
+assocLookupByValue a = HashMap.lookup a . assocBwd
+
 -- private
-assocRemoveByKeyInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> Maybe (Assoc x a)
-assocRemoveByKeyInc a (Assoc fwd bwd n) = fmap (\x -> Assoc (HashMap.delete a fwd) (deleteIntLikeMap x bwd) n) (HashMap.lookup a fwd)
+assocDeleteByKeyInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> Maybe (Assoc x a)
+assocDeleteByKeyInc a (Assoc fwd bwd n) = fmap (\x -> Assoc (deleteIntLikeMap x fwd) (HashMap.delete a bwd) n) (HashMap.lookup a bwd)
 
--- | Removes an element by key
-assocRemoveByKey :: (Coercible x Int, Eq a, Hashable a) => a -> State (Assoc x a) Changed
-assocRemoveByKey = stateFailChanged . assocRemoveByKeyInc
+-- | Deletes an element by key
+assocDeleteByKey :: (Coercible x Int, Eq a, Hashable a) => a -> State (Assoc x a) Changed
+assocDeleteByKey = stateFailChanged . assocDeleteByKeyInc
 
 -- private
-assocRemoveByValueInc :: (Coercible x Int, Eq a, Hashable a) => x -> Assoc x a -> Maybe (Assoc x a)
-assocRemoveByValueInc x (Assoc fwd bwd n) = fmap (\a -> Assoc (HashMap.delete a fwd) (deleteIntLikeMap x bwd) n) (lookupIntLikeMap x bwd)
+assocDeleteByValueInc :: (Coercible x Int, Eq a, Hashable a) => x -> Assoc x a -> Maybe (Assoc x a)
+assocDeleteByValueInc x (Assoc fwd bwd n) = fmap (\a -> Assoc (deleteIntLikeMap x fwd) (HashMap.delete a bwd) n) (lookupIntLikeMap x fwd)
 
--- | Removes an element by value
-assocRemoveByValue :: (Coercible x Int, Eq a, Hashable a) => x -> State (Assoc x a) Changed
-assocRemoveByValue = stateFailChanged . assocRemoveByValueInc
+-- | Deletes an element by value
+assocDeleteByValue :: (Coercible x Int, Eq a, Hashable a) => x -> State (Assoc x a) Changed
+assocDeleteByValue = stateFailChanged . assocDeleteByValueInc

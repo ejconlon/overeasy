@@ -30,10 +30,11 @@ import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (State, get, gets, modify')
 import Data.Foldable (for_)
 import Data.Functor.Foldable (project)
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
-import Data.HashSet (HashSet)
-import qualified Data.HashSet as HashSet
+-- import Data.HashMap.Strict (HashMap)
+-- import qualified Data.HashMap.Strict as HashMap
+-- import Data.HashSet (HashSet)
+-- import qualified Data.HashSet as HashSet
+import Data.Coerce (Coercible)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
 import Data.Maybe (fromJust)
@@ -41,11 +42,11 @@ import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
-import Overeasy.Assoc (Assoc, assocEnsure, assocFwd, assocNew)
+import Overeasy.Assoc (Assoc, assocEnsure, assocLookupByValue, assocNew)
 import Overeasy.Classes (Changed (..))
-import Overeasy.IntLikeMap (IntLikeMap, adjustIntLikeMap, emptyIntLikeMap, insertIntLikeMap, lookupIntLikeMap,
-                            partialLookupIntLikeMap, sizeIntLikeMap)
-import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, insertIntLikeSet, nullIntLikeSet)
+import Overeasy.IntLikeMap (IntLikeMap, adjustIntLikeMap, emptyIntLikeMap, insertIntLikeMap, insertWithIntLikeMap,
+                            lookupIntLikeMap, partialLookupIntLikeMap, sizeIntLikeMap)
+import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, insertIntLikeSet, nullIntLikeSet, singletonIntLikeSet)
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateLens)
@@ -85,8 +86,8 @@ data ENodePair = ENodePair
 -- | Info stored for every class: analysis data and class members.
 data EClassInfo d = EClassInfo
   { eciData :: !d
-  , eciNodes :: !(HashSet ENodeId)
-  , eciParents :: !(HashMap ENodeId (HashSet EClassId))
+  , eciNodes :: !(IntLikeSet ENodeId)
+  , eciParents :: !(IntLikeMap ENodeId (IntLikeSet EClassId))
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
@@ -136,7 +137,7 @@ egClassInfo c = lookupIntLikeMap c . egClassMap
 -- Note that you may have to canonicalize first to find it!
 egFindNode :: (Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGraph d f -> Maybe EClassId
 egFindNode fc eg = do
-  n <- HashMap.lookup fc (assocFwd (egNodeAssoc eg))
+  n <- assocLookupByValue fc (egNodeAssoc eg)
   lookupIntLikeMap n (egHashCons eg)
 
 -- | Find the class of the given term, if it exists
@@ -148,7 +149,7 @@ egNew :: EGraph d f
 egNew = EGraph (sourceNew (EClassId 0)) ufNew emptyIntLikeMap (assocNew (ENodeId 0)) emptyIntLikeMap emptyIntLikeSet
 
 -- | Yields all root classes
-egClasses :: State (EGraph d f) (HashSet EClassId)
+egClasses :: State (EGraph d f) (IntLikeSet EClassId)
 egClasses = stateLens egUnionFindL ufRoots
 
 -- | Find the canonical form of a node
@@ -195,7 +196,7 @@ egAddNodeSub q fc = do
           stateLens egHashConsL (modify' (insertIntLikeMap n x))
           -- analyze the node and put that info in the class map
           d <- egMake q fc
-          let i = EClassInfo d (HashSet.singleton n) HashMap.empty
+          let i = EClassInfo d (singletonIntLikeSet n) emptyIntLikeMap
           stateLens egClassMapL (modify' (insertIntLikeMap x i))
           -- call analysis modify
           egModify q x
@@ -203,8 +204,8 @@ egAddNodeSub q fc = do
   let p = ENodePair n x
   pure (AddNodeRes c (Seq.singleton p), p)
 
-hmmInsert :: (Eq k, Hashable k, Eq v, Hashable v) => k -> v -> HashMap k (HashSet v) -> HashMap k (HashSet v)
-hmmInsert k v = HashMap.insertWith (<>) k (HashSet.singleton v)
+hmmInsert :: (Coercible k Int, Coercible v Int) => k -> v -> IntLikeMap k (IntLikeSet v) -> IntLikeMap k (IntLikeSet v)
+hmmInsert k v = insertWithIntLikeMap (<>) k (singletonIntLikeSet v)
 
 -- private
 -- Similar in structure to foldWholeTrackM
