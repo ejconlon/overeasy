@@ -29,9 +29,11 @@ library
       Overeasy.EGraph
       Overeasy.Expressions.Free
       Overeasy.Expressions.Sexp
-      Overeasy.Expressions.Sop
       Overeasy.Expressions.Tree
+      Overeasy.IntLikeMap
+      Overeasy.IntLikeSet
       Overeasy.Matching
+      Overeasy.Orphans
       Overeasy.Recursion
       Overeasy.Source
       Overeasy.StateUtil
@@ -68,7 +70,8 @@ library
       TypeFamilies
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -fno-warn-unused-top-binds -fwrite-ide-info -hiedir=.hie
   build-depends:
-      base >=4.12 && <5
+      algebraic-graphs
+    , base >=4.12 && <5
     , containers
     , data-fix
     , deepseq
@@ -118,7 +121,8 @@ test-suite overeasy-test
       TypeFamilies
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -fno-warn-unused-top-binds -fwrite-ide-info -hiedir=.hie -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.12 && <5
+      algebraic-graphs
+    , base >=4.12 && <5
     , containers
     , data-fix
     , deepseq

@@ -13,6 +13,7 @@ module Overeasy.Expressions.Free
   ) where
 
 import Control.DeepSeq (NFData)
+import Control.Monad (ap)
 import Data.Bifoldable (Bifoldable (..))
 import Data.Bifunctor (Bifunctor (..))
 import Data.Bitraversable (Bitraversable (..))
@@ -28,7 +29,7 @@ data FreeF f a r =
     FreePureF !a
   | FreeEmbedF !(f r)
   deriving stock (Eq, Show, Functor, Foldable, Traversable, Generic)
-  deriving anyclass (NFData)
+  deriving anyclass (NFData, Hashable)
 
 instance Functor f => Bifunctor (FreeF f) where
   bimap f g = \case
@@ -59,10 +60,21 @@ pattern FreeEmbed fr = Free (FreeEmbedF fr)
 deriving newtype instance (Eq (f (Free f a)), Eq a) => Eq (Free f a)
 deriving newtype instance (Show (f (Free f a)), Show a) => Show (Free f a)
 deriving newtype instance (NFData (f (Free f a)), NFData a) => NFData (Free f a)
+deriving newtype instance (Hashable (f (Free f a)), Hashable a) => Hashable (Free f a)
 
 instance Functor f => Functor (Free f) where
   fmap f = go where
     go = Free . bimap f go . unFree
+
+instance Functor f => Applicative (Free f) where
+  pure = Free . FreePureF
+  (<*>) = ap
+
+instance Functor f => Monad (Free f) where
+  return = pure
+  Free m >>= f = case m of
+    FreePureF a -> f a
+    FreeEmbedF g -> Free (FreeEmbedF (fmap (>>= f) g))
 
 instance Foldable f => Foldable (Free f) where
   foldr f z0 x0 = go x0 z0 where
@@ -90,3 +102,13 @@ freeSubst s = go where
   go = \case
     FreePure a -> s a
     FreeEmbed fr -> embed (fmap go fr)
+
+-- TODO: define something like this:
+
+-- data FreeElem e a =
+--     FreeElemPure !a
+--   | FreeElemEmbed !e
+--   deriving stock (Eq, Show, Generic)
+--   deriving anyclass (NFData, Hashable)
+
+-- instance (Whole t f, TreeLike e n t) => TreeLike (FreeElem e a) Maybe (Free f a) where

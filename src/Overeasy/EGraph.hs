@@ -43,6 +43,9 @@ import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocEnsure, assocFwd, assocNew)
 import Overeasy.Classes (Changed (..))
+import Overeasy.IntLikeMap (IntLikeMap, adjustIntLikeMap, emptyIntLikeMap, insertIntLikeMap, lookupIntLikeMap,
+                            partialLookupIntLikeMap, sizeIntLikeMap)
+import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, insertIntLikeSet, nullIntLikeSet)
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateLens)
@@ -94,10 +97,10 @@ eciJoin q (EClassInfo d1 n1 p1) (EClassInfo d2 n2 p2) = EClassInfo (eaJoin q d1 
 data EGraph d f = EGraph
   { egSource :: !(Source EClassId)
   , egUnionFind :: !(UnionFind EClassId)
-  , egClassMap :: !(HashMap EClassId (EClassInfo d))
+  , egClassMap :: !(IntLikeMap EClassId (EClassInfo d))
   , egNodeAssoc :: !(Assoc ENodeId (f EClassId))
-  , egHashCons :: !(HashMap ENodeId EClassId)
-  , egWorkList :: !(HashSet EClassId)
+  , egHashCons :: !(IntLikeMap ENodeId EClassId)
+  , egWorkList :: !(IntLikeSet EClassId)
   } deriving stock (Generic)
 
 deriving stock instance (Eq d, Eq (f EClassId)) => Eq (EGraph d f)
@@ -123,18 +126,18 @@ egTotalClassSize = ufTotalSize . egUnionFind
 
 -- | Number of nodes in the 'EGraph'
 egNodeSize :: EGraph d f -> Int
-egNodeSize = HashMap.size . egHashCons
+egNodeSize = sizeIntLikeMap . egHashCons
 
 -- | Lookup info for the given 'EClass'
 egClassInfo :: EClassId -> EGraph d f -> Maybe (EClassInfo d)
-egClassInfo c = HashMap.lookup c . egClassMap
+egClassInfo c = lookupIntLikeMap c . egClassMap
 
 -- | Find the class of the given node, if it exists.
 -- Note that you may have to canonicalize first to find it!
 egFindNode :: (Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGraph d f -> Maybe EClassId
 egFindNode fc eg = do
   n <- HashMap.lookup fc (assocFwd (egNodeAssoc eg))
-  HashMap.lookup n (egHashCons eg)
+  lookupIntLikeMap n (egHashCons eg)
 
 -- | Find the class of the given term, if it exists
 egFindTerm :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGraph d f -> Maybe EClassId
@@ -142,7 +145,7 @@ egFindTerm t eg = foldWholeM (`egFindNode` eg) t
 
 -- | Creates a new 'EGraph'
 egNew :: EGraph d f
-egNew = EGraph (sourceNew (EClassId 0)) ufNew HashMap.empty (assocNew (ENodeId 0)) HashMap.empty HashSet.empty
+egNew = EGraph (sourceNew (EClassId 0)) ufNew emptyIntLikeMap (assocNew (ENodeId 0)) emptyIntLikeMap emptyIntLikeSet
 
 -- | Yields all root classes
 egClasses :: State (EGraph d f) (HashSet EClassId)
@@ -182,18 +185,18 @@ egAddNodeSub q fc = do
           -- node already exists; just return existing class id
           hc <- gets egHashCons
           -- partial: should exist in hashcons by construction (next case)
-          pure (hc HashMap.! n)
+          pure (partialLookupIntLikeMap n hc)
         ChangedYes -> do
           -- node does not exist; get a new class id
           x <- stateLens egSourceL sourceAdd
           -- add it to the uf
           stateLens egUnionFindL (ufAdd x)
           -- map the node to the class id
-          stateLens egHashConsL (modify' (HashMap.insert n x))
+          stateLens egHashConsL (modify' (insertIntLikeMap n x))
           -- analyze the node and put that info in the class map
           d <- egMake q fc
           let i = EClassInfo d (HashSet.singleton n) HashMap.empty
-          stateLens egClassMapL (modify' (HashMap.insert x i))
+          stateLens egClassMapL (modify' (insertIntLikeMap x i))
           -- call analysis modify
           egModify q x
           pure x
@@ -219,7 +222,7 @@ egAddTermSub q = go where
     (AddNodeRes changed2 children2, ENodePair n x) <- egAddNodeSub q fx
     -- now update all its children to add this as a parent
     for_ children1 $ \(ENodePair _ c) ->
-      stateLens egClassMapL (modify' (HashMap.adjust (\v -> v { eciParents = hmmInsert n x (eciParents v) }) c))
+      stateLens egClassMapL (modify' (adjustIntLikeMap (\v -> v { eciParents = hmmInsert n x (eciParents v) }) c))
     pure (AddNodeRes (changed1 <> changed2) children2, x)
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
@@ -245,14 +248,14 @@ egMerge q i j = do
       leftInfo <- gets (fromJust . egClassInfo leftRoot)
       rightInfo <- gets (fromJust . egClassInfo rightRoot)
       let mergedInfo = eciJoin q leftInfo rightInfo
-      stateLens egClassMapL (modify' (HashMap.insert mergedRoot mergedInfo))
+      stateLens egClassMapL (modify' (insertIntLikeMap mergedRoot mergedInfo))
       -- add merged root to worklist
-      stateLens egWorkListL (modify' (HashSet.insert mergedRoot))
+      stateLens egWorkListL (modify' (insertIntLikeSet mergedRoot))
       pure (Just (ChangedYes, mergedRoot))
 
 -- | Have we merged classes and do we need to rebuild before adding more terms?
 egNeedsRebuild :: EGraph d f -> Bool
-egNeedsRebuild = not . HashSet.null . egWorkList
+egNeedsRebuild = not . nullIntLikeSet . egWorkList
 
 -- | Rebuilds the 'EGraph' after merging to allow adding more terms. (Always safe to call.)
 egRebuild :: {- EAnalysis d f q => -} q -> State (EGraph d f) ()

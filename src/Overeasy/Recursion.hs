@@ -5,9 +5,14 @@ module Overeasy.Recursion
   , foldWhole
   , foldWholeM
   , foldWholeTrackM
+  , foldWholeAcc
   ) where
 
+import Control.Monad.Writer (execWriter, tell)
+import Data.Functor (($>))
 import Data.Functor.Foldable (Base, Recursive (..), fold)
+import Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
 
 -- | Often 'f' is primary, not 't'. Relate them with this constraint.
 type Whole t f = (f ~ Base t)
@@ -36,3 +41,8 @@ foldWholeTrackM h = go where
     let (c1, fa) = sequenceA fca
     (c2, a) <- h fa
     pure (c1 <> c2, a)
+
+-- | Folds all the way up and track intermediate results.
+foldWholeAcc :: (RecursiveWhole t f, Traversable f) => (f z -> z) -> t -> Seq (f z, z)
+foldWholeAcc h = execWriter . foldWholeM go where
+  go fz = let z = h fz in tell (Seq.singleton (fz, z)) $> z

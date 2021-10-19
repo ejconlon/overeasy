@@ -13,11 +13,9 @@ import Control.DeepSeq (NFData)
 import Data.Functor.Foldable (Base, Corecursive (..), Recursive (..))
 import Data.Hashable (Hashable)
 import Data.Sequence (Seq (..))
-import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import Overeasy.Expressions.Free (Free, pattern FreeEmbed, pattern FreePure)
-import Overeasy.Expressions.Sop (Prod (..), SopF (..), SopLike (..), matchProdRec)
 import Overeasy.Expressions.Tree (TreeF (..), TreeLike (..))
 
 -- | A sexp atom
@@ -82,19 +80,4 @@ instance TreeLike SexpElem Maybe Sexp where
   fromTreeF = \case
     TreeF (SexpElemAtom a) Empty -> Just (SexpAtomF a)
     TreeF SexpElemList ss -> Just (SexpListF ss)
-    _ -> Nothing
-
-data SexpLabel =
-    SexpLabelAtom
-  | SexpLabelList
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (NFData, Hashable)
-
-instance SopLike SexpLabel Atom Maybe Sexp where
-  toSopF = \case
-    SexpAtomF a -> SopF SexpLabelAtom (Seq.singleton (ProdLeaf a))
-    SexpListF ss -> SopF SexpLabelList (fmap ProdRec ss)
-  fromSopF = \case
-    SopF SexpLabelAtom (ProdLeaf a :<| Empty) -> Just (SexpAtomF a)
-    SopF SexpLabelList rss -> fmap SexpListF (traverse matchProdRec rss)
     _ -> Nothing
