@@ -204,8 +204,8 @@ egAddNodeSub q fc = do
   let p = ENodePair n x
   pure (AddNodeRes c (Seq.singleton p), p)
 
-hmmInsert :: (Coercible k Int, Coercible v Int) => k -> v -> IntLikeMap k (IntLikeSet v) -> IntLikeMap k (IntLikeSet v)
-hmmInsert k v = insertWithIntLikeMap (<>) k (singletonIntLikeSet v)
+multiMapInsert :: (Coercible k Int, Coercible v Int) => k -> v -> IntLikeMap k (IntLikeSet v) -> IntLikeMap k (IntLikeSet v)
+multiMapInsert k v = insertWithIntLikeMap (<>) k (singletonIntLikeSet v)
 
 -- private
 -- Similar in structure to foldWholeTrackM
@@ -223,7 +223,7 @@ egAddTermSub q = go where
     (AddNodeRes changed2 children2, ENodePair n x) <- egAddNodeSub q fx
     -- now update all its children to add this as a parent
     for_ children1 $ \(ENodePair _ c) ->
-      stateLens egClassMapL (modify' (adjustIntLikeMap (\v -> v { eciParents = hmmInsert n x (eciParents v) }) c))
+      stateLens egClassMapL (modify' (adjustIntLikeMap (\v -> v { eciParents = multiMapInsert n x (eciParents v) }) c))
     pure (AddNodeRes (changed1 <> changed2) children2, x)
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
