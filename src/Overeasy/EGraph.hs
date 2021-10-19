@@ -27,14 +27,10 @@ module Overeasy.EGraph
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (State, get, gets, modify')
+import Control.Monad (void)
+import Control.Monad.State.Strict (State, get, gets, modify', put)
 import Data.Foldable (for_)
 import Data.Functor.Foldable (project)
--- import Data.HashMap.Strict (HashMap)
--- import qualified Data.HashMap.Strict as HashMap
--- import Data.HashSet (HashSet)
--- import qualified Data.HashSet as HashSet
-import Data.Coerce (Coercible)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
 import Data.Maybe (fromJust)
@@ -42,21 +38,28 @@ import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
-import Overeasy.Assoc (Assoc, assocEnsure, assocLookupByValue, assocNew)
+import Overeasy.Assoc (Assoc, assocEnsure, assocLookupByValue, assocNew, assocPartialLookupByKey,
+                       assocPartialLookupByValue)
 import Overeasy.Classes (Changed (..))
-import Overeasy.IntLikeMap (IntLikeMap, adjustIntLikeMap, emptyIntLikeMap, insertIntLikeMap, insertWithIntLikeMap,
-                            lookupIntLikeMap, partialLookupIntLikeMap, sizeIntLikeMap)
-import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, insertIntLikeSet, nullIntLikeSet, singletonIntLikeSet)
+import Overeasy.IntLikeMap (IntLikeMap, adjustIntLikeMap, deleteIntLikeMap, emptyIntLikeMap, insertIntLikeMap,
+                            lookupIntLikeMap, partialLookupIntLikeMap, sizeIntLikeMap, toListIntLikeMap)
+import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, insertIntLikeSet, nullIntLikeSet, singletonIntLikeSet,
+                            toListIntLikeSet)
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateLens)
-import Overeasy.UnionFind (MergeRes (..), UnionFind, ufAdd, ufFind, ufMerge, ufNew, ufRoots, ufSize, ufTotalSize)
+import Overeasy.UnionFind (MergeRes (..), UnionFind, ufAdd, ufFind, ufMerge, ufNew, ufPartialFind, ufRoots, ufSize,
+                           ufTotalSize)
 
 -- | An opaque class id
-newtype EClassId = EClassId { unEClassId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
+newtype EClassId = EClassId { unEClassId :: Int }
+  deriving stock (Show)
+  deriving newtype (Eq, Ord, Enum, Hashable, NFData)
 
 -- | An opaque node id
-newtype ENodeId = ENodeId { unENodeId :: Int } deriving newtype (Eq, Ord, Show, Enum, Hashable, NFData)
+newtype ENodeId = ENodeId { unENodeId :: Int }
+  deriving stock (Show)
+  deriving newtype (Eq, Ord, Enum, Hashable, NFData)
 
 -- | The definition of an 'EGraph' analysis.
 -- We thread the analysis definition 'q' through the 'EGM' monad to perform analyses as we construct
@@ -87,7 +90,7 @@ data ENodePair = ENodePair
 data EClassInfo d = EClassInfo
   { eciData :: !d
   , eciNodes :: !(IntLikeSet ENodeId)
-  , eciParents :: !(IntLikeMap ENodeId (IntLikeSet EClassId))
+  , eciParents :: !(IntLikeMap ENodeId EClassId)
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
@@ -157,6 +160,15 @@ egCanonicalize :: Traversable f => f EClassId -> State (EGraph d f) (Maybe (f EC
 egCanonicalize = stateLens egUnionFindL . fmap sequence . traverse ufFind
 
 -- private
+egCanonicalizeInternal :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => ENodeId -> State (EGraph d f) ENodeId
+egCanonicalizeInternal = result where
+  result y = do
+    node <- stateLens egNodeAssocL (gets (assocPartialLookupByKey y))
+    -- partial: guaranteed present by construction
+    fz <- stateLens egUnionFindL (traverse ufPartialFind node)
+    stateLens egNodeAssocL (gets (assocPartialLookupByValue fz))
+
+-- private
 egMake :: EAnalysis d f q => q -> f EClassId -> State (EGraph d f) d
 egMake q fc = fmap (eaMake q fc) get
 
@@ -204,9 +216,6 @@ egAddNodeSub q fc = do
   let p = ENodePair n x
   pure (AddNodeRes c (Seq.singleton p), p)
 
-multiMapInsert :: (Coercible k Int, Coercible v Int) => k -> v -> IntLikeMap k (IntLikeSet v) -> IntLikeMap k (IntLikeSet v)
-multiMapInsert k v = insertWithIntLikeMap (<>) k (singletonIntLikeSet v)
-
 -- private
 -- Similar in structure to foldWholeTrackM
 egAddTermSub :: (EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (AddNodeRes, EClassId)
@@ -223,7 +232,8 @@ egAddTermSub q = go where
     (AddNodeRes changed2 children2, ENodePair n x) <- egAddNodeSub q fx
     -- now update all its children to add this as a parent
     for_ children1 $ \(ENodePair _ c) ->
-      stateLens egClassMapL (modify' (adjustIntLikeMap (\v -> v { eciParents = multiMapInsert n x (eciParents v) }) c))
+      -- it's ok to overwrite class ids per node because they're guaranteed to be in the same equivalence class
+      stateLens egClassMapL (modify' (adjustIntLikeMap (\v -> v { eciParents = insertIntLikeMap n x (eciParents v) }) c))
     pure (AddNodeRes (changed1 <> changed2) children2, x)
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
@@ -259,6 +269,41 @@ egNeedsRebuild :: EGraph d f -> Bool
 egNeedsRebuild = not . nullIntLikeSet . egWorkList
 
 -- | Rebuilds the 'EGraph' after merging to allow adding more terms. (Always safe to call.)
-egRebuild :: {- EAnalysis d f q => -} q -> State (EGraph d f) ()
-egRebuild = error "TODO"
--- TODO implement rebuild + repair from the paper (fig 9)
+egRebuild :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> State (EGraph d f) ()
+egRebuild q = go where
+  go = do
+    wl <- gets egWorkList
+    if nullIntLikeSet wl
+      then pure ()
+      else do
+        stateLens egWorkListL (put emptyIntLikeSet)
+        for_ (toListIntLikeSet wl) (egRepair q)
+        go
+
+-- private
+egRepair :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> EClassId -> State (EGraph d f) ()
+egRepair q i = result where
+  result = do
+    -- partials: nodes and classes should be present by construction
+    parentPairs <- gets (toListIntLikeMap . eciParents . partialLookupIntLikeMap i . egClassMap)
+    -- update the hashcons to point canonical nodes to canonical classes
+    for_ parentPairs $ \(parNodeId, parClassId) -> do
+      stateLens egHashConsL (modify' (deleteIntLikeMap parNodeId))
+      newParNodeId <- egCanonicalizeInternal parNodeId
+      newParClass <- stateLens egUnionFindL (ufPartialFind parClassId)
+      stateLens egHashConsL (modify' (insertIntLikeMap newParNodeId newParClass))
+    -- dedupe the parents - equal parents get merged and put on worklist
+    newParents <- dedupe emptyIntLikeMap parentPairs
+    stateLens egClassMapL (modify' (adjustIntLikeMap (\eci -> eci { eciParents = newParents }) i))
+    pure ()
+  dedupe newParents pairs =
+    case pairs of
+      [] -> pure newParents
+      (parNodeId, parClassId):rest -> do
+        newParNodeId <- egCanonicalizeInternal parNodeId
+        case lookupIntLikeMap newParNodeId newParents of
+          Just otherClassId -> void (egMerge q parClassId otherClassId)
+          Nothing -> pure ()
+        newParClass <- stateLens egUnionFindL (ufPartialFind parClassId)
+        let newParents' = insertIntLikeMap newParNodeId newParClass newParents
+        dedupe newParents' rest

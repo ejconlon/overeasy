@@ -1,19 +1,21 @@
 module Main (main) where
 
-import Control.Monad (unless, void)
+import Control.Monad (unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, runState)
 import Data.Char (chr, ord)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EGraph (EAnalysisOff (..), EGraph, egAddTerm, egClassSize, egMerge, egNeedsRebuild, egNew, egNodeSize,
-                        egTotalClassSize)
+import Overeasy.EGraph (EAnalysisOff (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge, egNeedsRebuild, egNew,
+                        egNodeSize, egRebuild, egTotalClassSize)
 import Overeasy.IntLikeMap (fromListIntLikeMap)
 import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet)
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufRoots, ufTotalSize)
+import System.Environment (lookupEnv, setEnv)
 import Test.Overeasy.Assertions ((@/=))
 import Test.Overeasy.Example (ArithF, pattern ArithConst, pattern ArithPlus)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
+import Text.Pretty.Simple (pPrint)
 
 applyS :: State s a -> StateT s IO a
 applyS = state . runState
@@ -116,6 +118,7 @@ testEgSimple = testCase "EG simple" $ runEG $ do
   -- Add the term `4`
   cidFour <- applyTestS (egAddTerm noA termFour) $ \(c, x) eg -> do
     c @?= ChangedYes
+    egFindTerm termFour eg @?= Just x
     egClassSize eg @?= 1
     egTotalClassSize eg @?= 1
     egNodeSize eg @?= 1
@@ -125,6 +128,7 @@ testEgSimple = testCase "EG simple" $ runEG $ do
   cidTwo <- applyTestS (egAddTerm noA termTwo) $ \(c, x) eg -> do
     c @?= ChangedYes
     x @/= cidFour
+    egFindTerm termTwo eg @?= Just x
     egClassSize eg @?= 2
     egTotalClassSize eg @?= 2
     egNodeSize eg @?= 2
@@ -134,15 +138,19 @@ testEgSimple = testCase "EG simple" $ runEG $ do
   applyTestS (egAddTerm noA termFour) $ \(c, x) eg -> do
     c @?= ChangedNo
     x @?= cidFour
+    egFindTerm termFour eg @?= Just x
     egClassSize eg @?= 2
     egTotalClassSize eg @?= 2
     egNodeSize eg @?= 2
     egNeedsRebuild eg @?= False
   -- Add the term `2 + 2`
   cidPlus <- applyTestS (egAddTerm noA termPlus) $ \(c, x) eg -> do
+    putStrLn "=== AFTER ADDING ALL NODES ==="
+    pPrint eg
     c @?= ChangedYes
     x @/= cidFour
     x @/= cidTwo
+    egFindTerm termPlus eg @?= Just x
     egClassSize eg @?= 3
     egTotalClassSize eg @?= 3
     egNodeSize eg @?= 3
@@ -156,8 +164,11 @@ testEgSimple = testCase "EG simple" $ runEG $ do
       Just (c, x) -> do
         c @?= ChangedNo
         x @?= cidFour
+        egFindTerm termFour eg @?= Just x
   -- Merge `2 + 2` and `4`
   cidMerged <- applyTestS (egMerge noA cidPlus cidFour) $ \m eg -> do
+    putStrLn "=== AFTER MERGING ==="
+    pPrint eg
     egNeedsRebuild eg @?= True
     case m of
       Nothing -> fail "Could not resolve one of cidFour or cidPlus"
@@ -166,10 +177,22 @@ testEgSimple = testCase "EG simple" $ runEG $ do
         unless (x == cidFour || x == cidPlus) (fail "Merged class should be one of inputs")
         x @/= cidTwo
         pure x
+  -- Now rebuild
+  applyTestS (egRebuild noA) $ \() eg -> do
+    putStrLn "=== AFTER REBUILDING ==="
+    pPrint eg
+    egFindTerm termFour eg @?= Just cidMerged
+    egFindTerm termPlus eg @?= Just cidMerged
+    egFindTerm termTwo eg @?= Just cidTwo
+    egNeedsRebuild eg @?= False
   pure ()
 
 testEg :: TestTree
 testEg = testGroup "EG" [testEgSimple]
 
 main :: IO ()
-main = defaultMain (testGroup "Overeasy" [testUf , testEg])
+main = do
+  mayDebugStr <- lookupEnv "DEBUG"
+  let debug = Just "1" == mayDebugStr
+  when debug (setEnv "TASTY_NUM_THREADS" "1")
+  defaultMain (testGroup "Overeasy" [testUf , testEg])

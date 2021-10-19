@@ -12,13 +12,15 @@ module Overeasy.UnionFind
   , ufRoots
   , ufAdd
   , ufFind
+  , ufPartialFind
   , MergeRes (..)
   , ufMerge
   ) where
 
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (State, modify', state)
-import Data.Coerce (Coercible)
+import Data.Coerce (Coercible, coerce)
+import Data.Maybe (fromJust)
 import GHC.Generics (Generic)
 import Overeasy.IntLikeMap (IntLikeMap, emptyIntLikeMap, insertIntLikeMap, keysIntLikeMap, lookupIntLikeMap,
                             memberIntLikeMap, partialLookupIntLikeMap, sizeIntLikeMap)
@@ -101,6 +103,11 @@ ufFindInc a u@(UnionFind _ p) = fmap (ufFindRootInc u) (lookupIntLikeMap a p)
 -- | Finds the canonical class member of the UF or 'Nothing' if not found
 ufFind :: (Coercible x Int, Eq x) => x -> State (UnionFind x) (Maybe x)
 ufFind x = stateFail (ufFindInc x)
+
+-- | Finds the canonical class member of the UF or calls 'error'.
+-- NOTE: THIS IS PARTIAL!
+ufPartialFind :: (Coercible x Int, Eq x) => x -> State (UnionFind x) x
+ufPartialFind x = fmap (fromJust (error ("Could not find in UF: " ++ show (coerce x :: Int)))) (ufFind x)
 
 -- | The result of trying to merge two elements of the 'UnionFind'
 data MergeRes x =

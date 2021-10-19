@@ -10,7 +10,9 @@ module Overeasy.Assoc
   , assocFwd
   , assocBwd
   , assocLookupByKey
+  , assocPartialLookupByKey
   , assocLookupByValue
+  , assocPartialLookupByValue
   , assocDeleteByKey
   , assocDeleteByValue
   ) where
@@ -24,7 +26,7 @@ import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
 import Overeasy.Classes (Changed (..))
 import Overeasy.IntLikeMap (IntLikeMap, deleteIntLikeMap, emptyIntLikeMap, insertIntLikeMap, lookupIntLikeMap,
-                            sizeIntLikeMap)
+                            partialLookupIntLikeMap, sizeIntLikeMap)
 import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize)
 import Overeasy.StateUtil (stateFail, stateFailChanged)
 
@@ -74,13 +76,21 @@ assocEnsureInc a w@(Assoc fwd bwd src) =
 assocEnsure :: (Coercible x Int, Eq a, Hashable a) => a -> State (Assoc x a) (Changed, x)
 assocEnsure = state . assocEnsureInc
 
--- | Lookup foward
+-- | Forward lookup
 assocLookupByKey :: (Coercible x Int) => x -> Assoc x a -> Maybe a
 assocLookupByKey x = lookupIntLikeMap x . assocFwd
 
--- | Lookup backward
+-- | PARTIAL forward lookup
+assocPartialLookupByKey :: (Coercible x Int) => x -> Assoc x a ->  a
+assocPartialLookupByKey x = partialLookupIntLikeMap x . assocFwd
+
+-- | Backward lookup
 assocLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> Maybe x
 assocLookupByValue a = HashMap.lookup a . assocBwd
+
+-- | PARTIAL backward lookup
+assocPartialLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> x
+assocPartialLookupByValue a assoc = assocBwd assoc HashMap.! a
 
 -- private
 assocDeleteByKeyInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> Maybe (Assoc x a)

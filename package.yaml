@@ -22,7 +22,6 @@ dependencies:
 - hashable
 - microlens
 - microlens-th
-# - minisat
 - mtl
 - recursion-schemes
 - text
@@ -81,5 +80,6 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - overeasy
+    - pretty-simple
     - tasty
     - tasty-hunit

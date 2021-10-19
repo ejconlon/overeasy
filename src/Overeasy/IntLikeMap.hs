@@ -22,10 +22,8 @@ import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 
 newtype IntLikeMap x a = IntLikeMap { unIntLikeMap :: IntMap a }
-  deriving newtype (Eq, Show, Functor, Foldable, NFData, Semigroup, Monoid)
-
-instance Traversable (IntLikeMap a) where
-  traverse f (IntLikeMap m) = fmap IntLikeMap (traverse f m)
+  deriving stock (Show, Traversable)
+  deriving newtype (Eq, Functor, Foldable, NFData, Semigroup, Monoid)
 
 emptyIntLikeMap :: IntLikeMap x a
 emptyIntLikeMap = IntLikeMap IntMap.empty

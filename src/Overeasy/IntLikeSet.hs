@@ -17,7 +17,8 @@ import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 
 newtype IntLikeSet x = IntLikeSet { unIntLikeSet :: IntSet }
-  deriving newtype (Eq, Show, NFData, Semigroup, Monoid)
+  deriving stock (Show)
+  deriving newtype (Eq, NFData, Semigroup, Monoid)
 
 emptyIntLikeSet :: IntLikeSet x
 emptyIntLikeSet = IntLikeSet IntSet.empty
