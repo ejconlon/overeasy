@@ -80,6 +80,6 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - overeasy
-    - pretty-simple
+    # - pretty-simple
     - tasty
     - tasty-hunit

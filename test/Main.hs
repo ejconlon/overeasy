@@ -1,21 +1,21 @@
 module Main (main) where
 
-import Control.Monad (unless, void, when)
+import Control.Monad (void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, runState)
 import Data.Char (chr, ord)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EGraph (EAnalysisOff (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge, egNeedsRebuild, egNew,
-                        egNodeSize, egRebuild, egTotalClassSize)
+import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge,
+                        egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
 import Overeasy.IntLikeMap (fromListIntLikeMap)
-import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet)
-import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufRoots, ufTotalSize)
+import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet, singletonIntLikeSet)
+import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufOnConflict, ufRoots,
+                           ufTotalSize)
 import System.Environment (lookupEnv, setEnv)
 import Test.Overeasy.Assertions ((@/=))
 import Test.Overeasy.Example (ArithF, pattern ArithConst, pattern ArithPlus)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
-import Text.Pretty.Simple (pPrint)
 
 applyS :: State s a -> StateT s IO a
 applyS = state . runState
@@ -145,8 +145,6 @@ testEgSimple = testCase "EG simple" $ runEG $ do
     egNeedsRebuild eg @?= False
   -- Add the term `2 + 2`
   cidPlus <- applyTestS (egAddTerm noA termPlus) $ \(c, x) eg -> do
-    putStrLn "=== AFTER ADDING ALL NODES ==="
-    pPrint eg
     c @?= ChangedYes
     x @/= cidFour
     x @/= cidTwo
@@ -167,20 +165,18 @@ testEgSimple = testCase "EG simple" $ runEG $ do
         egFindTerm termFour eg @?= Just x
   -- Merge `2 + 2` and `4`
   cidMerged <- applyTestS (egMerge noA cidPlus cidFour) $ \m eg -> do
-    putStrLn "=== AFTER MERGING ==="
-    pPrint eg
+    let cidExpected = ufOnConflict cidPlus cidFour
     egNeedsRebuild eg @?= True
+    egWorkList eg @?= singletonIntLikeSet cidExpected
     case m of
       Nothing -> fail "Could not resolve one of cidFour or cidPlus"
       Just (c, x) -> do
         c @?= ChangedYes
-        unless (x == cidFour || x == cidPlus) (fail "Merged class should be one of inputs")
+        x @?= cidExpected
         x @/= cidTwo
         pure x
   -- Now rebuild
   applyTestS (egRebuild noA) $ \() eg -> do
-    putStrLn "=== AFTER REBUILDING ==="
-    pPrint eg
     egFindTerm termFour eg @?= Just cidMerged
     egFindTerm termPlus eg @?= Just cidMerged
     egFindTerm termTwo eg @?= Just cidTwo

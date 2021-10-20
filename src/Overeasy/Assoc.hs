@@ -9,16 +9,21 @@ module Overeasy.Assoc
   , assocEnsure
   , assocFwd
   , assocBwd
+  , assocDead
   , assocLookupByKey
   , assocPartialLookupByKey
   , assocLookupByValue
   , assocPartialLookupByValue
   , assocDeleteByKey
   , assocDeleteByValue
+  , assocUpdate
+  , assocNeedsClean
+  , assocClean
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (State, state)
+import Control.Monad (unless)
+import Control.Monad.State.Strict (MonadState (..), State, gets, modify')
 import Data.Coerce (Coercible)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
@@ -27,6 +32,8 @@ import GHC.Generics (Generic)
 import Overeasy.Classes (Changed (..))
 import Overeasy.IntLikeMap (IntLikeMap, deleteIntLikeMap, emptyIntLikeMap, insertIntLikeMap, lookupIntLikeMap,
                             partialLookupIntLikeMap, sizeIntLikeMap)
+import Overeasy.IntLikeSet (IntLikeSet, deleteIntLikeSet, emptyIntLikeSet, insertIntLikeSet, nullIntLikeSet,
+                            toListIntLikeSet)
 import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize)
 import Overeasy.StateUtil (stateFail, stateFailChanged)
 
@@ -34,6 +41,7 @@ import Overeasy.StateUtil (stateFail, stateFailChanged)
 data Assoc x a = Assoc
   { assocFwd :: !(IntLikeMap x a)
   , assocBwd :: !(HashMap a x)
+  , assocDead :: !(IntLikeSet x)
   , assocSrc :: !(Source x)
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
@@ -48,15 +56,15 @@ assocTotalSize = sourceSize . assocSrc
 
 -- | Creates a new 'Assoc' from a starting element
 assocNew :: Coercible x Int => x -> Assoc x a
-assocNew = Assoc emptyIntLikeMap HashMap.empty . sourceNew
+assocNew = Assoc emptyIntLikeMap HashMap.empty emptyIntLikeSet . sourceNew
 
 -- private
 assocAddInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> Maybe (x, Assoc x a)
-assocAddInc a (Assoc fwd bwd src) =
+assocAddInc a (Assoc fwd bwd dead src) =
   case HashMap.lookup a bwd of
     Nothing ->
       let (n, src') = sourceAddInc src
-      in Just (n, Assoc (insertIntLikeMap n a fwd) (HashMap.insert a n bwd) src')
+      in Just (n, Assoc (insertIntLikeMap n a fwd) (HashMap.insert a n bwd) dead src')
     Just _ -> Nothing
 
 -- | Adds the given element to the 'Assoc' and returns a new id or 'Nothing' if it already exists
@@ -65,11 +73,11 @@ assocAdd = stateFail . assocAddInc
 
 -- private
 assocEnsureInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> ((Changed, x), Assoc x a)
-assocEnsureInc a w@(Assoc fwd bwd src) =
+assocEnsureInc a w@(Assoc fwd bwd dead src) =
   case HashMap.lookup a bwd of
     Nothing ->
       let (n, src') = sourceAddInc src
-      in ((ChangedYes, n), Assoc (insertIntLikeMap n a fwd) (HashMap.insert a n bwd) src')
+      in ((ChangedYes, n), Assoc (insertIntLikeMap n a fwd) (HashMap.insert a n bwd) dead src')
     Just x -> ((ChangedNo, x), w)
 
 -- | Adds the given element to the 'Assoc' and returns a new id or the existing one on conflict
@@ -94,7 +102,7 @@ assocPartialLookupByValue a assoc = assocBwd assoc HashMap.! a
 
 -- private
 assocDeleteByKeyInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> Maybe (Assoc x a)
-assocDeleteByKeyInc a (Assoc fwd bwd n) = fmap (\x -> Assoc (deleteIntLikeMap x fwd) (HashMap.delete a bwd) n) (HashMap.lookup a bwd)
+assocDeleteByKeyInc a (Assoc fwd bwd dead n) = fmap (\x -> Assoc (deleteIntLikeMap x fwd) (HashMap.delete a bwd) (deleteIntLikeSet x dead) n) (HashMap.lookup a bwd)
 
 -- | Deletes an element by key
 assocDeleteByKey :: (Coercible x Int, Eq a, Hashable a) => a -> State (Assoc x a) Changed
@@ -102,8 +110,42 @@ assocDeleteByKey = stateFailChanged . assocDeleteByKeyInc
 
 -- private
 assocDeleteByValueInc :: (Coercible x Int, Eq a, Hashable a) => x -> Assoc x a -> Maybe (Assoc x a)
-assocDeleteByValueInc x (Assoc fwd bwd n) = fmap (\a -> Assoc (deleteIntLikeMap x fwd) (HashMap.delete a bwd) n) (lookupIntLikeMap x fwd)
+assocDeleteByValueInc x (Assoc fwd bwd dead n) = fmap (\a -> Assoc (deleteIntLikeMap x fwd) (HashMap.delete a bwd) (deleteIntLikeSet x dead) n) (lookupIntLikeMap x fwd)
 
 -- | Deletes an element by value
 assocDeleteByValue :: (Coercible x Int, Eq a, Hashable a) => x -> State (Assoc x a) Changed
 assocDeleteByValue = stateFailChanged . assocDeleteByValueInc
+
+-- | Updates the assoc, returning the best key on conflict.
+-- You may need to clean the 'Assoc' with 'assocClean' when you have finished updating.
+assocUpdate :: (Coercible x Int, Eq x, Eq a, Hashable a) => (x -> x -> x) -> x -> a -> State (Assoc x a) x
+assocUpdate onConflict x a = do
+  m <- gets (assocLookupByValue a)
+  case m of
+    Nothing -> do
+      modify' $ \(Assoc fwd bwd dead n) ->
+        let fwd' = insertIntLikeMap x a fwd
+            bwd' = HashMap.insert a x bwd
+        in Assoc fwd' bwd' dead n
+      pure x
+    Just y -> do
+      let toKeep = onConflict x y
+          toDelete = if x == toKeep then y else x
+      modify' $ \(Assoc fwd bwd dead n) ->
+        let fwd' = insertIntLikeMap toDelete a fwd
+            bwd' = HashMap.insert a toKeep bwd
+            dead' = insertIntLikeSet toDelete dead
+        in Assoc fwd' bwd' dead' n
+      pure toKeep
+
+-- | Are there dead elements in the forward map from 'assocUpdate'?
+assocNeedsClean :: Assoc x a -> Bool
+assocNeedsClean = not . nullIntLikeSet . assocDead
+
+-- | Removes all dead elements from the forward map
+assocClean :: Coercible x Int => State (Assoc x a) ()
+assocClean = do
+  Assoc fwd bwd dead n <- get
+  unless (nullIntLikeSet dead) $ do
+    let fwd' = foldr deleteIntLikeMap fwd (toListIntLikeSet dead)
+    put (Assoc fwd' bwd emptyIntLikeSet n)

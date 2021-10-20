@@ -133,7 +133,6 @@ test-suite overeasy-test
     , microlens-th
     , mtl
     , overeasy
-    , pretty-simple
     , recursion-schemes
     , tasty
     , tasty-hunit

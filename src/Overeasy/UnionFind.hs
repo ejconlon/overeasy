@@ -4,7 +4,8 @@
 -- Not the best - requires at least 2 lookups to find the root.
 -- But at least it's a persistent impl, and it compresses paths as it goes.
 module Overeasy.UnionFind
-  ( UnionFind
+  ( ufOnConflict
+  , UnionFind
   , ufSize
   , ufTotalSize
   , ufNew
@@ -20,12 +21,17 @@ module Overeasy.UnionFind
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (State, modify', state)
 import Data.Coerce (Coercible, coerce)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromMaybe)
 import GHC.Generics (Generic)
 import Overeasy.IntLikeMap (IntLikeMap, emptyIntLikeMap, insertIntLikeMap, keysIntLikeMap, lookupIntLikeMap,
                             memberIntLikeMap, partialLookupIntLikeMap, sizeIntLikeMap)
 import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, insertIntLikeSet, singletonIntLikeSet)
 import Overeasy.StateUtil (stateFail)
+
+-- | Our default choice for merging class ids.
+ufOnConflict :: Ord x => x -> x -> x
+ufOnConflict = min
+{-# INLINE ufOnConflict #-}
 
 -- private ctor
 data UnionFind x = UnionFind
@@ -107,7 +113,7 @@ ufFind x = stateFail (ufFindInc x)
 -- | Finds the canonical class member of the UF or calls 'error'.
 -- NOTE: THIS IS PARTIAL!
 ufPartialFind :: (Coercible x Int, Eq x) => x -> State (UnionFind x) x
-ufPartialFind x = fmap (fromJust (error ("Could not find in UF: " ++ show (coerce x :: Int)))) (ufFind x)
+ufPartialFind x = fmap (fromMaybe (error ("Could not find in UF: " ++ show (coerce x :: Int)))) (ufFind x)
 
 -- | The result of trying to merge two elements of the 'UnionFind'
 data MergeRes x =
@@ -137,10 +143,10 @@ ufMergeInc i j u@(UnionFind z p) = finalRes where
           _ -> let p' = foldr (`insertIntLikeMap` ix2) p acc
               in (res, UnionFind z p')
       else
-        let (kacc, kx) =
-              if ix2 < jx2
-                then (if jx1 == jx2 then jx1:acc else jx2:jx1:acc, ix2)
-                else (if ix1 == ix2 then ix1:acc else ix2:ix1:acc, jx2)
+        let kx = ufOnConflict ix2 jx2
+            kacc
+              | ix2 < jx2 = if jx1 == jx2 then jx1:acc else jx2:jx1:acc
+              | otherwise = if ix1 == ix2 then ix1:acc else ix2:ix1:acc
             p' = foldr (`insertIntLikeMap` kx) p kacc
         in (MergeResChanged ix2 jx2 kx, UnionFind (z - 1) p')
 
