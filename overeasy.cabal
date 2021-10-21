@@ -129,12 +129,14 @@ test-suite overeasy-test
     , data-fix
     , deepseq
     , hashable
+    , hedgehog
     , microlens
     , microlens-th
     , mtl
     , overeasy
     , recursion-schemes
     , tasty
+    , tasty-hedgehog
     , tasty-hunit
     , text
     , transformers

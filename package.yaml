@@ -81,5 +81,7 @@ tests:
     dependencies:
     - overeasy
     # - pretty-simple
+    - hedgehog
     - tasty
+    - tasty-hedgehog
     - tasty-hunit

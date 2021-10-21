@@ -94,6 +94,9 @@ testUfRec = testCase "UF rec" $ runUF $ do
 testUf :: TestTree
 testUf = testGroup "UF" [testUfSimple, testUfRec]
 
+testUfProp :: TestTree
+testUfProp = testGroup "UF prop" []
+
 type EG = EGraph () ArithF
 
 runEG :: StateT EG IO () -> IO ()
@@ -186,9 +189,17 @@ testEgSimple = testCase "EG simple" $ runEG $ do
 testEg :: TestTree
 testEg = testGroup "EG" [testEgSimple]
 
+testEgProp :: TestTree
+testEgProp = testGroup "EG prop" []
+
 main :: IO ()
 main = do
   mayDebugStr <- lookupEnv "DEBUG"
   let debug = Just "1" == mayDebugStr
   when debug (setEnv "TASTY_NUM_THREADS" "1")
-  defaultMain (testGroup "Overeasy" [testUf , testEg])
+  defaultMain $ testGroup "Overeasy"
+    [ testUf
+    , testEg
+    , testUfProp
+    , testEgProp
+    ]
