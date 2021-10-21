@@ -27,6 +27,12 @@ dependencies:
 - text
 - transformers
 - unordered-containers
+# test deps - TODO move back to suite
+# pretty-simple
+- hedgehog
+- tasty
+- tasty-hedgehog
+- tasty-hunit
 
 default-extensions:
 - BangPatterns
@@ -80,8 +86,3 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - overeasy
-    # - pretty-simple
-    - hedgehog
-    - tasty
-    - tasty-hedgehog
-    - tasty-hunit

@@ -38,6 +38,9 @@ library
       Overeasy.Recursion
       Overeasy.Source
       Overeasy.StateUtil
+      Overeasy.Test.Arith
+      Overeasy.Test.Assertions
+      Overeasy.Test.Main
       Overeasy.UnionFind
   other-modules:
       Paths_overeasy
@@ -77,10 +80,14 @@ library
     , data-fix
     , deepseq
     , hashable
+    , hedgehog
     , microlens
     , microlens-th
     , mtl
     , recursion-schemes
+    , tasty
+    , tasty-hedgehog
+    , tasty-hunit
     , text
     , transformers
     , unordered-containers
@@ -90,8 +97,6 @@ test-suite overeasy-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
-      Test.Overeasy.Assertions
-      Test.Overeasy.Example
       Paths_overeasy
   hs-source-dirs:
       test

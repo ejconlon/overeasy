@@ -1,4 +1,4 @@
-module Test.Overeasy.Assertions
+module Overeasy.Test.Assertions
   ( assertPredicate
   , assertNotEqual
   , assertTrue
