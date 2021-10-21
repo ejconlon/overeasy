@@ -40,7 +40,7 @@ library
       Overeasy.StateUtil
       Overeasy.Test.Arith
       Overeasy.Test.Assertions
-      Overeasy.Test.Main
+      Overeasy.Test.Spec
       Overeasy.UnionFind
   other-modules:
       Paths_overeasy
