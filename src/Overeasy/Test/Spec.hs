@@ -1,4 +1,4 @@
-module Overeasy.Test.Main (main) where
+module Overeasy.Test.Spec (main) where
 
 import Control.Monad (void, when, foldM)
 import Control.Monad.IO.Class (liftIO)
@@ -7,8 +7,8 @@ import Data.Char (chr, ord)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge,
                         egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
-import Overeasy.IntLikeMap (IntLikeMap, emptyIntLikeMap, fromListIntLikeMap)
-import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet, singletonIntLikeSet)
+import Overeasy.IntLikeMap (IntLikeMap, emptyIntLikeMap, fromListIntLikeMap, lookupIntLikeMap, insertIntLikeMap)
+import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet, singletonIntLikeSet, insertIntLikeSet)
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufOnConflict, ufRoots,
                            ufTotalSize)
 import System.Environment (lookupEnv, setEnv)
@@ -106,7 +106,15 @@ data UFTruth = UFTruth
 mkUFTruth :: MonadFail m => [[V]] -> m UFTruth
 mkUFTruth = foldM goGroup (UFTruth emptyIntLikeMap emptyIntLikeMap) . zip [1..] where
   goGroup uf (i, vs) = foldM (goSingle i) uf vs
-  goSingle i (UFTruth groups memship) v = undefined
+  goSingle i (UFTruth groups memship) v = do
+    let g = UFGroup i
+    case lookupIntLikeMap v memship of
+      Just h -> fail ("Duplicate membership for " ++ show v ++ " " ++ show g ++ " " ++ show h)
+      Nothing ->
+        let set' = maybe (singletonIntLikeSet v) (insertIntLikeSet v) (lookupIntLikeMap g groups)
+            groups' = insertIntLikeMap g set' groups
+            memship' = insertIntLikeMap v g memship
+        in pure (UFTruth groups' memship')
 
 testUfProp :: TestTree
 testUfProp = testGroup "UF prop" []

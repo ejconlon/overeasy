@@ -1,3 +1,3 @@
 module Main (main) where
 
-import Overeasy.Test.Main (main)
+import Overeasy.Test.Spec (main)
