@@ -1,14 +1,14 @@
 module Overeasy.Test.Spec (main) where
 
-import Control.Monad (void, when, foldM)
+import Control.Monad (void, when, foldM, guard)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, runState)
 import Data.Char (chr, ord)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge,
                         egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
-import Overeasy.IntLikeMap (IntLikeMap, emptyIntLikeMap, fromListIntLikeMap, lookupIntLikeMap, insertIntLikeMap)
-import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet, singletonIntLikeSet, insertIntLikeSet)
+import Overeasy.IntLikeMap (IntLikeMap, emptyIntLikeMap, fromListIntLikeMap, lookupIntLikeMap, insertIntLikeMap, keysIntLikeMap, nullIntLikeMap)
+import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet, singletonIntLikeSet, insertIntLikeSet, toListIntLikeSet, nullIntLikeSet, sizeIntLikeSet)
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufOnConflict, ufRoots,
                            ufTotalSize)
 import System.Environment (lookupEnv, setEnv)
@@ -16,6 +16,11 @@ import Overeasy.Test.Assertions ((@/=))
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
+import Hedgehog (Gen, (===), property)
+import qualified Hedgehog.Gen as Gen
+import Data.Coerce (Coercible)
+import Data.List (delete)
+import Test.Tasty.Hedgehog (testProperty)
 
 applyS :: State s a -> StateT s IO a
 applyS = state . runState
@@ -100,7 +105,7 @@ newtype UFGroup = UFGroup { unUFGroup :: Int }
 
 data UFTruth = UFTruth
   { ufTruthGroups :: IntLikeMap UFGroup (IntLikeSet V)
-  , ufTrushMembership :: IntLikeMap V UFGroup
+  , ufTruthMembership :: IntLikeMap V UFGroup
   } deriving stock (Eq, Show)
 
 mkUFTruth :: MonadFail m => [[V]] -> m UFTruth
@@ -116,8 +121,56 @@ mkUFTruth = foldM goGroup (UFTruth emptyIntLikeMap emptyIntLikeMap) . zip [1..] 
             memship' = insertIntLikeMap v g memship
         in pure (UFTruth groups' memship')
 
+data UFState = UFState
+  { ufStateTruth :: !UFTruth
+  , ufStateFresh :: !(IntLikeSet V)
+  , ufStateAdded :: !(IntLikeSet V)
+  } deriving stock (Eq, Show)
+
+mkUFState :: UFTruth -> UFState
+mkUFState t = UFState t (fromListIntLikeSet (keysIntLikeMap (ufTruthMembership t))) emptyIntLikeSet
+
+hasAnyV :: UFState -> Bool
+hasAnyV = not . nullIntLikeMap . ufTruthMembership . ufStateTruth
+
+-- error on no elems!
+genAnyV :: UFState -> Gen V
+genAnyV = Gen.element . keysIntLikeMap . ufTruthMembership . ufStateTruth
+
+genDistinctPairFromList :: Eq a => [a] -> Gen (a, a)
+genDistinctPairFromList = \case
+  xs@(_:_:_) -> do
+    a <- Gen.element xs
+    b <- Gen.element (delete a xs)
+    pure (a, b)
+  _ -> error "List needs more than two elements"
+
+genElemFromIntLikeSet :: Coercible a Int => IntLikeSet a -> Gen a
+genElemFromIntLikeSet = Gen.element . toListIntLikeSet
+
+hasFreshV :: UFState -> Bool
+hasFreshV = not . nullIntLikeSet . ufStateFresh
+
+-- error on no fresh elems!
+genFreshV :: UFState -> Gen V
+genFreshV = genElemFromIntLikeSet . ufStateFresh
+
+hasAddedV :: UFState -> Bool
+hasAddedV = not . nullIntLikeSet . ufStateFresh
+
+-- error on no added elems!
+genAddedV :: UFState -> Gen V
+genAddedV s = genElemFromIntLikeSet (ufStateAdded s)
+
+hasPairAddedV :: UFState -> Bool
+hasPairAddedV s = sizeIntLikeSet (ufStateAdded s) >= 2
+
+-- error on < 2 added elems!
+drawPairAddedV :: UFState -> Gen (V, V)
+drawPairAddedV = genDistinctPairFromList . toListIntLikeSet . ufStateAdded
+
 testUfProp :: TestTree
-testUfProp = testGroup "UF prop" []
+testUfProp = testProperty "UF Prop" $ property $ (1 :: Int) === 1
 
 type EG = EGraph () ArithF
 
