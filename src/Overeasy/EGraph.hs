@@ -43,10 +43,10 @@ import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocClean, assocEnsure, assocLookupByValue, assocNew, assocPartialLookupByKey,
                        assocUpdate)
 import Overeasy.Classes (Changed (..))
-import Overeasy.IntLikeMap (IntLikeMap, adjustIntLikeMap, deleteIntLikeMap, emptyIntLikeMap, insertIntLikeMap,
-                            lookupIntLikeMap, partialLookupIntLikeMap, sizeIntLikeMap, toListIntLikeMap)
-import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet, insertIntLikeSet, nullIntLikeSet,
-                            singletonIntLikeSet, toListIntLikeSet)
+import Overeasy.IntLikeMap (IntLikeMap)
+import qualified Overeasy.IntLikeMap as ILM
+import Overeasy.IntLikeSet (IntLikeSet)
+import qualified Overeasy.IntLikeSet as ILS
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateLens)
@@ -132,18 +132,18 @@ egTotalClassSize = ufTotalSize . egUnionFind
 
 -- | Number of nodes in the 'EGraph'
 egNodeSize :: EGraph d f -> Int
-egNodeSize = sizeIntLikeMap . egHashCons
+egNodeSize = ILM.size . egHashCons
 
 -- | Lookup info for the given 'EClass'
 egClassInfo :: EClassId -> EGraph d f -> Maybe (EClassInfo d)
-egClassInfo c = lookupIntLikeMap c . egClassMap
+egClassInfo c = ILM.lookup c . egClassMap
 
 -- | Find the class of the given node, if it exists.
 -- Note that you may have to canonicalize first to find it!
 egFindNode :: (Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGraph d f -> Maybe EClassId
 egFindNode fc eg = do
   n <- assocLookupByValue fc (egNodeAssoc eg)
-  lookupIntLikeMap n (egHashCons eg)
+  ILM.lookup n (egHashCons eg)
 
 -- | Find the class of the given term, if it exists
 egFindTerm :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGraph d f -> Maybe EClassId
@@ -151,7 +151,7 @@ egFindTerm t eg = foldWholeM (`egFindNode` eg) t
 
 -- | Creates a new 'EGraph'
 egNew :: EGraph d f
-egNew = EGraph (sourceNew (EClassId 0)) ufNew emptyIntLikeMap (assocNew (ENodeId 0)) emptyIntLikeMap emptyIntLikeSet
+egNew = EGraph (sourceNew (EClassId 0)) ufNew ILM.empty (assocNew (ENodeId 0)) ILM.empty ILS.empty
 
 -- | Yields all root classes
 egClasses :: State (EGraph d f) (IntLikeSet EClassId)
@@ -198,18 +198,18 @@ egAddNodeSub q fc = do
         ChangedNo -> do
           -- node already exists; just return existing class id
           -- partial: should exist in hashcons by construction (next case)
-          gets (partialLookupIntLikeMap n . egHashCons)
+          gets (ILM.partialLookup n . egHashCons)
         ChangedYes -> do
           -- node does not exist; get a new class id
           x <- stateLens egSourceL sourceAdd
           -- add it to the uf
           stateLens egUnionFindL (ufAdd x)
           -- map the node to the class id
-          stateLens egHashConsL (modify' (insertIntLikeMap n x))
+          stateLens egHashConsL (modify' (ILM.insert n x))
           -- analyze the node and put that info in the class map
           d <- egMake q fc
-          let i = EClassInfo d (singletonIntLikeSet n) emptyIntLikeMap
-          stateLens egClassMapL (modify' (insertIntLikeMap x i))
+          let i = EClassInfo d (ILS.singleton n) ILM.empty
+          stateLens egClassMapL (modify' (ILM.insert x i))
           -- call analysis modify
           egModify q x
           pure x
@@ -233,7 +233,7 @@ egAddTermSub q = go where
     -- now update all its children to add this as a parent
     for_ children1 $ \(ENodePair _ c) ->
       -- it's ok to overwrite class ids per node because they're guaranteed to be in the same equivalence class
-      stateLens egClassMapL (modify' (adjustIntLikeMap (\v -> v { eciParents = insertIntLikeMap n x (eciParents v) }) c))
+      stateLens egClassMapL (modify' (ILM.adjust (\v -> v { eciParents = ILM.insert n x (eciParents v) }) c))
     pure (AddNodeRes (changed1 <> changed2) children2, x)
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
@@ -261,14 +261,14 @@ egMerge q i j = do
       let mergedInfo = eciJoin q leftInfo rightInfo
       -- add the merged entry remove the old entry from the class map
       let toDelete = if mergedRoot == leftRoot then rightRoot else leftRoot
-      stateLens egClassMapL (modify' (insertIntLikeMap mergedRoot mergedInfo . deleteIntLikeMap toDelete))
+      stateLens egClassMapL (modify' (ILM.insert mergedRoot mergedInfo . ILM.delete toDelete))
       -- add merged root to worklist
-      stateLens egWorkListL (modify' (insertIntLikeSet mergedRoot))
+      stateLens egWorkListL (modify' (ILS.insert mergedRoot))
       pure (Just (ChangedYes, mergedRoot))
 
 -- | Have we merged classes and do we need to rebuild before adding more terms?
 egNeedsRebuild :: EGraph d f -> Bool
-egNeedsRebuild = not . nullIntLikeSet . egWorkList
+egNeedsRebuild = not . ILS.null . egWorkList
 
 -- | Rebuilds the 'EGraph' after merging to allow adding more terms. (Always safe to call.)
 egRebuild :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> State (EGraph d f) ()
@@ -280,13 +280,13 @@ egRebuild q = goRoot where
     stateLens egNodeAssocL assocClean
   goRec = do
     wl <- gets egWorkList
-    unless (nullIntLikeSet wl) $ do
+    unless (ILS.null wl) $ do
       -- take the worklist
-      stateLens egWorkListL (put emptyIntLikeSet)
+      stateLens egWorkListL (put ILS.empty)
       -- for each class, repair parents to introduce new equalities
-      for_ (toListIntLikeSet wl) (egRepairParents q)
+      for_ (ILS.toList wl) (egRepairParents q)
       -- for each class, repair nodes to update canonical map
-      for_ (toListIntLikeSet wl) (egRepairNodes q)
+      for_ (ILS.toList wl) (egRepairNodes q)
       -- loop until the worklist is empty
       goRec
 
@@ -294,20 +294,20 @@ egRebuild q = goRoot where
 egRepairNodes :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> EClassId -> State (EGraph d f) ()
 egRepairNodes _ i = go where
   go = do
-    nodeIds <- gets (eciNodes . partialLookupIntLikeMap i . egClassMap)
-    newNodeIds <- for (toListIntLikeSet nodeIds) $ \nodeId -> do
+    nodeIds <- gets (eciNodes . ILM.partialLookup i . egClassMap)
+    newNodeIds <- for (ILS.toList nodeIds) $ \nodeId -> do
       newNodeId <- egCanonicalizeInternal nodeId
-      stateLens egHashConsL (modify' (insertIntLikeMap newNodeId i . deleteIntLikeMap nodeId))
+      stateLens egHashConsL (modify' (ILM.insert newNodeId i . ILM.delete nodeId))
       pure newNodeId
-    let newNodes = fromListIntLikeSet newNodeIds
-    stateLens egClassMapL (modify' (adjustIntLikeMap (\eci -> eci { eciNodes = newNodes }) i))
+    let newNodes = ILS.fromList newNodeIds
+    stateLens egClassMapL (modify' (ILM.adjust (\eci -> eci { eciNodes = newNodes }) i))
 
 -- private
 egRepairParents :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> EClassId -> State (EGraph d f) ()
 egRepairParents q i = go where
   go = do
     -- partials: nodes and classes should be present by construction
-    parentPairs <- gets (toListIntLikeMap . eciParents . partialLookupIntLikeMap i . egClassMap)
+    parentPairs <- gets (ILM.toList . eciParents . ILM.partialLookup i . egClassMap)
     -- update parents
     newParentPairs <- for parentPairs $ \(parNodeId, parClassId) -> do
       -- first update the assoc to canonicalize node
@@ -315,18 +315,18 @@ egRepairParents q i = go where
       newParClassId <- stateLens egUnionFindL (ufPartialFind parClassId)
       -- traceM (show ["REPAIR", show i, show parNodeId, show parClassId, show newParNodeId, show newParClassId])
       -- update the hashcons to point canonical node to canonical classes
-      stateLens egHashConsL (modify' (insertIntLikeMap newParNodeId newParClassId . deleteIntLikeMap parNodeId))
+      stateLens egHashConsL (modify' (ILM.insert newParNodeId newParClassId . ILM.delete parNodeId))
       pure (newParNodeId, newParClassId)
     -- dedupe the parents - equal parents get merged and put on worklist
     -- some parents may map canonically to the same node now, and so their classes need to be merged
-    finalParents <- dedupe emptyIntLikeMap newParentPairs
-    stateLens egClassMapL (modify' (adjustIntLikeMap (\eci -> eci { eciParents = finalParents }) i))
+    finalParents <- dedupe ILM.empty newParentPairs
+    stateLens egClassMapL (modify' (ILM.adjust (\eci -> eci { eciParents = finalParents }) i))
   dedupe newParents pairs =
     case pairs of
       [] -> pure newParents
       (newParNodeId, newParClassId):rest -> do
-        case lookupIntLikeMap newParNodeId newParents of
+        case ILM.lookup newParNodeId newParents of
           Just otherClassId -> void (egMerge q newParClassId otherClassId)
           Nothing -> pure ()
-        let newParents' = insertIntLikeMap newParNodeId newParClassId newParents
+        let newParents' = ILM.insert newParNodeId newParClassId newParents
         dedupe newParents' rest

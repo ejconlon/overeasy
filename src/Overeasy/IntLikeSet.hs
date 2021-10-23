@@ -1,57 +1,58 @@
 module Overeasy.IntLikeSet
   ( IntLikeSet (..)
-  , emptyIntLikeSet
-  , singletonIntLikeSet
-  , fromListIntLikeSet
-  , sizeIntLikeSet
-  , nullIntLikeSet
-  , memberIntLikeSet
-  , toListIntLikeSet
-  , insertIntLikeSet
-  , deleteIntLikeSet
+  , empty
+  , singleton
+  , fromList
+  , size
+  , null
+  , member
+  , toList
+  , insert
+  , delete
   ) where
 
 import Control.DeepSeq (NFData)
 import Data.Coerce (Coercible, coerce)
 import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
+import Prelude hiding (null)
 
 newtype IntLikeSet x = IntLikeSet { unIntLikeSet :: IntSet }
   deriving stock (Show)
   deriving newtype (Eq, NFData, Semigroup, Monoid)
 
-emptyIntLikeSet :: IntLikeSet x
-emptyIntLikeSet = IntLikeSet IntSet.empty
-{-# INLINE emptyIntLikeSet #-}
+empty :: IntLikeSet x
+empty = IntLikeSet IntSet.empty
+{-# INLINE empty #-}
 
-singletonIntLikeSet :: Coercible x Int => x -> IntLikeSet x
-singletonIntLikeSet = IntLikeSet . IntSet.singleton . coerce
-{-# INLINE singletonIntLikeSet #-}
+singleton :: Coercible x Int => x -> IntLikeSet x
+singleton = IntLikeSet . IntSet.singleton . coerce
+{-# INLINE singleton #-}
 
-fromListIntLikeSet :: Coercible x Int => [x] -> IntLikeSet x
-fromListIntLikeSet = IntLikeSet . IntSet.fromList . coerce
-{-# INLINE fromListIntLikeSet #-}
+fromList :: Coercible x Int => [x] -> IntLikeSet x
+fromList = IntLikeSet . IntSet.fromList . coerce
+{-# INLINE fromList #-}
 
-sizeIntLikeSet :: IntLikeSet x -> Int
-sizeIntLikeSet = IntSet.size . unIntLikeSet
-{-# INLINE sizeIntLikeSet #-}
+size :: IntLikeSet x -> Int
+size = IntSet.size . unIntLikeSet
+{-# INLINE size #-}
 
-nullIntLikeSet :: IntLikeSet x -> Bool
-nullIntLikeSet = IntSet.null . unIntLikeSet
-{-# INLINE nullIntLikeSet #-}
+null :: IntLikeSet x -> Bool
+null = IntSet.null . unIntLikeSet
+{-# INLINE null #-}
 
-memberIntLikeSet :: Coercible x Int => x -> IntLikeSet x -> Bool
-memberIntLikeSet x = IntSet.member (coerce x) . unIntLikeSet
-{-# INLINE memberIntLikeSet #-}
+member :: Coercible x Int => x -> IntLikeSet x -> Bool
+member x = IntSet.member (coerce x) . unIntLikeSet
+{-# INLINE member #-}
 
-toListIntLikeSet :: Coercible x Int => IntLikeSet x -> [x]
-toListIntLikeSet = coerce . IntSet.toList . unIntLikeSet
-{-# INLINE toListIntLikeSet #-}
+toList :: Coercible x Int => IntLikeSet x -> [x]
+toList = coerce . IntSet.toList . unIntLikeSet
+{-# INLINE toList #-}
 
-insertIntLikeSet :: Coercible x Int => x -> IntLikeSet x -> IntLikeSet x
-insertIntLikeSet x = IntLikeSet . IntSet.insert (coerce x) . unIntLikeSet
-{-# INLINE insertIntLikeSet #-}
+insert :: Coercible x Int => x -> IntLikeSet x -> IntLikeSet x
+insert x = IntLikeSet . IntSet.insert (coerce x) . unIntLikeSet
+{-# INLINE insert #-}
 
-deleteIntLikeSet :: Coercible x Int => x -> IntLikeSet x -> IntLikeSet x
-deleteIntLikeSet x = IntLikeSet . IntSet.delete (coerce x) . unIntLikeSet
-{-# INLINE deleteIntLikeSet #-}
+delete :: Coercible x Int => x -> IntLikeSet x -> IntLikeSet x
+delete x = IntLikeSet . IntSet.delete (coerce x) . unIntLikeSet
+{-# INLINE delete #-}

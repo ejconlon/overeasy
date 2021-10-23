@@ -1,82 +1,83 @@
 module Overeasy.IntLikeMap
   ( IntLikeMap (..)
-  , emptyIntLikeMap
-  , singletonIntLikeMap
-  , fromListIntLikeMap
-  , sizeIntLikeMap
-  , nullIntLikeMap
-  , memberIntLikeMap
-  , toListIntLikeMap
-  , keysIntLikeMap
-  , lookupIntLikeMap
-  , partialLookupIntLikeMap
-  , insertIntLikeMap
-  , insertWithIntLikeMap
-  , adjustIntLikeMap
-  , deleteIntLikeMap
+  , empty
+  , singleton
+  , fromList
+  , size
+  , null
+  , member
+  , toList
+  , keys
+  , lookup
+  , partialLookup
+  , insert
+  , insertWith
+  , adjust
+  , delete
   ) where
 
 import Control.DeepSeq (NFData)
 import Data.Coerce (Coercible, coerce)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
+import Prelude hiding (lookup, null)
 
 newtype IntLikeMap x a = IntLikeMap { unIntLikeMap :: IntMap a }
   deriving stock (Show, Traversable)
   deriving newtype (Eq, Functor, Foldable, NFData, Semigroup, Monoid)
 
-emptyIntLikeMap :: IntLikeMap x a
-emptyIntLikeMap = IntLikeMap IntMap.empty
-{-# INLINE emptyIntLikeMap #-}
+empty :: IntLikeMap x a
+empty = IntLikeMap IntMap.empty
+{-# INLINE empty #-}
 
-singletonIntLikeMap :: Coercible x Int => x -> a -> IntLikeMap x a
-singletonIntLikeMap x = IntLikeMap . IntMap.singleton (coerce x)
-{-# INLINE singletonIntLikeMap #-}
+singleton :: Coercible x Int => x -> a -> IntLikeMap x a
+singleton x = IntLikeMap . IntMap.singleton (coerce x)
+{-# INLINE singleton #-}
 
-fromListIntLikeMap :: Coercible x Int => [(x, a)] -> IntLikeMap x a
-fromListIntLikeMap = IntLikeMap . IntMap.fromList . coerce
-{-# INLINE fromListIntLikeMap #-}
+fromList :: Coercible x Int => [(x, a)] -> IntLikeMap x a
+fromList = IntLikeMap . IntMap.fromList . coerce
+{-# INLINE fromList #-}
 
-sizeIntLikeMap :: IntLikeMap x a -> Int
-sizeIntLikeMap = IntMap.size . unIntLikeMap
-{-# INLINE sizeIntLikeMap #-}
+size :: IntLikeMap x a -> Int
+size = IntMap.size . unIntLikeMap
+{-# INLINE size #-}
 
-nullIntLikeMap :: IntLikeMap x a -> Bool
-nullIntLikeMap = IntMap.null . unIntLikeMap
-{-# INLINE nullIntLikeMap #-}
+null :: IntLikeMap x a -> Bool
+null = IntMap.null . unIntLikeMap
+{-# INLINE null #-}
 
-memberIntLikeMap :: Coercible x Int => x -> IntLikeMap x a -> Bool
-memberIntLikeMap x = IntMap.member (coerce x) . unIntLikeMap
-{-# INLINE memberIntLikeMap #-}
+member :: Coercible x Int => x -> IntLikeMap x a -> Bool
+member x = IntMap.member (coerce x) . unIntLikeMap
+{-# INLINE member #-}
 
-toListIntLikeMap :: Coercible x Int => IntLikeMap x a -> [(x, a)]
-toListIntLikeMap = coerce . IntMap.toList . unIntLikeMap
-{-# INLINE toListIntLikeMap #-}
+toList :: Coercible x Int => IntLikeMap x a -> [(x, a)]
+toList = coerce . IntMap.toList . unIntLikeMap
+{-# INLINE toList #-}
 
-keysIntLikeMap :: Coercible x Int => IntLikeMap x a -> [x]
-keysIntLikeMap = coerce . IntMap.keys . unIntLikeMap
-{-# INLINE keysIntLikeMap #-}
+keys :: Coercible x Int => IntLikeMap x a -> [x]
+keys = coerce . IntMap.keys . unIntLikeMap
+{-# INLINE keys #-}
 
-lookupIntLikeMap :: Coercible x Int => x -> IntLikeMap x a -> Maybe a
-lookupIntLikeMap x = IntMap.lookup (coerce x) . unIntLikeMap
-{-# INLINE lookupIntLikeMap #-}
+lookup :: Coercible x Int => x -> IntLikeMap x a -> Maybe a
+lookup x = IntMap.lookup (coerce x) . unIntLikeMap
+{-# INLINE lookup #-}
 
-partialLookupIntLikeMap :: Coercible x Int => x -> IntLikeMap x a -> a
-partialLookupIntLikeMap x m = unIntLikeMap m IntMap.! coerce x
-{-# INLINE partialLookupIntLikeMap #-}
+partialLookup :: Coercible x Int => x -> IntLikeMap x a -> a
+partialLookup x m = unIntLikeMap m IntMap.! coerce x
+{-# INLINE partialLookup #-}
 
-insertIntLikeMap :: Coercible x Int => x -> a -> IntLikeMap x a -> IntLikeMap x a
-insertIntLikeMap x a = IntLikeMap . IntMap.insert (coerce x) a . unIntLikeMap
-{-# INLINE insertIntLikeMap #-}
+insert :: Coercible x Int => x -> a -> IntLikeMap x a -> IntLikeMap x a
+insert x a = IntLikeMap . IntMap.insert (coerce x) a . unIntLikeMap
+{-# INLINE insert #-}
 
-insertWithIntLikeMap :: Coercible x Int => (a -> a -> a) -> x -> a -> IntLikeMap x a -> IntLikeMap x a
-insertWithIntLikeMap f x a = IntLikeMap . IntMap.insertWith f (coerce x) a . unIntLikeMap
-{-# INLINE insertWithIntLikeMap #-}
+insertWith :: Coercible x Int => (a -> a -> a) -> x -> a -> IntLikeMap x a -> IntLikeMap x a
+insertWith f x a = IntLikeMap . IntMap.insertWith f (coerce x) a . unIntLikeMap
+{-# INLINE insertWith #-}
 
-adjustIntLikeMap :: Coercible x Int => (a -> a) -> x -> IntLikeMap x a -> IntLikeMap x a
-adjustIntLikeMap f x = IntLikeMap . IntMap.adjust f (coerce x) . unIntLikeMap
-{-# INLINE adjustIntLikeMap #-}
+adjust :: Coercible x Int => (a -> a) -> x -> IntLikeMap x a -> IntLikeMap x a
+adjust f x = IntLikeMap . IntMap.adjust f (coerce x) . unIntLikeMap
+{-# INLINE adjust #-}
 
-deleteIntLikeMap :: Coercible x Int => x -> IntLikeMap x a -> IntLikeMap x a
-deleteIntLikeMap x = IntLikeMap . IntMap.delete (coerce x) . unIntLikeMap
-{-# INLINE deleteIntLikeMap #-}
+delete :: Coercible x Int => x -> IntLikeMap x a -> IntLikeMap x a
+delete x = IntLikeMap . IntMap.delete (coerce x) . unIntLikeMap
+{-# INLINE delete #-}

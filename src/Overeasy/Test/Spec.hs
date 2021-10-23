@@ -1,25 +1,30 @@
 module Overeasy.Test.Spec (main) where
 
-import Control.Monad (void, when, foldM, guard)
+import Control.Monad (foldM, void, when)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, runState)
+import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, execState, runState)
 import Data.Char (chr, ord)
+import Data.Coerce (Coercible)
+import Data.Foldable (for_)
+import Data.List (delete)
+import Data.Traversable (for)
+import Hedgehog (Gen, Range, forAll, property, (===))
+import qualified Hedgehog.Gen as Gen
+import qualified Hedgehog.Range as Range
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge,
                         egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
-import Overeasy.IntLikeMap (IntLikeMap, emptyIntLikeMap, fromListIntLikeMap, lookupIntLikeMap, insertIntLikeMap, keysIntLikeMap, nullIntLikeMap)
-import Overeasy.IntLikeSet (IntLikeSet, emptyIntLikeSet, fromListIntLikeSet, singletonIntLikeSet, insertIntLikeSet, toListIntLikeSet, nullIntLikeSet, sizeIntLikeSet)
+import Overeasy.IntLikeMap (IntLikeMap)
+import qualified Overeasy.IntLikeMap as ILM
+import Overeasy.IntLikeSet (IntLikeSet)
+import qualified Overeasy.IntLikeSet as ILS
+import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
+import Overeasy.Test.Assertions ((@/=))
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufOnConflict, ufRoots,
                            ufTotalSize)
 import System.Environment (lookupEnv, setEnv)
-import Overeasy.Test.Assertions ((@/=))
-import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
-import Hedgehog (Gen, (===), property)
-import qualified Hedgehog.Gen as Gen
-import Data.Coerce (Coercible)
-import Data.List (delete)
 import Test.Tasty.Hedgehog (testProperty)
 
 applyS :: State s a -> StateT s IO a
@@ -53,7 +58,7 @@ fromV :: V -> Char
 fromV = chr . unV
 
 setV :: String -> IntLikeSet V
-setV = fromListIntLikeSet . fmap toV
+setV = ILS.fromList . fmap toV
 
 type UF = UnionFind V
 
@@ -64,7 +69,7 @@ testUfSimple :: TestTree
 testUfSimple = testCase "UF simple" $ runUF $ do
   testS $ \uf -> ufSize uf @?= 0
   testS $ \uf -> ufTotalSize uf @?= 0
-  applyTestS ufRoots $ \rs _ -> rs @?= emptyIntLikeSet
+  applyTestS ufRoots $ \rs _ -> rs @?= ILS.empty
   applyS (ufAdd (toV 'a'))
   testS $ \uf -> ufSize uf @?= 1
   testS $ \uf -> ufTotalSize uf @?= 1
@@ -79,7 +84,7 @@ testUfSimple = testCase "UF simple" $ runUF $ do
     ufSize uf @?= 2
     ufTotalSize uf @?= 3
   applyTestS ufRoots $ \rs _ -> rs @?= setV "ab"
-  applyTestS ufMembers $ \rs _ -> rs @?= fromListIntLikeMap [(toV 'a', setV "ac"), (toV 'b', setV "b")]
+  applyTestS ufMembers $ \rs _ -> rs @?= ILM.fromList [(toV 'a', setV "ac"), (toV 'b', setV "b")]
   applyTestS (ufMerge (toV 'c') (toV 'a')) $ \res _ -> res @?= MergeResUnchanged (toV 'a')
   applyTestS (ufMerge (toV 'b') (toV 'z')) $ \res _ -> res @?= MergeResMissing (toV 'z')
 
@@ -94,7 +99,7 @@ testUfRec = testCase "UF rec" $ runUF $ do
     ufSize uf @?= 1
     ufTotalSize uf @?= 3
   applyTestS ufRoots $ \rs _ -> rs @?= setV "a"
-  applyTestS ufMembers $ \rs _ -> rs @?= fromListIntLikeMap [(toV 'a', setV "abc")]
+  applyTestS ufMembers $ \rs _ -> rs @?= ILM.fromList [(toV 'a', setV "abc")]
 
 testUf :: TestTree
 testUf = testGroup "UF" [testUfSimple, testUfRec]
@@ -109,16 +114,16 @@ data UFTruth = UFTruth
   } deriving stock (Eq, Show)
 
 mkUFTruth :: MonadFail m => [[V]] -> m UFTruth
-mkUFTruth = foldM goGroup (UFTruth emptyIntLikeMap emptyIntLikeMap) . zip [1..] where
+mkUFTruth = foldM goGroup (UFTruth ILM.empty ILM.empty) . zip [1..] where
   goGroup uf (i, vs) = foldM (goSingle i) uf vs
   goSingle i (UFTruth groups memship) v = do
     let g = UFGroup i
-    case lookupIntLikeMap v memship of
+    case ILM.lookup v memship of
       Just h -> fail ("Duplicate membership for " ++ show v ++ " " ++ show g ++ " " ++ show h)
       Nothing ->
-        let set' = maybe (singletonIntLikeSet v) (insertIntLikeSet v) (lookupIntLikeMap g groups)
-            groups' = insertIntLikeMap g set' groups
-            memship' = insertIntLikeMap v g memship
+        let set' = maybe (ILS.singleton v) (ILS.insert v) (ILM.lookup g groups)
+            groups' = ILM.insert g set' groups
+            memship' = ILM.insert v g memship
         in pure (UFTruth groups' memship')
 
 data UFState = UFState
@@ -128,14 +133,14 @@ data UFState = UFState
   } deriving stock (Eq, Show)
 
 mkUFState :: UFTruth -> UFState
-mkUFState t = UFState t (fromListIntLikeSet (keysIntLikeMap (ufTruthMembership t))) emptyIntLikeSet
+mkUFState t = UFState t (ILS.fromList (ILM.keys (ufTruthMembership t))) ILS.empty
 
 hasAnyV :: UFState -> Bool
-hasAnyV = not . nullIntLikeMap . ufTruthMembership . ufStateTruth
+hasAnyV = not . ILM.null . ufTruthMembership . ufStateTruth
 
 -- error on no elems!
 genAnyV :: UFState -> Gen V
-genAnyV = Gen.element . keysIntLikeMap . ufTruthMembership . ufStateTruth
+genAnyV = Gen.element . ILM.keys . ufTruthMembership . ufStateTruth
 
 genDistinctPairFromList :: Eq a => [a] -> Gen (a, a)
 genDistinctPairFromList = \case
@@ -146,31 +151,95 @@ genDistinctPairFromList = \case
   _ -> error "List needs more than two elements"
 
 genElemFromIntLikeSet :: Coercible a Int => IntLikeSet a -> Gen a
-genElemFromIntLikeSet = Gen.element . toListIntLikeSet
+genElemFromIntLikeSet = Gen.element . ILS.toList
 
 hasFreshV :: UFState -> Bool
-hasFreshV = not . nullIntLikeSet . ufStateFresh
+hasFreshV = not . ILS.null . ufStateFresh
 
 -- error on no fresh elems!
 genFreshV :: UFState -> Gen V
 genFreshV = genElemFromIntLikeSet . ufStateFresh
 
 hasAddedV :: UFState -> Bool
-hasAddedV = not . nullIntLikeSet . ufStateFresh
+hasAddedV = not . ILS.null . ufStateFresh
 
 -- error on no added elems!
 genAddedV :: UFState -> Gen V
 genAddedV s = genElemFromIntLikeSet (ufStateAdded s)
 
 hasPairAddedV :: UFState -> Bool
-hasPairAddedV s = sizeIntLikeSet (ufStateAdded s) >= 2
+hasPairAddedV s = ILS.size (ufStateAdded s) >= 2
 
 -- error on < 2 added elems!
-drawPairAddedV :: UFState -> Gen (V, V)
-drawPairAddedV = genDistinctPairFromList . toListIntLikeSet . ufStateAdded
+genPairAddedV :: UFState -> Gen (V, V)
+genPairAddedV = genDistinctPairFromList . ILS.toList . ufStateAdded
+
+genIntLikeSet :: Coercible a Int => Range Int -> Gen a -> Gen (IntLikeSet a)
+genIntLikeSet r = fmap ILS.fromList . Gen.list r
+
+-- genSubIntLikeSet :: Coercible Int a -> IntLikeSet a -> Gen (IntLikeSet a)
+
+genV :: Gen V
+genV = fmap V (Gen.int (Range.linear (ord 'a') maxBound))
+
+insertMM :: (Coercible k Int, Coercible v Int) => (v, k) -> IntLikeMap k (IntLikeSet v) -> IntLikeMap k (IntLikeSet v)
+insertMM (v, k) = ILM.insertWith (<>) k (ILS.singleton v)
+
+genUfTruth :: Int -> Range Int -> Gen UFTruth
+genUfTruth maxElems assignedClassRange = do
+  let nElemsRange = Range.linear 0 maxElems
+  memberList <- Gen.list nElemsRange ((\a b -> (a, UFGroup b)) <$> genV <*> Gen.int assignedClassRange)
+  let members = ILM.fromList memberList
+      groups = foldr insertMM ILM.empty (ILM.toList members)
+  pure (UFTruth groups members)
+
+genAnyPairs :: Int -> UFTruth -> Gen [(V, V)]
+genAnyPairs maxOps = genOnlyPairs maxOps . ILM.keys . ufTruthMembership
+
+genOnlyPairs :: Int -> [V] -> Gen [(V, V)]
+genOnlyPairs maxOps vs =
+  if length vs < 2
+    then pure []
+    else
+      let nOpsRange = Range.linear 0 maxOps
+      in Gen.list nOpsRange (genDistinctPairFromList vs)
+
+genMergePairs :: Int -> Range Int -> UFTruth -> Gen [(V, V)]
+genMergePairs maxOps assignedClassRange t = do
+  let nOpsRange = Range.linear 0 maxOps
+      gvs = fmap ILS.toList (ufTruthGroups t)
+  groups <- Gen.list nOpsRange (fmap UFGroup (Gen.int assignedClassRange))
+  let okGroups = filter (\g -> maybe False (\s -> ILS.size s >= 2) (ILM.lookup g (ufTruthGroups t))) groups
+  for okGroups (\g -> genDistinctPairFromList (ILM.partialLookup g gvs))
+
+mkInitUf :: UFTruth -> UF
+mkInitUf t =
+  let vs = ILM.keys (ufTruthMembership t)
+  in execState (for_ vs ufAdd) ufNew
+
+mkMergedUf :: [(V, V)] -> UF -> UF
+mkMergedUf vvs = execState (for_ vvs (uncurry ufMerge))
 
 testUfProp :: TestTree
-testUfProp = testProperty "UF Prop" $ property $ (1 :: Int) === 1
+testUfProp = testProperty "UF Prop" $
+  let maxClasses = 10
+      maxElems = 100
+      maxOps = 30
+      nClassesRange = Range.linear 1 maxClasses
+  in property $ do
+    nClasses <- forAll (Gen.int nClassesRange)
+    let assignedClassRange = Range.constant 0 (nClasses - 1)
+    ufTruth <- forAll (genUfTruth maxElems assignedClassRange)
+    let initUf = mkInitUf ufTruth
+        memberSet = ILS.fromList (ILM.keys (ufTruthMembership ufTruth))
+    let nMembers = ILS.size memberSet
+    ufSize initUf === nMembers
+    ufTotalSize initUf === nMembers
+    mergePairs <- forAll (genMergePairs maxOps assignedClassRange ufTruth)
+    -- let expectedMerged = foldr ILS.insert ILS.empty (mergePairs >>= \(x, y) -> [x, y])
+    let mergedUf = mkMergedUf mergePairs initUf
+    -- TODO
+    ufTotalSize mergedUf === nMembers
 
 type EG = EGraph () ArithF
 
@@ -245,7 +314,7 @@ testEgSimple = testCase "EG simple" $ runEG $ do
   cidMerged <- applyTestS (egMerge noA cidPlus cidFour) $ \m eg -> do
     let cidExpected = ufOnConflict cidPlus cidFour
     egNeedsRebuild eg @?= True
-    egWorkList eg @?= singletonIntLikeSet cidExpected
+    egWorkList eg @?= ILS.singleton cidExpected
     case m of
       Nothing -> fail "Could not resolve one of cidFour or cidPlus"
       Just (c, x) -> do
