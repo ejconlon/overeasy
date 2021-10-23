@@ -1,14 +1,14 @@
 module Overeasy.Test.Spec (main) where
 
 import Control.Monad (foldM, void, when)
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, execState, runState)
+import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, execState, execStateT, runState)
+import Control.Monad.Trans (MonadTrans (lift))
 import Data.Char (chr, ord)
 import Data.Coerce (Coercible)
 import Data.Foldable (for_)
 import Data.List (delete)
 import Data.Traversable (for)
-import Hedgehog (Gen, Range, forAll, property, (===))
+import Hedgehog (Gen, Range, forAll, property, (/==), (===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Overeasy.Classes (Changed (..))
@@ -20,29 +20,32 @@ import Overeasy.IntLikeSet (IntLikeSet)
 import qualified Overeasy.IntLikeSet as ILS
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions ((@/=))
-import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufMembers, ufMerge, ufNew, ufOnConflict, ufRoots,
-                           ufTotalSize)
+import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufFind, ufMembers, ufMerge, ufNew, ufOnConflict,
+                           ufRoots, ufTotalSize)
 import System.Environment (lookupEnv, setEnv)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
 
-applyS :: State s a -> StateT s IO a
+applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
 
-applyS_ :: State s a -> StateT s IO ()
+applyS_ :: Monad m => State s a -> StateT s m ()
 applyS_ = void . applyS
 
-testS :: (s -> IO a) -> StateT s IO a
-testS p = get >>= liftIO . p
+testS :: Monad m => (s -> m a) -> StateT s m a
+testS p = get >>= lift . p
 
-applyTestS :: State s a -> (a -> s -> IO b) -> StateT s IO b
+applyTestS :: Monad m => State s a -> (a -> s -> m b) -> StateT s m b
 applyTestS act check = do
   a <- applyS act
   s <- get
-  liftIO (check a s)
+  lift (check a s)
 
-runS :: s -> StateT s IO () -> IO ()
+foldS_ :: (Monad m, Foldable t) => s -> t a -> (a -> StateT s m ()) -> m s
+foldS_ z as f = execStateT (for_ as f) z
+
+runS :: Monad m => s -> StateT s m () -> m ()
 runS = flip evalStateT
 
 newtype V = V { unV :: Int }
@@ -177,20 +180,15 @@ genPairAddedV = genDistinctPairFromList . ILS.toList . ufStateAdded
 genIntLikeSet :: Coercible a Int => Range Int -> Gen a -> Gen (IntLikeSet a)
 genIntLikeSet r = fmap ILS.fromList . Gen.list r
 
--- genSubIntLikeSet :: Coercible Int a -> IntLikeSet a -> Gen (IntLikeSet a)
-
 genV :: Gen V
-genV = fmap V (Gen.int (Range.linear (ord 'a') maxBound))
-
-insertMM :: (Coercible k Int, Coercible v Int) => (v, k) -> IntLikeMap k (IntLikeSet v) -> IntLikeMap k (IntLikeSet v)
-insertMM (v, k) = ILM.insertWith (<>) k (ILS.singleton v)
+genV = fmap V (Gen.int (Range.linear (ord 'a') 1000))
 
 genUfTruth :: Int -> Range Int -> Gen UFTruth
 genUfTruth maxElems assignedClassRange = do
   let nElemsRange = Range.linear 0 maxElems
   memberList <- Gen.list nElemsRange ((\a b -> (a, UFGroup b)) <$> genV <*> Gen.int assignedClassRange)
   let members = ILM.fromList memberList
-      groups = foldr insertMM ILM.empty (ILM.toList members)
+      groups = foldr (\(v, k) -> ILM.insertWith (<>) k (ILS.singleton v)) ILM.empty (ILM.toList members)
   pure (UFTruth groups members)
 
 genAnyPairs :: Int -> UFTruth -> Gen [(V, V)]
@@ -224,22 +222,42 @@ testUfProp :: TestTree
 testUfProp = testProperty "UF Prop" $
   let maxClasses = 10
       maxElems = 100
+      -- TODO maxOps should be Range.constant 0 nElems
+      -- and maxPairOps should be in Range.constant 0 (nElems * nElems)
       maxOps = 30
       nClassesRange = Range.linear 1 maxClasses
   in property $ do
+    -- generate number of equiv classes
     nClasses <- forAll (Gen.int nClassesRange)
     let assignedClassRange = Range.constant 0 (nClasses - 1)
+    -- generate elements for those classes
     ufTruth <- forAll (genUfTruth maxElems assignedClassRange)
     let initUf = mkInitUf ufTruth
         memberSet = ILS.fromList (ILM.keys (ufTruthMembership ufTruth))
     let nMembers = ILS.size memberSet
+    -- assert that sizes indicate nothing is merged
     ufSize initUf === nMembers
     ufTotalSize initUf === nMembers
+    -- generate arbitrary pairs of elements
+    checkPairs <- forAll (genAnyPairs maxOps ufTruth)
+    -- assert that find indicates nothing is merged
+    checkedInitUf <- foldS_ initUf checkPairs $ \(a, b) -> do
+      x <- applyS (ufFind a)
+      y <- applyS (ufFind b)
+      lift (x /== y)
+    -- generate pairs of elements from the same equiv classes
     mergePairs <- forAll (genMergePairs maxOps assignedClassRange ufTruth)
-    -- let expectedMerged = foldr ILS.insert ILS.empty (mergePairs >>= \(x, y) -> [x, y])
-    let mergedUf = mkMergedUf mergePairs initUf
-    -- TODO
+    let mergedUf = mkMergedUf mergePairs checkedInitUf
     ufTotalSize mergedUf === nMembers
+    -- TODO instead of this, pick from ALL pairs and assert eq if they're in mergePairs and same eq class, neq if not
+    -- again generate pairs of elemens from the same equiv classes
+    -- classPairs <- forAll (genMergePairs maxOps assignedClassRange ufTruth)
+    -- -- assert that all merged pairs are merged
+    -- void $ foldS_ mergedUf classPairs $ \(a, b) -> do
+    --   x <- applyS (ufFind a)
+    --   y <- applyS (ufFind b)
+    --   -- incorrect
+    --   lift (x === y)
 
 type EG = EGraph () ArithF
 
