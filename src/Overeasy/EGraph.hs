@@ -43,10 +43,10 @@ import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocClean, assocEnsure, assocLookupByValue, assocNew, assocPartialLookupByKey,
                        assocUpdate)
 import Overeasy.Classes (Changed (..))
-import Overeasy.IntLikeMap (IntLikeMap)
-import qualified Overeasy.IntLikeMap as ILM
-import Overeasy.IntLikeSet (IntLikeSet)
-import qualified Overeasy.IntLikeSet as ILS
+import Overeasy.IntLike.Map (IntLikeMap)
+import qualified Overeasy.IntLike.Map as ILM
+import Overeasy.IntLike.Set (IntLikeSet)
+import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateLens)

@@ -30,10 +30,10 @@ import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
 import Overeasy.Classes (Changed (..))
-import Overeasy.IntLikeMap (IntLikeMap)
-import qualified Overeasy.IntLikeMap as ILM
-import Overeasy.IntLikeSet (IntLikeSet)
-import qualified Overeasy.IntLikeSet as ILS
+import Overeasy.IntLike.Map (IntLikeMap)
+import qualified Overeasy.IntLike.Map as ILM
+import Overeasy.IntLike.Set (IntLikeSet)
+import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize)
 import Overeasy.StateUtil (stateFail, stateFailChanged)
 

@@ -14,10 +14,12 @@ import qualified Hedgehog.Range as Range
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge,
                         egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
-import Overeasy.IntLikeMap (IntLikeMap)
-import qualified Overeasy.IntLikeMap as ILM
-import Overeasy.IntLikeSet (IntLikeSet)
-import qualified Overeasy.IntLikeSet as ILS
+import Overeasy.IntLike.Map (IntLikeMap)
+import qualified Overeasy.IntLike.Map as ILM
+import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
+import qualified Overeasy.IntLike.MultiMap as ILMM
+import Overeasy.IntLike.Set (IntLikeSet)
+import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions ((@/=))
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufFind, ufMembers, ufMerge, ufNew, ufOnConflict,
@@ -183,29 +185,25 @@ genIntLikeSet r = fmap ILS.fromList . Gen.list r
 genV :: Gen V
 genV = fmap V (Gen.int (Range.linear (ord 'a') 1000))
 
-genUfTruth :: Int -> Range Int -> Gen UFTruth
-genUfTruth maxElems assignedClassRange = do
-  let nElemsRange = Range.linear 0 maxElems
+genUfTruth :: Range Int -> Range Int -> Gen UFTruth
+genUfTruth nElemsRange assignedClassRange = do
   memberList <- Gen.list nElemsRange ((\a b -> (a, UFGroup b)) <$> genV <*> Gen.int assignedClassRange)
   let members = ILM.fromList memberList
-      groups = foldr (\(v, k) -> ILM.insertWith (<>) k (ILS.singleton v)) ILM.empty (ILM.toList members)
+      groups = ILMM.fromInvertedMap members
   pure (UFTruth groups members)
 
-genAnyPairs :: Int -> UFTruth -> Gen [(V, V)]
-genAnyPairs maxOps = genOnlyPairs maxOps . ILM.keys . ufTruthMembership
+genAnyPairs :: Range Int -> UFTruth -> Gen [(V, V)]
+genAnyPairs nOpsRange = genOnlyPairs nOpsRange . ILM.keys . ufTruthMembership
 
-genOnlyPairs :: Int -> [V] -> Gen [(V, V)]
-genOnlyPairs maxOps vs =
+genOnlyPairs :: Range Int -> [V] -> Gen [(V, V)]
+genOnlyPairs nOpsRange vs =
   if length vs < 2
     then pure []
-    else
-      let nOpsRange = Range.linear 0 maxOps
-      in Gen.list nOpsRange (genDistinctPairFromList vs)
+    else Gen.list nOpsRange (genDistinctPairFromList vs)
 
-genMergePairs :: Int -> Range Int -> UFTruth -> Gen [(V, V)]
-genMergePairs maxOps assignedClassRange t = do
-  let nOpsRange = Range.linear 0 maxOps
-      gvs = fmap ILS.toList (ufTruthGroups t)
+genMergePairs :: Range Int -> Range Int -> UFTruth -> Gen [(V, V)]
+genMergePairs nOpsRange assignedClassRange t = do
+  let gvs = fmap ILS.toList (ufTruthGroups t)
   groups <- Gen.list nOpsRange (fmap UFGroup (Gen.int assignedClassRange))
   let okGroups = filter (\g -> maybe False (\s -> ILS.size s >= 2) (ILM.lookup g (ufTruthGroups t))) groups
   for okGroups (\g -> genDistinctPairFromList (ILM.partialLookup g gvs))
@@ -222,42 +220,45 @@ testUfProp :: TestTree
 testUfProp = testProperty "UF Prop" $
   let maxClasses = 10
       maxElems = 100
-      -- TODO maxOps should be Range.constant 0 nElems
-      -- and maxPairOps should be in Range.constant 0 (nElems * nElems)
-      maxOps = 30
       nClassesRange = Range.linear 1 maxClasses
+      nElemsRange = Range.linear 0 maxElems
   in property $ do
     -- generate number of equiv classes
     nClasses <- forAll (Gen.int nClassesRange)
     let assignedClassRange = Range.constant 0 (nClasses - 1)
     -- generate elements for those classes
-    ufTruth <- forAll (genUfTruth maxElems assignedClassRange)
+    ufTruth <- forAll (genUfTruth nElemsRange assignedClassRange)
     let initUf = mkInitUf ufTruth
-        memberSet = ILS.fromList (ILM.keys (ufTruthMembership ufTruth))
+        memberMap = ufTruthMembership ufTruth
+        memberSet = ILS.fromList (ILM.keys memberMap)
     let nMembers = ILS.size memberSet
+        nOpsRange = Range.constant 0 (nClasses * nMembers)
     -- assert that sizes indicate nothing is merged
     ufSize initUf === nMembers
     ufTotalSize initUf === nMembers
     -- generate arbitrary pairs of elements
-    checkPairs <- forAll (genAnyPairs maxOps ufTruth)
+    checkPairs <- forAll (genAnyPairs nOpsRange ufTruth)
     -- assert that find indicates nothing is merged
     checkedInitUf <- foldS_ initUf checkPairs $ \(a, b) -> do
       x <- applyS (ufFind a)
       y <- applyS (ufFind b)
       lift (x /== y)
-    -- generate pairs of elements from the same equiv classes
-    mergePairs <- forAll (genMergePairs maxOps assignedClassRange ufTruth)
-    let mergedUf = mkMergedUf mergePairs checkedInitUf
-    ufTotalSize mergedUf === nMembers
-    -- TODO instead of this, pick from ALL pairs and assert eq if they're in mergePairs and same eq class, neq if not
-    -- again generate pairs of elemens from the same equiv classes
-    -- classPairs <- forAll (genMergePairs maxOps assignedClassRange ufTruth)
+    pure ()
+    -- -- generate pairs of elements from the same equiv classes
+    -- mergePairs <- forAll (genMergePairs nOpsRange assignedClassRange ufTruth)
+    -- let mergedUf = mkMergedUf mergePairs checkedInitUf
+    -- ufTotalSize mergedUf === nMembers
     -- -- assert that all merged pairs are merged
+    -- let mergedMap = mkMergedMap mergePairs memberMap
+    -- classPairs <- forAll (genAnyPairs nOpsRange ufTruth)
     -- void $ foldS_ mergedUf classPairs $ \(a, b) -> do
     --   x <- applyS (ufFind a)
     --   y <- applyS (ufFind b)
-    --   -- incorrect
-    --   lift (x === y)
+    --   let same = ILM.lookup a mergedMap == ILM.lookup b mergedMap
+    --   lift (if same then x === y else x /== y)
+
+mkMergedMap :: [(V, V)] -> IntLikeMultiMap V UFGroup -> IntLikeMap V UFGroup
+mkMergedMap = error "not implemented"
 
 type EG = EGraph () ArithF
 

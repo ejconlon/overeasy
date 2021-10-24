@@ -30,9 +30,11 @@ library
       Overeasy.Expressions.Free
       Overeasy.Expressions.Sexp
       Overeasy.Expressions.Tree
-      Overeasy.IntLikeGraph
-      Overeasy.IntLikeMap
-      Overeasy.IntLikeSet
+      Overeasy.IntLike.Equiv
+      Overeasy.IntLike.Graph
+      Overeasy.IntLike.Map
+      Overeasy.IntLike.MultiMap
+      Overeasy.IntLike.Set
       Overeasy.Matching
       Overeasy.Orphans
       Overeasy.Recursion

@@ -23,10 +23,10 @@ import Control.Monad.State.Strict (State, modify', state)
 import Data.Coerce (Coercible, coerce)
 import Data.Maybe (fromMaybe)
 import GHC.Generics (Generic)
-import Overeasy.IntLikeMap (IntLikeMap)
-import qualified Overeasy.IntLikeMap as ILM
-import Overeasy.IntLikeSet (IntLikeSet)
-import qualified Overeasy.IntLikeSet as ILS
+import Overeasy.IntLike.Map (IntLikeMap)
+import qualified Overeasy.IntLike.Map as ILM
+import Overeasy.IntLike.Set (IntLikeSet)
+import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.StateUtil (stateFail)
 
 -- | Our default choice for merging class ids.

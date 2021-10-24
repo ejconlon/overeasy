@@ -1,4 +1,4 @@
-module Overeasy.IntLikeSet
+module Overeasy.IntLike.Set
   ( IntLikeSet (..)
   , empty
   , singleton
@@ -9,6 +9,7 @@ module Overeasy.IntLikeSet
   , toList
   , insert
   , delete
+  , minView
   ) where
 
 import Control.DeepSeq (NFData)
@@ -56,3 +57,7 @@ insert x = IntLikeSet . IntSet.insert (coerce x) . unIntLikeSet
 delete :: Coercible x Int => x -> IntLikeSet x -> IntLikeSet x
 delete x = IntLikeSet . IntSet.delete (coerce x) . unIntLikeSet
 {-# INLINE delete #-}
+
+minView :: Coercible x Int => IntLikeSet x -> Maybe (x, IntLikeSet x)
+minView = coerce . IntSet.minView . unIntLikeSet
+{-# INLINE minView #-}

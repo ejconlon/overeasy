@@ -1,4 +1,4 @@
-module Overeasy.IntLikeMap
+module Overeasy.IntLike.Map
   ( IntLikeMap (..)
   , empty
   , singleton
@@ -14,6 +14,7 @@ module Overeasy.IntLikeMap
   , insertWith
   , adjust
   , delete
+  , minViewWithKey
   ) where
 
 import Control.DeepSeq (NFData)
@@ -81,3 +82,7 @@ adjust f x = IntLikeMap . IntMap.adjust f (coerce x) . unIntLikeMap
 delete :: Coercible x Int => x -> IntLikeMap x a -> IntLikeMap x a
 delete x = IntLikeMap . IntMap.delete (coerce x) . unIntLikeMap
 {-# INLINE delete #-}
+
+minViewWithKey :: Coercible x Int => IntLikeMap x a -> Maybe ((x, a), IntLikeMap x a)
+minViewWithKey = coerce . IntMap.minViewWithKey . unIntLikeMap
+{-# INLINE minViewWithKey #-}
