@@ -24,7 +24,7 @@ import Overeasy.Test.Assertions ((@/=))
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufFind, ufMembers, ufMerge, ufNew, ufOnConflict,
                            ufRoots, ufTotalSize)
 import System.Environment (lookupEnv, setEnv)
-import Test.Tasty (TestTree, defaultMain, testGroup)
+import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
 
@@ -105,8 +105,8 @@ testUfRec = testCase "UF rec" $ runUF $ do
   applyTestS ufRoots $ \rs _ -> rs @?= setV "a"
   applyTestS ufMembers $ \rs _ -> rs @?= ILM.fromList [(toV 'a', setV "abc")]
 
-testUf :: TestTree
-testUf = testGroup "UF" [testUfSimple, testUfRec]
+testUfUnit :: TestTree
+testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec]
 
 genDistinctPairFromList :: Eq a => [a] -> Gen (a, a)
 genDistinctPairFromList = \case
@@ -140,7 +140,7 @@ mkMergedUf :: [(V, V)] -> UF -> UF
 mkMergedUf vvs = execState (for_ vvs (uncurry ufMerge))
 
 testUfProp :: TestTree
-testUfProp = testProperty "UF Prop" $
+testUfProp = after AllSucceed "UFunit" $ testProperty "UF Prop" $
   let maxElems = 100
   in property $ do
     -- generate elements
@@ -264,11 +264,11 @@ testEgSimple = testCase "EG simple" $ runEG $ do
     egNeedsRebuild eg @?= False
   pure ()
 
-testEg :: TestTree
-testEg = testGroup "EG" [testEgSimple]
+testEgUnit :: TestTree
+testEgUnit = testGroup "EG unit" [testEgSimple]
 
 testEgProp :: TestTree
-testEgProp = testGroup "EG prop" []
+testEgProp = after AllSucceed "EG unit" $ testGroup "EG prop" []
 
 main :: IO ()
 main = do
@@ -276,8 +276,8 @@ main = do
   let debug = Just "1" == mayDebugStr
   when debug (setEnv "TASTY_NUM_THREADS" "1")
   defaultMain $ testGroup "Overeasy"
-    [ testUf
-    , testEg
+    [ testUfUnit
+    , testEgUnit
     , testUfProp
     , testEgProp
     ]
