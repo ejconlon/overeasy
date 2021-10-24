@@ -10,6 +10,7 @@ module Overeasy.IntLike.Set
   , insert
   , delete
   , minView
+  , unorderedPairs
   ) where
 
 import Control.DeepSeq (NFData)
@@ -61,3 +62,9 @@ delete x = IntLikeSet . IntSet.delete (coerce x) . unIntLikeSet
 minView :: Coercible x Int => IntLikeSet x -> Maybe (x, IntLikeSet x)
 minView = coerce . IntSet.minView . unIntLikeSet
 {-# INLINE minView #-}
+
+unorderedPairs :: Coercible x Int => IntLikeSet x -> [(x, x)]
+unorderedPairs vs =
+  case minView vs of
+    Nothing -> []
+    Just (x, vs') -> fmap (x,) (toList vs') ++ unorderedPairs vs'

@@ -1,23 +1,22 @@
 module Overeasy.Test.Spec (main) where
 
-import Control.Monad (foldM, void, when)
+import Control.Monad (void, when)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, execState, execStateT, runState)
 import Control.Monad.Trans (MonadTrans (lift))
 import Data.Char (chr, ord)
-import Data.Coerce (Coercible)
 import Data.Foldable (for_)
 import Data.List (delete)
-import Data.Traversable (for)
+import Data.Maybe (isJust)
+import qualified Data.Set as Set
 import Hedgehog (Gen, Range, forAll, property, (/==), (===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge,
                         egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
-import Overeasy.IntLike.Map (IntLikeMap)
+import qualified Overeasy.IntLike.Equiv as ILE
+import qualified Overeasy.IntLike.Graph as ILG
 import qualified Overeasy.IntLike.Map as ILM
-import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
-import qualified Overeasy.IntLike.MultiMap as ILMM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
@@ -109,44 +108,6 @@ testUfRec = testCase "UF rec" $ runUF $ do
 testUf :: TestTree
 testUf = testGroup "UF" [testUfSimple, testUfRec]
 
-newtype UFGroup = UFGroup { unUFGroup :: Int }
-  deriving stock (Show)
-  deriving newtype (Eq, Ord)
-
-data UFTruth = UFTruth
-  { ufTruthGroups :: IntLikeMap UFGroup (IntLikeSet V)
-  , ufTruthMembership :: IntLikeMap V UFGroup
-  } deriving stock (Eq, Show)
-
-mkUFTruth :: MonadFail m => [[V]] -> m UFTruth
-mkUFTruth = foldM goGroup (UFTruth ILM.empty ILM.empty) . zip [1..] where
-  goGroup uf (i, vs) = foldM (goSingle i) uf vs
-  goSingle i (UFTruth groups memship) v = do
-    let g = UFGroup i
-    case ILM.lookup v memship of
-      Just h -> fail ("Duplicate membership for " ++ show v ++ " " ++ show g ++ " " ++ show h)
-      Nothing ->
-        let set' = maybe (ILS.singleton v) (ILS.insert v) (ILM.lookup g groups)
-            groups' = ILM.insert g set' groups
-            memship' = ILM.insert v g memship
-        in pure (UFTruth groups' memship')
-
-data UFState = UFState
-  { ufStateTruth :: !UFTruth
-  , ufStateFresh :: !(IntLikeSet V)
-  , ufStateAdded :: !(IntLikeSet V)
-  } deriving stock (Eq, Show)
-
-mkUFState :: UFTruth -> UFState
-mkUFState t = UFState t (ILS.fromList (ILM.keys (ufTruthMembership t))) ILS.empty
-
-hasAnyV :: UFState -> Bool
-hasAnyV = not . ILM.null . ufTruthMembership . ufStateTruth
-
--- error on no elems!
-genAnyV :: UFState -> Gen V
-genAnyV = Gen.element . ILM.keys . ufTruthMembership . ufStateTruth
-
 genDistinctPairFromList :: Eq a => [a] -> Gen (a, a)
 genDistinctPairFromList = \case
   xs@(_:_:_) -> do
@@ -155,110 +116,64 @@ genDistinctPairFromList = \case
     pure (a, b)
   _ -> error "List needs more than two elements"
 
-genElemFromIntLikeSet :: Coercible a Int => IntLikeSet a -> Gen a
-genElemFromIntLikeSet = Gen.element . ILS.toList
+genV :: Int -> Gen V
+genV maxElems =
+  let minVal = ord 'a'
+      maxVal = minVal + maxElems
+  in fmap V (Gen.int (Range.linear minVal maxVal))
 
-hasFreshV :: UFState -> Bool
-hasFreshV = not . ILS.null . ufStateFresh
+genMembers :: Int -> Gen (IntLikeSet V)
+genMembers maxElems =
+  let nElemsRange = Range.linear 0 maxElems
+  in fmap (ILS.fromList . Set.toList) (Gen.set nElemsRange (genV maxElems))
 
--- error on no fresh elems!
-genFreshV :: UFState -> Gen V
-genFreshV = genElemFromIntLikeSet . ufStateFresh
-
-hasAddedV :: UFState -> Bool
-hasAddedV = not . ILS.null . ufStateFresh
-
--- error on no added elems!
-genAddedV :: UFState -> Gen V
-genAddedV s = genElemFromIntLikeSet (ufStateAdded s)
-
-hasPairAddedV :: UFState -> Bool
-hasPairAddedV s = ILS.size (ufStateAdded s) >= 2
-
--- error on < 2 added elems!
-genPairAddedV :: UFState -> Gen (V, V)
-genPairAddedV = genDistinctPairFromList . ILS.toList . ufStateAdded
-
-genIntLikeSet :: Coercible a Int => Range Int -> Gen a -> Gen (IntLikeSet a)
-genIntLikeSet r = fmap ILS.fromList . Gen.list r
-
-genV :: Gen V
-genV = fmap V (Gen.int (Range.linear (ord 'a') 1000))
-
-genUfTruth :: Range Int -> Range Int -> Gen UFTruth
-genUfTruth nElemsRange assignedClassRange = do
-  memberList <- Gen.list nElemsRange ((\a b -> (a, UFGroup b)) <$> genV <*> Gen.int assignedClassRange)
-  let members = ILM.fromList memberList
-      groups = ILMM.fromInvertedMap members
-  pure (UFTruth groups members)
-
-genAnyPairs :: Range Int -> UFTruth -> Gen [(V, V)]
-genAnyPairs nOpsRange = genOnlyPairs nOpsRange . ILM.keys . ufTruthMembership
-
-genOnlyPairs :: Range Int -> [V] -> Gen [(V, V)]
-genOnlyPairs nOpsRange vs =
+genListOfDistinctPairs :: Range Int -> [V] -> Gen [(V, V)]
+genListOfDistinctPairs nOpsRange vs =
   if length vs < 2
     then pure []
     else Gen.list nOpsRange (genDistinctPairFromList vs)
 
-genMergePairs :: Range Int -> Range Int -> UFTruth -> Gen [(V, V)]
-genMergePairs nOpsRange assignedClassRange t = do
-  let gvs = fmap ILS.toList (ufTruthGroups t)
-  groups <- Gen.list nOpsRange (fmap UFGroup (Gen.int assignedClassRange))
-  let okGroups = filter (\g -> maybe False (\s -> ILS.size s >= 2) (ILM.lookup g (ufTruthGroups t))) groups
-  for okGroups (\g -> genDistinctPairFromList (ILM.partialLookup g gvs))
-
-mkInitUf :: UFTruth -> UF
-mkInitUf t =
-  let vs = ILM.keys (ufTruthMembership t)
-  in execState (for_ vs ufAdd) ufNew
+mkInitUf :: [V] -> UF
+mkInitUf vs = execState (for_ vs ufAdd) ufNew
 
 mkMergedUf :: [(V, V)] -> UF -> UF
 mkMergedUf vvs = execState (for_ vvs (uncurry ufMerge))
 
 testUfProp :: TestTree
 testUfProp = testProperty "UF Prop" $
-  let maxClasses = 10
-      maxElems = 100
-      nClassesRange = Range.linear 1 maxClasses
-      nElemsRange = Range.linear 0 maxElems
+  let maxElems = 100
   in property $ do
-    -- generate number of equiv classes
-    nClasses <- forAll (Gen.int nClassesRange)
-    let assignedClassRange = Range.constant 0 (nClasses - 1)
-    -- generate elements for those classes
-    ufTruth <- forAll (genUfTruth nElemsRange assignedClassRange)
-    let initUf = mkInitUf ufTruth
-        memberMap = ufTruthMembership ufTruth
-        memberSet = ILS.fromList (ILM.keys memberMap)
+    -- generate elements
+    memberSet <- forAll (genMembers maxElems)
     let nMembers = ILS.size memberSet
-        nOpsRange = Range.constant 0 (nClasses * nMembers)
+        memberList = ILS.toList memberSet
+        allPairs = ILS.unorderedPairs memberSet
+        nOpsRange = Range.constant 0 (nMembers * nMembers)
+    let initUf = mkInitUf memberList
     -- assert that sizes indicate nothing is merged
     ufSize initUf === nMembers
     ufTotalSize initUf === nMembers
-    -- generate arbitrary pairs of elements
-    checkPairs <- forAll (genAnyPairs nOpsRange ufTruth)
     -- assert that find indicates nothing is merged
-    checkedInitUf <- foldS_ initUf checkPairs $ \(a, b) -> do
+    for_ allPairs $ \(a, b) -> flip evalStateT initUf $ do
       x <- applyS (ufFind a)
       y <- applyS (ufFind b)
       lift (x /== y)
-    pure ()
-    -- -- generate pairs of elements from the same equiv classes
-    -- mergePairs <- forAll (genMergePairs nOpsRange assignedClassRange ufTruth)
-    -- let mergedUf = mkMergedUf mergePairs checkedInitUf
-    -- ufTotalSize mergedUf === nMembers
-    -- -- assert that all merged pairs are merged
-    -- let mergedMap = mkMergedMap mergePairs memberMap
-    -- classPairs <- forAll (genAnyPairs nOpsRange ufTruth)
-    -- void $ foldS_ mergedUf classPairs $ \(a, b) -> do
-    --   x <- applyS (ufFind a)
-    --   y <- applyS (ufFind b)
-    --   let same = ILM.lookup a mergedMap == ILM.lookup b mergedMap
-    --   lift (if same then x === y else x /== y)
-
-mkMergedMap :: [(V, V)] -> IntLikeMultiMap V UFGroup -> IntLikeMap V UFGroup
-mkMergedMap = error "not implemented"
+    -- generate some pairs and merge them
+    mergePairs <- forAll (genListOfDistinctPairs nOpsRange memberList)
+    let mergedUf = mkMergedUf mergePairs initUf
+    -- assert that total size is unchanged
+    ufTotalSize mergedUf === nMembers
+    -- calculate components by graph reachability
+    let components = ILG.undirectedComponents mergePairs
+    -- assert that elements are equal or not according to component
+    void $ foldS_ mergedUf allPairs $ \(a, b) -> do
+      x <- applyS (ufFind a)
+      y <- applyS (ufFind b)
+      let aComponent = ILE.lookupClass a components
+          bComponent = ILE.lookupClass b components
+      if isJust aComponent && aComponent == bComponent
+        then lift (x === y)
+        else lift (x /== y)
 
 type EG = EGraph () ArithF
 
