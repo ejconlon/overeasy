@@ -262,13 +262,15 @@ testEgSimple = testCase "EG simple" $ runEG $ do
     egFindTerm termPlus eg @?= Just cidMerged
     egFindTerm termTwo eg @?= Just cidTwo
     egNeedsRebuild eg @?= False
-  pure ()
 
 testEgUnit :: TestTree
 testEgUnit = testGroup "EG unit" [testEgSimple]
 
 testEgProp :: TestTree
-testEgProp = after AllSucceed "EG unit" $ testGroup "EG prop" []
+testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
+  let maxElems = 100
+  in property $ do
+    pure ()
 
 main :: IO ()
 main = do
