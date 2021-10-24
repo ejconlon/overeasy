@@ -11,6 +11,12 @@ module Overeasy.EGraph
   , ENodePair (..)
   , EClassInfo (..)
   , EGraph
+  , egSource
+  , egUnionFind
+  , egClassMap
+  , egNodeAssoc
+  , egHashCons
+  , egWorkList
   , egClassSize
   , egTotalClassSize
   , egNodeSize
@@ -24,7 +30,6 @@ module Overeasy.EGraph
   , egMerge
   , egNeedsRebuild
   , egRebuild
-  , egWorkList
   ) where
 
 import Control.DeepSeq (NFData)

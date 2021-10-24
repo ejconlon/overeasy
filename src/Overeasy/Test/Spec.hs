@@ -7,7 +7,6 @@ import Data.Char (chr, ord)
 import Data.Foldable (for_)
 import Data.List (delete)
 import Data.Maybe (isJust)
-import qualified Data.Set as Set
 import Hedgehog (Gen, Range, forAll, property, (/==), (===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
@@ -119,13 +118,15 @@ genDistinctPairFromList = \case
 genV :: Int -> Gen V
 genV maxElems =
   let minVal = ord 'a'
-      maxVal = minVal + maxElems
+      maxVal = minVal + maxElems * maxElems
   in fmap V (Gen.int (Range.linear minVal maxVal))
 
-genMembers :: Int -> Gen (IntLikeSet V)
-genMembers maxElems =
+genMembers :: Int -> Gen [V]
+genMembers maxElems = do
   let nElemsRange = Range.linear 0 maxElems
-  in fmap (ILS.fromList . Set.toList) (Gen.set nElemsRange (genV maxElems))
+      minVal = ord 'a'
+  n <- Gen.int nElemsRange
+  pure (fmap (\i -> V (minVal + i)) [0..n-1])
 
 genListOfDistinctPairs :: Range Int -> [V] -> Gen [(V, V)]
 genListOfDistinctPairs nOpsRange vs =
@@ -140,13 +141,13 @@ mkMergedUf :: [(V, V)] -> UF -> UF
 mkMergedUf vvs = execState (for_ vvs (uncurry ufMerge))
 
 testUfProp :: TestTree
-testUfProp = after AllSucceed "UFunit" $ testProperty "UF Prop" $
+testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
   let maxElems = 100
   in property $ do
     -- generate elements
-    memberSet <- forAll (genMembers maxElems)
-    let nMembers = ILS.size memberSet
-        memberList = ILS.toList memberSet
+    memberList <- forAll (genMembers maxElems)
+    let memberSet = ILS.fromList memberList
+        nMembers = ILS.size memberSet
         allPairs = ILS.unorderedPairs memberSet
         nOpsRange = Range.constant 0 (nMembers * nMembers)
     let initUf = mkInitUf memberList

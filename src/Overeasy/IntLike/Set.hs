@@ -64,7 +64,12 @@ minView = coerce . IntSet.minView . unIntLikeSet
 {-# INLINE minView #-}
 
 unorderedPairs :: Coercible x Int => IntLikeSet x -> [(x, x)]
-unorderedPairs vs =
-  case minView vs of
-    Nothing -> []
-    Just (x, vs') -> fmap (x,) (toList vs') ++ unorderedPairs vs'
+unorderedPairs = go1 . toList where
+  go1 vs =
+    case vs of
+      [] -> []
+      x:xs -> go2 x xs xs
+  go2 x vl vs =
+    case vl of
+      [] -> go1 vs
+      y:vl' -> (x, y):go2 x vl' vs
