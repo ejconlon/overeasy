@@ -68,6 +68,6 @@ undirectedComponents es = go 0 startVs ILE.empty where
       Just (v, vs') ->
         let rs = reachable v g
             -- partial: ok by construction of graph and defn of reachable
-            eqv' = foldr (ILE.partialInsert (Component i)) eqv (v:rs)
+            eqv' = foldr (ILE.partialInsert (Component i)) eqv rs
             vs'' = foldr ILS.delete vs' rs
         in go (i + 1) vs'' eqv'
