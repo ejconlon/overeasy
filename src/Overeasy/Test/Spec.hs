@@ -13,6 +13,7 @@ import qualified Hedgehog.Range as Range
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge,
                         egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
+import Overeasy.Expressions.BinTree (pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
 import qualified Overeasy.IntLike.Map as ILM
@@ -142,7 +143,7 @@ mkMergedUf vvs = execState (for_ vvs (uncurry ufMerge))
 
 testUfProp :: TestTree
 testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
-  let maxElems = 100
+  let maxElems = 50
   in property $ do
     -- generate elements
     memberList <- forAll (genMembers maxElems)
@@ -269,8 +270,13 @@ testEgUnit = testGroup "EG unit" [testEgSimple]
 
 testEgProp :: TestTree
 testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
-  let maxElems = 100
+  let maxElems = 50
   in property $ do
+    -- TODO!
+    -- vMembers <- forAll (genMembers maxElems)
+    -- let vMemberSet = ILS.fromList vMembers
+    --     nVMembers = ILS.size vMemberSet
+    --     nOpsRange = Range.constant 0 (nVMembers * nVMembers)
     pure ()
 
 main :: IO ()
