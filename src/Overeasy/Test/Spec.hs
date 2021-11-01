@@ -7,13 +7,13 @@ import Data.Char (chr, ord)
 import Data.Foldable (for_)
 import Data.List (delete)
 import Data.Maybe (isJust)
-import Hedgehog (Gen, Range, forAll, property, (/==), (===))
+import Hedgehog (Gen, Range, forAll, property, (/==), (===), Property)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge,
                         egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
-import Overeasy.Expressions.BinTree (pattern BinTreeBranch, pattern BinTreeLeaf)
+import Overeasy.Expressions.BinTree (pattern BinTreeBranch, pattern BinTreeLeaf, BinTree, BinTreeF (..))
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
 import qualified Overeasy.IntLike.Map as ILM
@@ -27,6 +27,9 @@ import System.Environment (lookupEnv, setEnv)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
+import Data.Functor.Foldable (cata)
+import Data.Semigroup (Max(..))
+import Overeasy.Assoc (Assoc)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -268,15 +271,39 @@ testEgSimple = testCase "EG simple" $ runEG $ do
 testEgUnit :: TestTree
 testEgUnit = testGroup "EG unit" [testEgSimple]
 
+genBinTree :: Gen a -> Gen (BinTree a)
+genBinTree genA = genEither where
+  genLeaf = fmap BinTreeLeaf genA
+  genBranch = Gen.subterm2 genEither genEither BinTreeBranch
+  genEither = Gen.recursive Gen.choice [genLeaf] [genBranch]
+
+analyzeBinTree :: Semigroup m => (a -> m) -> BinTree a -> m
+analyzeBinTree f = cata go where
+  go = \case
+    BinTreeLeafF a -> f a
+    BinTreeBranchF x y -> x <> y
+
+maxBinTreeLeaf :: Ord a => BinTree a -> a
+maxBinTreeLeaf = getMax . analyzeBinTree Max
+
+propAssocIsCanonical :: Assoc x a -> Property
+propAssocIsCanonical assoc = undefined
+
+-- TODO define egraph invariants:
+-- assoc and hashcons must have canonical nodes only?
+
 testEgProp :: TestTree
 testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
   let maxElems = 50
   in property $ do
     -- TODO!
-    -- vMembers <- forAll (genMembers maxElems)
-    -- let vMemberSet = ILS.fromList vMembers
-    --     nVMembers = ILS.size vMemberSet
-    --     nOpsRange = Range.constant 0 (nVMembers * nVMembers)
+    -- Gen a list of `genBinTreeV`
+    -- explode them into an assoc and note the unique size
+    -- add them to an empty egraph, assert size eq and does not need rebuild
+    -- assert egraph invariants
+    -- pick pairs to merge
+    -- for sequential groups of elems, merge, and after all rebuild
+    -- assert egraph invariants
     pure ()
 
 main :: IO ()
