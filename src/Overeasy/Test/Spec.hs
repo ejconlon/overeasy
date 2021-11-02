@@ -1,18 +1,18 @@
 module Overeasy.Test.Spec (main) where
 
 import Control.Monad (void, when)
-import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, execState, execStateT, runState)
+import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, execState, execStateT, runState, evalState)
 import Control.Monad.Trans (MonadTrans (lift))
 import Data.Char (chr, ord)
 import Data.Foldable (for_)
 import Data.List (delete)
 import Data.Maybe (isJust)
-import Hedgehog (Gen, Range, forAll, property, (/==), (===), Property)
+import Hedgehog (Gen, Range, forAll, property, (/==), (===), PropertyT, assert)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Overeasy.Classes (Changed (..))
-import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph, egAddTerm, egClassSize, egFindTerm, egMerge,
-                        egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
+import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph (..), ENodeId (..), egAddTerm, egClassSize, egFindTerm, egMerge,
+                        egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList, egCanonicalize)
 import Overeasy.Expressions.BinTree (pattern BinTreeBranch, pattern BinTreeLeaf, BinTree, BinTreeF (..))
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -29,7 +29,10 @@ import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
 import Data.Functor.Foldable (cata)
 import Data.Semigroup (Max(..))
-import Overeasy.Assoc (Assoc)
+import Overeasy.Assoc (assocBwd, assocFwd, assocNeedsClean)
+import qualified Data.HashMap.Strict as HashMap
+import Data.Hashable (Hashable)
+import Data.Traversable (for)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -277,6 +280,9 @@ genBinTree genA = genEither where
   genBranch = Gen.subterm2 genEither genEither BinTreeBranch
   genEither = Gen.recursive Gen.choice [genLeaf] [genBranch]
 
+genBinTreeMembers :: Int -> Gen [BinTree V]
+genBinTreeMembers maxElems = Gen.list (Range.linear 0 maxElems) (genBinTree (genV maxElems))
+
 analyzeBinTree :: Semigroup m => (a -> m) -> BinTree a -> m
 analyzeBinTree f = cata go where
   go = \case
@@ -286,16 +292,39 @@ analyzeBinTree f = cata go where
 maxBinTreeLeaf :: Ord a => BinTree a -> a
 maxBinTreeLeaf = getMax . analyzeBinTree Max
 
-propAssocIsCanonical :: Assoc x a -> Property
-propAssocIsCanonical assoc = undefined
+propAssocIsCanonical :: (Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
+propAssocIsCanonical eg = do
+  let assoc = egNodeAssoc eg
+      fwd = assocFwd assoc
+      bwd = assocBwd assoc
+  -- Assert that the assoc has been rebuilt
+  assert (not (assocNeedsClean assoc))
+  -- Look at sizes to confirm that assoc could map 1-1
+  ILM.size fwd === HashMap.size bwd
+  -- Go through keys forward
+  for_ (ILM.toList fwd) $ \(x, fc) ->
+    HashMap.lookup fc bwd === Just x
+  -- Go through keys backward
+  for_ (HashMap.toList bwd) $ \(fc, x) ->
+    ILM.lookup x fwd === Just fc
+  -- Now test recanonicalization
+  for_ (HashMap.keys bwd) $ \fc ->
+    let recanon = evalState (egCanonicalize fc) eg
+    in recanon === Just fc
 
 -- TODO define egraph invariants:
 -- assoc and hashcons must have canonical nodes only?
 
+-- type EGF a = BinTree V a
+-- type EGV = EGraph (EGF EClassId) EGF
+
 testEgProp :: TestTree
 testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
   let maxElems = 50
+      -- eg0 = egNew :: EGV
   in property $ do
+    -- propAssocIsCanonical eg0
+    -- members <- forAll (genBinTreeMembers maxElems)
     -- TODO!
     -- Gen a list of `genBinTreeV`
     -- explode them into an assoc and note the unique size
