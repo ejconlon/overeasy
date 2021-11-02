@@ -6,13 +6,13 @@ import Control.Monad.Trans (MonadTrans (lift))
 import Data.Char (chr, ord)
 import Data.Foldable (for_)
 import Data.List (delete)
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, fromJust)
 import Hedgehog (Gen, Range, forAll, property, (/==), (===), PropertyT, assert)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph (..), ENodeId (..), egAddTerm, egClassSize, egFindTerm, egMerge,
-                        egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList, egCanonicalize)
+                        egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList, egCanonicalize, EAnalysis (..), egClassInfo, eciData)
 import Overeasy.Expressions.BinTree (pattern BinTreeBranch, pattern BinTreeLeaf, BinTree, BinTreeF (..))
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -32,7 +32,6 @@ import Data.Semigroup (Max(..))
 import Overeasy.Assoc (assocBwd, assocFwd, assocNeedsClean)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
-import Data.Traversable (for)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -56,7 +55,7 @@ runS :: Monad m => s -> StateT s m () -> m ()
 runS = flip evalStateT
 
 newtype V = V { unV :: Int }
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, Hashable)
 
 instance Show V where
   show = show . fromV
@@ -292,8 +291,11 @@ analyzeBinTree f = cata go where
 maxBinTreeLeaf :: Ord a => BinTree a -> a
 maxBinTreeLeaf = getMax . analyzeBinTree Max
 
-propAssocIsCanonical :: (Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
-propAssocIsCanonical eg = do
+propEgInvariants :: (Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
+propEgInvariants eg = do
+  -- Invariants require that no rebuild is needed (empty worklist)
+  assert (not (egNeedsRebuild eg))
+  -- First look at node assoc (NodeId <-> f ClassId)
   let assoc = egNodeAssoc eg
       fwd = assocFwd assoc
       bwd = assocBwd assoc
@@ -307,33 +309,61 @@ propAssocIsCanonical eg = do
   -- Go through keys backward
   for_ (HashMap.toList bwd) $ \(fc, x) ->
     ILM.lookup x fwd === Just fc
+  -- Now look at hashcons (NodeId <-> ClassId)
+  let hc = egHashCons eg
+  ILM.size hc === ILM.size fwd
+  -- TODO assert that hashcons has exactly same keys as assoc fwd keys
+  -- TODO assert that hashcons has exactly the same values as unionfind roots
+  -- TODO assert that classmap has exactly the same keys as unionfind roots
+  -- TODO assert that classmap class has node values that are hashconsed to class
+  -- TODO assert that all node values in all classmap classes equal hc keys
   -- Now test recanonicalization
   for_ (HashMap.keys bwd) $ \fc ->
     let recanon = evalState (egCanonicalize fc) eg
     in recanon === Just fc
 
--- TODO define egraph invariants:
--- assoc and hashcons must have canonical nodes only?
+type EGD = Max V
+type EGF = BinTreeF V
+type EGV = EGraph EGD EGF
 
--- type EGF a = BinTree V a
--- type EGV = EGraph (EGF EClassId) EGF
+data MaxV = MaxV
+
+instance EAnalysis EGD EGF MaxV where
+  eaMake _ fc eg = case fc of
+    BinTreeLeafF v -> Max v
+    BinTreeBranchF c1 c2 ->
+      let v1 = eciData (fromJust (egClassInfo c1 eg))
+          v2 = eciData (fromJust (egClassInfo c2 eg))
+      in v1 <> v2
+  eaJoin _ v1 v2 = v1 <> v2
+  eaModify _ _ g = g
+
+genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
+genNodePairs _ _ = pure [] -- TODO
 
 testEgProp :: TestTree
 testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
   let maxElems = 50
-      -- eg0 = egNew :: EGV
+      eg0 = egNew :: EGV
   in property $ do
-    -- propAssocIsCanonical eg0
-    -- members <- forAll (genBinTreeMembers maxElems)
-    -- TODO!
-    -- Gen a list of `genBinTreeV`
-    -- explode them into an assoc and note the unique size
-    -- add them to an empty egraph, assert size eq and does not need rebuild
-    -- assert egraph invariants
-    -- pick pairs to merge
-    -- for sequential groups of elems, merge, and after all rebuild
-    -- assert egraph invariants
-    pure ()
+    assert (egNodeSize eg0 == 0)
+    assert (egClassSize eg0 == 0)
+    propEgInvariants eg0
+    members <- forAll (genBinTreeMembers maxElems)
+    let nMembers = length members
+        nOpsRange = Range.constant 0 (nMembers * nMembers)
+    let eg1 = execState (for_ members (egAddTerm MaxV)) eg0
+    propEgInvariants eg1
+    assert (egNodeSize eg1 >= length members)
+    egClassSize eg1 === egNodeSize eg1
+    execState (egRebuild MaxV) eg1 === eg1
+    pairs <- forAll (genNodePairs nOpsRange eg1)
+    let eg2 = execState (for_ pairs (uncurry (egMerge MaxV))) eg1
+    egNodeSize eg2 === egNodeSize eg1
+    egNeedsRebuild eg2 === not (null pairs)
+    let eg3 = execState (egRebuild MaxV) eg2
+    egNodeSize eg3 === egNodeSize eg2
+    propEgInvariants eg3
 
 main :: IO ()
 main = do
