@@ -8,6 +8,7 @@ module Overeasy.IntLike.Map
   , member
   , toList
   , keys
+  , elems
   , lookup
   , partialLookup
   , insert
@@ -58,6 +59,9 @@ toList = coerce . IntMap.toList . unIntLikeMap
 keys :: Coercible x Int => IntLikeMap x a -> [x]
 keys = coerce . IntMap.keys . unIntLikeMap
 {-# INLINE keys #-}
+
+elems :: IntLikeMap x a -> [a]
+elems = IntMap.elems . unIntLikeMap
 
 lookup :: Coercible x Int => x -> IntLikeMap x a -> Maybe a
 lookup x = IntMap.lookup (coerce x) . unIntLikeMap

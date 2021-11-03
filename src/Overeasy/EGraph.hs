@@ -55,7 +55,7 @@ import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateLens)
-import Overeasy.UnionFind (MergeRes (..), UnionFind, ufAdd, ufFind, ufMerge, ufNew, ufOnConflict, ufPartialFind,
+import Overeasy.UnionFind (MergeRes (..), UnionFind, ufAdd, ufFind, ufMerge, ufNew, ufPartialFind,
                            ufRoots, ufSize, ufTotalSize)
 
 -- | An opaque class id
@@ -172,7 +172,7 @@ egCanonicalizeInternal x = do
   node <- stateLens egNodeAssocL (gets (assocPartialLookupByKey x))
   -- partial: guaranteed present by construction
   fz <- stateLens egUnionFindL (traverse ufPartialFind node)
-  stateLens egNodeAssocL (assocUpdate ufOnConflict x fz)
+  stateLens egNodeAssocL (assocUpdate x fz)
 
 -- private
 egMake :: EAnalysis d f q => q -> f EClassId -> State (EGraph d f) d

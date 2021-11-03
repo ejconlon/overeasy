@@ -28,7 +28,7 @@ dependencies:
 - transformers
 - unordered-containers
 # test deps - TODO move back to suite
-# pretty-simple
+- pretty-simple
 - hedgehog
 - tasty
 - tasty-hedgehog

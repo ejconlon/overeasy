@@ -20,18 +20,22 @@ import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
-import Overeasy.Test.Assertions ((@/=))
+import Overeasy.Test.Assertions ((@/=), assertFalse, assertTrue)
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufFind, ufMembers, ufMerge, ufNew, ufOnConflict,
                            ufRoots, ufTotalSize)
 import System.Environment (lookupEnv, setEnv)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (testCase, (@?=), Assertion)
 import Test.Tasty.Hedgehog (testProperty)
 import Data.Functor.Foldable (cata)
 import Data.Semigroup (Max(..))
-import Overeasy.Assoc (assocBwd, assocFwd, assocNeedsClean)
+import Overeasy.Assoc (assocBwd, assocFwd, assocNeedsClean, Assoc, assocNew, assocAdd, assocSize, assocUpdate, assocDeadFwd, assocDeadBwd, assocClean)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
+import Control.Monad.IO.Class (liftIO)
+import Text.Pretty.Simple (pPrint)
+import GHC.Stack (HasCallStack)
+import qualified Data.HashSet as HashSet
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -121,6 +125,12 @@ genDistinctPairFromList = \case
     pure (a, b)
   _ -> error "List needs more than two elements"
 
+genListOfDistinctPairs :: Eq a => Range Int -> [a] -> Gen [(a, a)]
+genListOfDistinctPairs nOpsRange vs =
+  if length vs < 2
+    then pure []
+    else Gen.list nOpsRange (genDistinctPairFromList vs)
+
 genV :: Int -> Gen V
 genV maxElems =
   let minVal = ord 'a'
@@ -133,12 +143,6 @@ genMembers maxElems = do
       minVal = ord 'a'
   n <- Gen.int nElemsRange
   pure (fmap (\i -> V (minVal + i)) [0..n-1])
-
-genListOfDistinctPairs :: Range Int -> [V] -> Gen [(V, V)]
-genListOfDistinctPairs nOpsRange vs =
-  if length vs < 2
-    then pure []
-    else Gen.list nOpsRange (genDistinctPairFromList vs)
 
 mkInitUf :: [V] -> UF
 mkInitUf vs = execState (for_ vs ufAdd) ufNew
@@ -155,7 +159,7 @@ testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
     let memberSet = ILS.fromList memberList
         nMembers = ILS.size memberSet
         allPairs = ILS.unorderedPairs memberSet
-        nOpsRange = Range.constant 0 (nMembers * nMembers)
+        nOpsRange = Range.linear 0 (nMembers * nMembers)
     let initUf = mkInitUf memberList
     -- assert that sizes indicate nothing is merged
     ufSize initUf === nMembers
@@ -182,16 +186,55 @@ testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
         then lift (x === y)
         else lift (x /== y)
 
-type EG = EGraph () ArithF
+type EGA = EGraph () ArithF
 
-runEG :: StateT EG IO () -> IO ()
-runEG = runS egNew
+runEGA :: StateT EGA IO () -> IO ()
+runEGA = runS egNew
 
 noA :: EAnalysisOff ArithF
 noA = EAnalysisOff
 
-testEgSimple :: TestTree
-testEgSimple = testCase "EG simple" $ runEG $ do
+type AV = Assoc ENodeId V
+
+assertAssocInvariants :: HasCallStack => AV -> Assertion
+assertAssocInvariants av = do
+  let fwd = assocFwd av
+      bwd = assocBwd av
+  -- Assert that the assoc has been rebuilt
+  assertFalse (assocNeedsClean av)
+  -- Look at sizes to confirm that assoc could map 1-1
+  ILM.size fwd @?= HashMap.size bwd
+  -- Go through keys forward
+  for_ (ILM.toList fwd) $ \(x, fc) ->
+    HashMap.lookup fc bwd @?= Just x
+  -- Go through keys backward
+  for_ (HashMap.toList bwd) $ \(fc, x) ->
+    ILM.lookup x fwd @?= Just fc
+
+testAssocUnit :: TestTree
+testAssocUnit = testCase "Assoc unit" $ do
+  let a0 = assocNew (ENodeId 0)
+  assertAssocInvariants a0
+  assocSize a0 @?= 0
+  let members = [toV 'a', toV 'b', toV 'c'] :: [V]
+  let a1 = execState (for_ members assocAdd) a0
+  assertAssocInvariants a1
+  assocSize a1 @?= 3
+  let aKey = fromJust (HashMap.lookup (toV 'a') (assocBwd a1))
+  let a2 = execState (assocUpdate aKey (toV 'b')) a1
+  putStrLn "========== BEFORE CLEAN =========="
+  pPrint a2
+  assertTrue (assocNeedsClean a2)
+  assocDeadFwd a2 @?= ILS.fromList [aKey]
+  assocDeadBwd a2 @?= HashSet.empty
+  let a3 = execState assocClean a2
+  putStrLn "========== AFTER CLEAN =========="
+  pPrint a3
+  assertAssocInvariants a3
+  assocSize a3 @?= 2
+
+testEgUnit :: TestTree
+testEgUnit = after AllSucceed "Assoc unit" $ testCase "EG unit" $ runEGA $ do
   -- We're going to have our egraph track the equality `2 + 2 = 4`.
   -- Some simple terms:
   let termFour = ArithConst 4
@@ -264,14 +307,13 @@ testEgSimple = testCase "EG simple" $ runEG $ do
         x @/= cidTwo
         pure x
   -- Now rebuild
+  testS pPrint
   applyTestS (egRebuild noA) $ \() eg -> do
+    pPrint eg
     egFindTerm termFour eg @?= Just cidMerged
     egFindTerm termPlus eg @?= Just cidMerged
     egFindTerm termTwo eg @?= Just cidTwo
     egNeedsRebuild eg @?= False
-
-testEgUnit :: TestTree
-testEgUnit = testGroup "EG unit" [testEgSimple]
 
 genBinTree :: Gen a -> Gen (BinTree a)
 genBinTree genA = genEither where
@@ -282,6 +324,12 @@ genBinTree genA = genEither where
 genBinTreeMembers :: Int -> Gen [BinTree V]
 genBinTreeMembers maxElems = Gen.list (Range.linear 0 maxElems) (genBinTree (genV maxElems))
 
+type EGD = Max V
+type EGF = BinTreeF V
+type EGT = BinTree V
+type EGV = EGraph EGD EGF
+data MaxV = MaxV
+
 analyzeBinTree :: Semigroup m => (a -> m) -> BinTree a -> m
 analyzeBinTree f = cata go where
   go = \case
@@ -291,8 +339,22 @@ analyzeBinTree f = cata go where
 maxBinTreeLeaf :: Ord a => BinTree a -> a
 maxBinTreeLeaf = getMax . analyzeBinTree Max
 
-propEgInvariants :: (Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
+instance EAnalysis EGD EGF MaxV where
+  eaMake _ fc eg = case fc of
+    BinTreeLeafF v -> Max v
+    BinTreeBranchF c1 c2 ->
+      let v1 = eciData (fromJust (egClassInfo c1 eg))
+          v2 = eciData (fromJust (egClassInfo c2 eg))
+      in v1 <> v2
+  eaJoin _ v1 v2 = v1 <> v2
+  eaModify _ _ g = g
+
+
+propEgInvariants :: (Show d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
 propEgInvariants eg = do
+  --- XXX
+  liftIO (putStrLn "========================")
+  liftIO (pPrint eg)
   -- Invariants require that no rebuild is needed (empty worklist)
   assert (not (egNeedsRebuild eg))
   -- First look at node assoc (NodeId <-> f ClassId)
@@ -322,24 +384,10 @@ propEgInvariants eg = do
     let recanon = evalState (egCanonicalize fc) eg
     in recanon === Just fc
 
-type EGD = Max V
-type EGF = BinTreeF V
-type EGV = EGraph EGD EGF
-
-data MaxV = MaxV
-
-instance EAnalysis EGD EGF MaxV where
-  eaMake _ fc eg = case fc of
-    BinTreeLeafF v -> Max v
-    BinTreeBranchF c1 c2 ->
-      let v1 = eciData (fromJust (egClassInfo c1 eg))
-          v2 = eciData (fromJust (egClassInfo c2 eg))
-      in v1 <> v2
-  eaJoin _ v1 v2 = v1 <> v2
-  eaModify _ _ g = g
 
 genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
-genNodePairs _ _ = pure [] -- TODO
+genNodePairs nOpsRange eg = genListOfDistinctPairs nOpsRange (ILM.keys (egClassMap eg))
+
 
 testEgProp :: TestTree
 testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
@@ -348,22 +396,25 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
   in property $ do
     assert (egNodeSize eg0 == 0)
     assert (egClassSize eg0 == 0)
-    propEgInvariants eg0
-    members <- forAll (genBinTreeMembers maxElems)
-    let nMembers = length members
-        nOpsRange = Range.constant 0 (nMembers * nMembers)
-    let eg1 = execState (for_ members (egAddTerm MaxV)) eg0
-    propEgInvariants eg1
-    assert (egNodeSize eg1 >= length members)
-    egClassSize eg1 === egNodeSize eg1
-    execState (egRebuild MaxV) eg1 === eg1
-    pairs <- forAll (genNodePairs nOpsRange eg1)
-    let eg2 = execState (for_ pairs (uncurry (egMerge MaxV))) eg1
-    egNodeSize eg2 === egNodeSize eg1
-    egNeedsRebuild eg2 === not (null pairs)
-    let eg3 = execState (egRebuild MaxV) eg2
-    egNodeSize eg3 === egNodeSize eg2
-    propEgInvariants eg3
+    -- propEgInvariants eg0
+    -- --- XXX add forAlls back
+    -- -- members <- forAll (genBinTreeMembers maxElems)
+    -- let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
+    -- let nMembers = length members
+    --     nOpsRange = Range.linear 0 (nMembers * nMembers)
+    -- let eg1 = execState (for_ members (egAddTerm MaxV)) eg0
+    -- propEgInvariants eg1
+    -- assert (egNodeSize eg1 >= 0)
+    -- egClassSize eg1 === egNodeSize eg1
+    -- execState (egRebuild MaxV) eg1 === eg1
+    -- -- pairs <- forAll (genNodePairs nOpsRange eg1)
+    -- let pairs = [(EClassId 0, EClassId 1)]
+    -- let eg2 = execState (for_ pairs (uncurry (egMerge MaxV))) eg1
+    -- egNodeSize eg2 === egNodeSize eg1
+    -- egNeedsRebuild eg2 === not (null pairs)
+    -- let eg3 = execState (egRebuild MaxV) eg2
+    -- egNodeSize eg3 === egNodeSize eg2
+    -- propEgInvariants eg3
 
 main :: IO ()
 main = do
@@ -371,8 +422,9 @@ main = do
   let debug = Just "1" == mayDebugStr
   when debug (setEnv "TASTY_NUM_THREADS" "1")
   defaultMain $ testGroup "Overeasy"
-    [ testUfUnit
-    , testEgUnit
-    , testUfProp
-    , testEgProp
+    -- [ testUfUnit
+    -- , testEgUnit
+    [ testAssocUnit
+    -- , testUfProp
+    -- , testEgProp
     ]
