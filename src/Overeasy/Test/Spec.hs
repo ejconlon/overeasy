@@ -238,10 +238,11 @@ mkAssoc rawPairs = do
 
 testAssocCase :: AssocCase -> TestTree
 testAssocCase (AssocCase name start act end) = testCase name $ do
-  a0 <- mkAssoc start
-  assertAssocInvariants a0
-  assocSize a0 @?= length start
-
+  aStart <- mkAssoc start
+  assertAssocInvariants aStart
+  assocSize aStart @?= length start
+  -- TODO update from act
+  -- TODO verify that assoc matches end
 
 testAssocCases :: TestTree
 testAssocCases = testGroup "Assoc case" (fmap testAssocCase allAssocCases)
