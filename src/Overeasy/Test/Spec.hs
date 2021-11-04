@@ -29,13 +29,15 @@ import Test.Tasty.HUnit (testCase, (@?=), Assertion)
 import Test.Tasty.Hedgehog (testProperty)
 import Data.Functor.Foldable (cata)
 import Data.Semigroup (Max(..))
-import Overeasy.Assoc (assocBwd, assocFwd, assocNeedsClean, Assoc, assocNew, assocAdd, assocSize, assocUpdate, assocDeadFwd, assocDeadBwd, assocClean)
+import Overeasy.Assoc (assocBwd, assocFwd, assocNeedsClean, Assoc, assocNew, assocAdd, assocSize, assocUpdate, assocDeadFwd, assocDeadBwd, assocClean, assocFromPairs)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
 import Control.Monad.IO.Class (liftIO)
 import Text.Pretty.Simple (pPrint)
 import GHC.Stack (HasCallStack)
 import qualified Data.HashSet as HashSet
+import System.IO (BufferMode(NoBuffering), hSetBuffering, stdout, stderr)
+import Data.Bifunctor (bimap)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -211,6 +213,39 @@ assertAssocInvariants av = do
   for_ (HashMap.toList bwd) $ \(fc, x) ->
     ILM.lookup x fwd @?= Just fc
 
+data AssocCase = AssocCase !String ![(Int, Char)] ![(Int, Char, Int)] ![(Int, Char)]
+
+allAssocCases :: [AssocCase]
+allAssocCases =
+  let start = [(0, 'a'), (1, 'b'), (2, 'c')]
+  in [ AssocCase "base" start [] start
+     , AssocCase "ident" start [(0, 'a', 0)] start
+     , AssocCase "superfluous" start [(4, 'a', 0)] start
+     , AssocCase "internal" start [(0, 'b', 1)] [(1, 'b'), (2, 'c')]
+     , AssocCase "external" start [(0, 'd', 0)] [(0, 'd'), (1, 'b'), (2, 'c')]
+     , AssocCase "additional" start [(4, 'd', 4)] [(0, 'a'), (1, 'b'), (2, 'c'), (4, 'd')]
+     , AssocCase "chain fwd" start [(0, 'b', 1), (1, 'c', 2)] [(2, 'c')]
+     , AssocCase "chain bwd" start [(1, 'c', 2), (0, 'b', 2)] [(2, 'c')]
+     ]
+
+mkAssoc :: MonadFail m => [(Int, Char)] -> m AV
+mkAssoc rawPairs = do
+  let pairs = fmap (bimap ENodeId toV) rawPairs
+      start = ENodeId 0
+  case assocFromPairs start pairs of
+    Just assoc -> pure assoc
+    Nothing -> fail "Bad pairs"
+
+testAssocCase :: AssocCase -> TestTree
+testAssocCase (AssocCase name start act end) = testCase name $ do
+  a0 <- mkAssoc start
+  assertAssocInvariants a0
+  assocSize a0 @?= length start
+
+
+testAssocCases :: TestTree
+testAssocCases = testGroup "Assoc case" (fmap testAssocCase allAssocCases)
+
 testAssocUnit :: TestTree
 testAssocUnit = testCase "Assoc unit" $ do
   let a0 = assocNew (ENodeId 0)
@@ -220,13 +255,22 @@ testAssocUnit = testCase "Assoc unit" $ do
   let a1 = execState (for_ members assocAdd) a0
   assertAssocInvariants a1
   assocSize a1 @?= 3
-  let aKey = fromJust (HashMap.lookup (toV 'a') (assocBwd a1))
-  let a2 = execState (assocUpdate aKey (toV 'b')) a1
+  putStrLn "========== INITIAL =========="
+  pPrint a1
+  let aVal = toV 'a'
+      aKey = fromJust (HashMap.lookup aVal (assocBwd a1))
+      bVal = toV 'b'
+      bKey = fromJust (HashMap.lookup bVal (assocBwd a1))
+  putStrLn "========== UPDATE ========="
+  pPrint aKey
+  pPrint bVal
+  let (newAKey, a2) = runState (assocUpdate aKey bVal) a1
+  newAKey @?= bKey
   putStrLn "========== BEFORE CLEAN =========="
   pPrint a2
   assertTrue (assocNeedsClean a2)
   assocDeadFwd a2 @?= ILS.fromList [aKey]
-  assocDeadBwd a2 @?= HashSet.empty
+  assocDeadBwd a2 @?= HashSet.fromList [aVal]
   let a3 = execState assocClean a2
   putStrLn "========== AFTER CLEAN =========="
   pPrint a3
@@ -420,11 +464,15 @@ main :: IO ()
 main = do
   mayDebugStr <- lookupEnv "DEBUG"
   let debug = Just "1" == mayDebugStr
-  when debug (setEnv "TASTY_NUM_THREADS" "1")
+  when debug $ do
+    setEnv "TASTY_NUM_THREADS" "1"
+    hSetBuffering stdout NoBuffering
+    hSetBuffering stderr NoBuffering
   defaultMain $ testGroup "Overeasy"
     -- [ testUfUnit
     -- , testEgUnit
-    [ testAssocUnit
+    [ testAssocCases
+    , testAssocUnit
     -- , testUfProp
     -- , testEgProp
     ]

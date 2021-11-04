@@ -5,6 +5,7 @@ module Overeasy.Assoc
   ( Assoc
   , assocSize
   , assocNew
+  , assocFromPairs
   , assocAdd
   , assocEnsure
   , assocFwd
@@ -39,6 +40,7 @@ import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize, sourceSkipInc)
 import Overeasy.StateUtil (stateFail, stateFailChanged)
+import Data.Tuple (swap)
 
 -- private ctor
 data Assoc x a = Assoc
@@ -61,6 +63,19 @@ assocTotalSize = sourceSize . assocSrc
 -- | Creates a new 'Assoc' from a starting element
 assocNew :: Coercible x Int => x -> Assoc x a
 assocNew = Assoc ILM.empty HashMap.empty ILS.empty HashSet.empty . sourceNew
+
+-- | Creates a new 'Assoc' from pairs of elements.
+assocFromPairs :: (Coercible x Int, Eq a, Hashable a) => x -> [(x, a)] -> Maybe (Assoc x a)
+assocFromPairs start pairs =
+  let fwd = ILM.fromList pairs
+      bwd = HashMap.fromList (fmap swap pairs)
+      n = foldr sourceSkipInc (sourceNew start) (fmap fst pairs)
+      nElems = length pairs
+      nFwd = ILM.size fwd
+      nBwd = HashMap.size bwd
+  in if nFwd == nElems && nBwd == nElems
+    then Just (Assoc fwd bwd ILS.empty HashSet.empty n)
+    else Nothing
 
 -- private
 assocAddInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> Maybe (x, Assoc x a)
@@ -121,36 +136,54 @@ assocDeleteByValue :: (Coercible x Int, Eq a, Hashable a) => x -> State (Assoc x
 assocDeleteByValue = stateFailChanged . assocDeleteByValueInc
 
 -- | Updates the assoc. You may need to clean the 'Assoc' with 'assocClean' when you have finished updating.
--- If (x, a0) is in the assoc fwd and you update with (x, a1) where a0 /= a1, you must never call with a0 again.
+-- If (x, a0) is in the assoc fwd and you update with (x, a1) where a0 /= a1, you should not call with a0 again.
 -- May break the 1-1 fwd and bwd mappings until you clean.
 assocUpdate :: (Coercible x Int, Eq x, Eq a, Hashable a) => x -> a -> State (Assoc x a) x
 assocUpdate x a1 = state $ \assoc@(Assoc fwd bwd deadFwd deadBwd n) ->
-  case HashMap.lookup a1 bwd of
-    Just y ->
-      if x == y
-        -- We are inserting the exact pair that exists - This is a no-op.
+  case (ILM.lookup x fwd, HashMap.lookup a1 bwd) of
+    (Nothing, Nothing) ->
+      -- Neither x nor a1 were ever in the map - simply insert
+      let fwd' = ILM.insert x a1 fwd
+          bwd' = HashMap.insert a1 x bwd
+          n' = sourceSkipInc x n
+      in (x, Assoc fwd' bwd' deadFwd deadBwd n')
+    (Nothing, Just y) ->
+      -- x was not in the map but a1 was
+      -- Update fwd x a1, mark x for deletion, return y
+      -- This makes fwd many-to-one until clean. No elem in bwd will point to x.
+      let fwd' = ILM.insert x a1 fwd
+          deadFwd' = ILS.insert x deadFwd
+          n' = sourceSkipInc x n
+      in (y, Assoc fwd' bwd deadFwd' deadBwd n')
+    (Just a0, Nothing) ->
+      -- x was in the map but a1 was not
+      -- Update fwd bwd for x a1, mark original a for deletion, then return x
+      -- This makes bwd many-to-one. No elem in fwd will point to a0.
+        let fwd' = ILM.insert x a1 fwd
+            bwd' = HashMap.insert a1 x bwd
+            deadBwd' = HashSet.insert a0 deadBwd
+        in (x, Assoc fwd' bwd' deadFwd deadBwd' n)
+    (Just a0, Just y) ->
+      -- x and a1 are in the map already
+      if a0 == a1
+        -- duplicate insert, no change
         then (x, assoc)
-        -- If a is already in the map (to y), update fwd x a, mark x for deletion, then return y
-        -- This makes fwd many-to-one until clean. No elem in bwd will point to x.
-        else
-          let fwd' = ILM.insert x a1 fwd
-              deadFwd' = ILS.insert x deadFwd
-          in (y, Assoc fwd' bwd deadFwd' deadBwd n)
-    Nothing ->
-      case ILM.lookup x fwd of
-        -- x was never in the map - simply insert
-        Nothing ->
-          let fwd' = ILM.insert x a1 fwd
-              bwd' = HashMap.insert a1 x bwd
-              n' = sourceSkipInc x n
-          in (x, Assoc fwd' bwd' deadFwd deadBwd n')
-        -- Update fwd bwd for x a, mark original a for deletion, then return x
-        -- This makes bwd many-to-one.
-        Just a0 ->
-          let fwd' = ILM.insert x a1 fwd
-              bwd' = HashMap.insert a1 x bwd
-              deadBwd' = HashSet.insert a0 deadBwd
-          in (x, Assoc fwd' bwd' deadFwd deadBwd' n)
+        else if x == y
+          -- (a1 -> x) in bwd but (x -> a0) in fwd
+          -- Update fwd for x a1, mark a0 for deletion, then return x.
+          -- No elem in fwd will point to a0.
+          then
+            let fwd' = ILM.insert x a1 fwd
+                deadBwd' = HashSet.insert a0 deadBwd
+            in (x, Assoc fwd' bwd deadFwd deadBwd' n)
+          -- Update fwd for x a1, update bwd for a0 y, mark original x and a for deletion, then return y.
+          -- This makes fwd and bwd many-to-one. No elem in fwd will point to a0, no elem in bwd will point to x.
+          else
+            let fwd' = ILM.insert x a1 fwd
+                bwd' = HashMap.insert a0 y bwd
+                deadFwd' = ILS.insert x deadFwd
+                deadBwd' = HashSet.insert a0 deadBwd
+            in (y, Assoc fwd' bwd' deadFwd' deadBwd' n)
 
 -- | Are there dead elements in the forward map from 'assocUpdate'?
 assocNeedsClean :: Assoc x a -> Bool
