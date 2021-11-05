@@ -1,43 +1,47 @@
 module Overeasy.Test.Spec (main) where
 
 import Control.Monad (void, when)
-import Control.Monad.State.Strict (MonadState (..), State, StateT, evalStateT, execState, execStateT, runState, evalState)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT,
+                                   runState)
 import Control.Monad.Trans (MonadTrans (lift))
+import Data.Bifunctor (bimap)
 import Data.Char (chr, ord)
 import Data.Foldable (for_)
+import Data.Functor.Foldable (cata)
+import qualified Data.HashMap.Strict as HashMap
+import qualified Data.HashSet as HashSet
+import Data.Hashable (Hashable)
 import Data.List (delete)
-import Data.Maybe (isJust, fromJust)
-import Hedgehog (Gen, Range, forAll, property, (/==), (===), PropertyT, assert)
+import Data.Maybe (fromJust, isJust)
+import Data.Semigroup (Max (..))
+import GHC.Stack (HasCallStack)
+import Hedgehog (Gen, PropertyT, Range, assert, forAll, property, (/==), (===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
+import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocClean, assocDeadBwd, assocDeadFwd, assocFromPairs, assocFwd,
+                       assocNeedsClean, assocNew, assocSize, assocSrc, assocUpdate)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EGraph (EAnalysisOff (..), EClassId (..), EGraph (..), ENodeId (..), egAddTerm, egClassSize, egFindTerm, egMerge,
-                        egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList, egCanonicalize, EAnalysis (..), egClassInfo, eciData)
-import Overeasy.Expressions.BinTree (pattern BinTreeBranch, pattern BinTreeLeaf, BinTree, BinTreeF (..))
+import Overeasy.EGraph (EAnalysis (..), EAnalysisOff (..), EClassId (..), EGraph (..), ENodeId (..), eciData, egAddTerm,
+                        egCanonicalize, egClassInfo, egClassSize, egFindTerm, egMerge, egNeedsRebuild, egNew,
+                        egNodeSize, egRebuild, egTotalClassSize, egWorkList)
+import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
+import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
-import Overeasy.Test.Assertions ((@/=), assertFalse, assertTrue)
+import Overeasy.Test.Assertions (assertFalse, assertTrue, (@/=))
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufFind, ufMembers, ufMerge, ufNew, ufOnConflict,
                            ufRoots, ufTotalSize)
 import System.Environment (lookupEnv, setEnv)
+import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=), Assertion)
+import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
-import Data.Functor.Foldable (cata)
-import Data.Semigroup (Max(..))
-import Overeasy.Assoc (assocBwd, assocFwd, assocNeedsClean, Assoc, assocNew, assocAdd, assocSize, assocUpdate, assocDeadFwd, assocDeadBwd, assocClean, assocFromPairs)
-import qualified Data.HashMap.Strict as HashMap
-import Data.Hashable (Hashable)
-import Control.Monad.IO.Class (liftIO)
 import Text.Pretty.Simple (pPrint)
-import GHC.Stack (HasCallStack)
-import qualified Data.HashSet as HashSet
-import System.IO (BufferMode(NoBuffering), hSetBuffering, stdout, stderr)
-import Data.Bifunctor (bimap)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -204,13 +208,20 @@ assertAssocInvariants av = do
       bwd = assocBwd av
   -- Assert that the assoc has been rebuilt
   assertFalse (assocNeedsClean av)
+  assocDeadFwd av @?= ILS.empty
+  assocDeadBwd av @?= HashSet.empty
   -- Look at sizes to confirm that assoc could map 1-1
   ILM.size fwd @?= HashMap.size bwd
+  let nextId = unENodeId (sourcePeek (assocSrc av))
   -- Go through keys forward
-  for_ (ILM.toList fwd) $ \(x, fc) ->
+  for_ (ILM.toList fwd) $ \(x, fc) -> do
+    -- Assert is found in backward map
     HashMap.lookup fc bwd @?= Just x
+    -- Assert is less than next fresh id
+    assertTrue (nextId > unENodeId x)
   -- Go through keys backward
   for_ (HashMap.toList bwd) $ \(fc, x) ->
+    -- Assert is present in forward map
     ILM.lookup x fwd @?= Just fc
 
 data AssocCase = AssocCase !String ![(Int, Char)] ![(Int, Char, Int)] ![(Int, Char)]
@@ -236,13 +247,26 @@ mkAssoc rawPairs = do
     Just assoc -> pure assoc
     Nothing -> fail "Bad pairs"
 
-testAssocCase :: AssocCase -> TestTree
-testAssocCase (AssocCase name start act end) = testCase name $ do
+runAV :: [(Int, Char)] -> StateT AV IO () -> IO ()
+runAV start act = do
   aStart <- mkAssoc start
-  assertAssocInvariants aStart
-  assocSize aStart @?= length start
-  -- TODO update from act
-  -- TODO verify that assoc matches end
+  runS aStart act
+
+testAssocCase :: AssocCase -> TestTree
+testAssocCase (AssocCase name start act end) = testCase name $ runAV start $ do
+  testS $ \av -> do
+    assertAssocInvariants av
+    assocSize av @?= length start
+  for_ act $ \(x, a, y) -> do
+    z <- applyS (assocUpdate (ENodeId x) (toV a))
+    liftIO (z @?= ENodeId y)
+  applyS assocClean
+  testS $ \av -> do
+    assertAssocInvariants av
+    assocSize av @?= length end
+    endAv <- liftIO (mkAssoc end)
+    assocFwd av @?= assocFwd endAv
+    assocBwd av @?= assocBwd endAv
 
 testAssocCases :: TestTree
 testAssocCases = testGroup "Assoc case" (fmap testAssocCase allAssocCases)
@@ -256,25 +280,16 @@ testAssocUnit = testCase "Assoc unit" $ do
   let a1 = execState (for_ members assocAdd) a0
   assertAssocInvariants a1
   assocSize a1 @?= 3
-  putStrLn "========== INITIAL =========="
-  pPrint a1
   let aVal = toV 'a'
       aKey = fromJust (HashMap.lookup aVal (assocBwd a1))
       bVal = toV 'b'
       bKey = fromJust (HashMap.lookup bVal (assocBwd a1))
-  putStrLn "========== UPDATE ========="
-  pPrint aKey
-  pPrint bVal
   let (newAKey, a2) = runState (assocUpdate aKey bVal) a1
   newAKey @?= bKey
-  putStrLn "========== BEFORE CLEAN =========="
-  pPrint a2
   assertTrue (assocNeedsClean a2)
   assocDeadFwd a2 @?= ILS.fromList [aKey]
   assocDeadBwd a2 @?= HashSet.fromList [aVal]
   let a3 = execState assocClean a2
-  putStrLn "========== AFTER CLEAN =========="
-  pPrint a3
   assertAssocInvariants a3
   assocSize a3 @?= 2
 
@@ -352,9 +367,7 @@ testEgUnit = after AllSucceed "Assoc unit" $ testCase "EG unit" $ runEGA $ do
         x @/= cidTwo
         pure x
   -- Now rebuild
-  testS pPrint
   applyTestS (egRebuild noA) $ \() eg -> do
-    pPrint eg
     egFindTerm termFour eg @?= Just cidMerged
     egFindTerm termPlus eg @?= Just cidMerged
     egFindTerm termTwo eg @?= Just cidTwo
@@ -429,10 +442,8 @@ propEgInvariants eg = do
     let recanon = evalState (egCanonicalize fc) eg
     in recanon === Just fc
 
-
 genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
 genNodePairs nOpsRange eg = genListOfDistinctPairs nOpsRange (ILM.keys (egClassMap eg))
-
 
 testEgProp :: TestTree
 testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
@@ -470,10 +481,10 @@ main = do
     hSetBuffering stdout NoBuffering
     hSetBuffering stderr NoBuffering
   defaultMain $ testGroup "Overeasy"
-    -- [ testUfUnit
-    -- , testEgUnit
-    [ testAssocCases
+    [ testUfUnit
+    , testEgUnit
+    , testAssocCases
     , testAssocUnit
-    -- , testUfProp
+    , testUfProp
     -- , testEgProp
     ]

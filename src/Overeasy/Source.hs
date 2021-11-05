@@ -9,10 +9,11 @@ module Overeasy.Source
   , sourceAdd
   , sourceSkipInc
   , sourceSkip
+  , sourcePeek
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (State, state, modify')
+import Control.Monad.State.Strict (State, modify', state)
 import Data.Coerce (Coercible, coerce)
 import GHC.Generics (Generic)
 
@@ -44,3 +45,7 @@ sourceSkipInc y (Source s x) =
 -- | Skips past the given id (statefully)
 sourceSkip :: Coercible x Int => x -> State (Source x) ()
 sourceSkip = modify' . sourceSkipInc
+
+-- | Peek at the next id
+sourcePeek :: Coercible x Int => Source x -> x
+sourcePeek = coerce . sourceNextId

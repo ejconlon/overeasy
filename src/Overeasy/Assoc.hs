@@ -10,6 +10,7 @@ module Overeasy.Assoc
   , assocEnsure
   , assocFwd
   , assocBwd
+  , assocSrc
   , assocDeadFwd
   , assocDeadBwd
   , assocLookupByKey
@@ -32,6 +33,7 @@ import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
+import Data.Tuple (swap)
 import GHC.Generics (Generic)
 import Overeasy.Classes (Changed (..))
 import Overeasy.IntLike.Map (IntLikeMap)
@@ -40,7 +42,6 @@ import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize, sourceSkipInc)
 import Overeasy.StateUtil (stateFail, stateFailChanged)
-import Data.Tuple (swap)
 
 -- private ctor
 data Assoc x a = Assoc
