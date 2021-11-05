@@ -15,7 +15,6 @@ import Data.Hashable (Hashable)
 import Data.List (delete)
 import Data.Maybe (fromJust, isJust)
 import Data.Semigroup (Max (..))
-import GHC.Stack (HasCallStack)
 import Hedgehog (Gen, PropertyT, Range, assert, forAll, property, (/==), (===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
@@ -202,7 +201,7 @@ noA = EAnalysisOff
 
 type AV = Assoc ENodeId V
 
-assertAssocInvariants :: HasCallStack => AV -> Assertion
+assertAssocInvariants :: (Eq a, Hashable a, Show a) => Assoc ENodeId a -> Assertion
 assertAssocInvariants av = do
   let fwd = assocFwd av
       bwd = assocBwd av
@@ -273,7 +272,7 @@ testAssocCases = testGroup "Assoc case" (fmap testAssocCase allAssocCases)
 
 testAssocUnit :: TestTree
 testAssocUnit = testCase "Assoc unit" $ do
-  let a0 = assocNew (ENodeId 0)
+  let a0 = assocNew (ENodeId 0) :: AV
   assertAssocInvariants a0
   assocSize a0 @?= 0
   let members = [toV 'a', toV 'b', toV 'c'] :: [V]
@@ -407,34 +406,32 @@ instance EAnalysis EGD EGF MaxV where
   eaJoin _ v1 v2 = v1 <> v2
   eaModify _ _ g = g
 
-
 propEgInvariants :: (Show d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
 propEgInvariants eg = do
   --- XXX
-  liftIO (putStrLn "========================")
-  liftIO (pPrint eg)
+  -- liftIO (putStrLn "========================")
+  -- liftIO (pPrint eg)
   -- Invariants require that no rebuild is needed (empty worklist)
   assert (not (egNeedsRebuild eg))
-  -- First look at node assoc (NodeId <-> f ClassId)
+  -- First look at the assoc (NodeId <-> f ClassId)
   let assoc = egNodeAssoc eg
       fwd = assocFwd assoc
       bwd = assocBwd assoc
-  -- Assert that the assoc has been rebuilt
-  assert (not (assocNeedsClean assoc))
-  -- Look at sizes to confirm that assoc could map 1-1
-  ILM.size fwd === HashMap.size bwd
-  -- Go through keys forward
-  for_ (ILM.toList fwd) $ \(x, fc) ->
-    HashMap.lookup fc bwd === Just x
-  -- Go through keys backward
-  for_ (HashMap.toList bwd) $ \(fc, x) ->
-    ILM.lookup x fwd === Just fc
-  -- Now look at hashcons (NodeId <-> ClassId)
+  -- Assert that the assoc is 1-1 etc
+  liftIO (assertAssocInvariants assoc)
+  -- Now look at hashcons (NodeId -> ClassId)
   let hc = egHashCons eg
-  ILM.size hc === ILM.size fwd
-  -- TODO assert that hashcons has exactly same keys as assoc fwd keys
-  -- TODO assert that hashcons has exactly the same values as unionfind roots
-  -- TODO assert that classmap has exactly the same keys as unionfind roots
+  -- Assert that the hashcons and assoc have equal key sets
+  ILM.keys hc === ILM.keys fwd
+  -- Assert that hashcons has exactly the same values as unionfind roots
+  let hcClasses = ILS.fromList (ILM.elems hc)
+      uf = egUnionFind eg
+      ufRootClasses = evalState ufRoots uf
+  hcClasses === ufRootClasses
+  -- Assert that classmap has exactly the same keys as unionfind roots
+  let cm = egClassMap eg
+      cmClasses = ILS.fromList (ILM.keys cm)
+  cmClasses === ufRootClasses
   -- TODO assert that classmap class has node values that are hashconsed to class
   -- TODO assert that all node values in all classmap classes equal hc keys
   -- Now test recanonicalization
@@ -452,25 +449,26 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
   in property $ do
     assert (egNodeSize eg0 == 0)
     assert (egClassSize eg0 == 0)
-    -- propEgInvariants eg0
-    -- --- XXX add forAlls back
-    -- -- members <- forAll (genBinTreeMembers maxElems)
-    -- let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
-    -- let nMembers = length members
-    --     nOpsRange = Range.linear 0 (nMembers * nMembers)
-    -- let eg1 = execState (for_ members (egAddTerm MaxV)) eg0
-    -- propEgInvariants eg1
-    -- assert (egNodeSize eg1 >= 0)
-    -- egClassSize eg1 === egNodeSize eg1
-    -- execState (egRebuild MaxV) eg1 === eg1
-    -- -- pairs <- forAll (genNodePairs nOpsRange eg1)
+    propEgInvariants eg0
+    -- XXX add forAlls back
+    -- members <- forAll (genBinTreeMembers maxElems)
+    let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
+    let nMembers = length members
+        nOpsRange = Range.linear 0 (nMembers * nMembers)
+    let eg1 = execState (for_ members (egAddTerm MaxV)) eg0
+    propEgInvariants eg1
+    assert (egNodeSize eg1 >= 0)
+    egClassSize eg1 === egNodeSize eg1
+    execState (egRebuild MaxV) eg1 === eg1
+    -- pairs <- forAll (genNodePairs nOpsRange eg1)
     -- let pairs = [(EClassId 0, EClassId 1)]
-    -- let eg2 = execState (for_ pairs (uncurry (egMerge MaxV))) eg1
-    -- egNodeSize eg2 === egNodeSize eg1
-    -- egNeedsRebuild eg2 === not (null pairs)
-    -- let eg3 = execState (egRebuild MaxV) eg2
-    -- egNodeSize eg3 === egNodeSize eg2
-    -- propEgInvariants eg3
+    let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
+    let eg2 = execState (for_ pairs (uncurry (egMerge MaxV))) eg1
+    egNodeSize eg2 === egNodeSize eg1
+    egNeedsRebuild eg2 === not (null pairs)
+    let eg3 = execState (egRebuild MaxV) eg2
+    egNodeSize eg3 === egNodeSize eg2
+    propEgInvariants eg3
 
 main :: IO ()
 main = do
@@ -486,5 +484,5 @@ main = do
     , testAssocCases
     , testAssocUnit
     , testUfProp
-    -- , testEgProp
+    , testEgProp
     ]
