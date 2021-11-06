@@ -357,7 +357,7 @@ testEgUnit = after AllSucceed "Assoc unit" $ testCase "EG unit" $ runEGA $ do
   cidMerged <- applyTestS (egMerge noA cidPlus cidFour) $ \m eg -> do
     let cidExpected = ufOnConflict cidPlus cidFour
     egNeedsRebuild eg @?= True
-    egWorkList eg @?= ILS.singleton cidExpected
+    egWorkList eg @?= [cidExpected]
     case m of
       Nothing -> fail "Could not resolve one of cidFour or cidPlus"
       Just (c, x) -> do
@@ -408,9 +408,6 @@ instance EAnalysis EGD EGF MaxV where
 
 propEgInvariants :: (Show d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
 propEgInvariants eg = do
-  --- XXX
-  -- liftIO (putStrLn "========================")
-  -- liftIO (pPrint eg)
   -- Invariants require that no rebuild is needed (empty worklist)
   assert (not (egNeedsRebuild eg))
   -- First look at the assoc (NodeId <-> f ClassId)
@@ -447,26 +444,35 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
   let maxElems = 50
       eg0 = egNew :: EGV
   in property $ do
+    liftIO (putStrLn "===== eg0 =====")
+    liftIO (pPrint eg0)
     assert (egNodeSize eg0 == 0)
     assert (egClassSize eg0 == 0)
     propEgInvariants eg0
     -- XXX add forAlls back
     -- members <- forAll (genBinTreeMembers maxElems)
-    let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
+    -- let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
+    let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
     let nMembers = length members
         nOpsRange = Range.linear 0 (nMembers * nMembers)
     let eg1 = execState (for_ members (egAddTerm MaxV)) eg0
+    liftIO (putStrLn "===== eg1 =====")
+    liftIO (pPrint eg1)
     propEgInvariants eg1
     assert (egNodeSize eg1 >= 0)
     egClassSize eg1 === egNodeSize eg1
     execState (egRebuild MaxV) eg1 === eg1
     -- pairs <- forAll (genNodePairs nOpsRange eg1)
-    -- let pairs = [(EClassId 0, EClassId 1)]
-    let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
+    let pairs = [(EClassId 0, EClassId 1)]
+    -- let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
     let eg2 = execState (for_ pairs (uncurry (egMerge MaxV))) eg1
+    liftIO (putStrLn "===== eg2 =====")
+    liftIO (pPrint eg2)
     egNodeSize eg2 === egNodeSize eg1
     egNeedsRebuild eg2 === not (null pairs)
     let eg3 = execState (egRebuild MaxV) eg2
+    liftIO (putStrLn "===== eg3 =====")
+    liftIO (pPrint eg3)
     egNodeSize eg3 === egNodeSize eg2
     propEgInvariants eg3
 
@@ -484,5 +490,5 @@ main = do
     , testAssocCases
     , testAssocUnit
     , testUfProp
-    , testEgProp
+    -- , testEgProp
     ]
