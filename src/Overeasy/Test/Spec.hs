@@ -1,6 +1,6 @@
 module Overeasy.Test.Spec (main) where
 
-import Control.Monad (void, when)
+import Control.Monad (unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT,
                                    runState)
@@ -18,8 +18,8 @@ import Data.Semigroup (Max (..))
 import Hedgehog (Gen, PropertyT, Range, assert, forAll, property, (/==), (===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
-import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocClean, assocDeadBwd, assocDeadFwd, assocFromPairs, assocFwd,
-                       assocNeedsClean, assocNew, assocSize, assocSrc, assocUpdate)
+import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocCanCompact, assocCompact, assocDeadBwd, assocDeadFwd,
+                       assocFromPairs, assocFwd, assocNew, assocSize, assocSrc, assocUpdate)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysis (..), EAnalysisOff (..), EClassId (..), EGraph (..), ENodeId (..), eciData, egAddTerm,
                         egCanonicalize, egClassInfo, egClassSize, egFindTerm, egMerge, egNeedsRebuild, egNew,
@@ -201,27 +201,42 @@ noA = EAnalysisOff
 
 type AV = Assoc ENodeId V
 
-assertAssocInvariants :: (Eq a, Hashable a, Show a) => Assoc ENodeId a -> Assertion
-assertAssocInvariants av = do
+-- | Asserts assoc is compact - should also check 'assertAssocInvariants'
+assertAssocCompact :: (Eq a, Hashable a, Show a) => Assoc ENodeId a -> Assertion
+assertAssocCompact av = do
   let fwd = assocFwd av
       bwd = assocBwd av
   -- Assert that the assoc has been rebuilt
-  assertFalse (assocNeedsClean av)
+  assertFalse (assocCanCompact av)
   assocDeadFwd av @?= ILS.empty
   assocDeadBwd av @?= HashSet.empty
   -- Look at sizes to confirm that assoc could map 1-1
   ILM.size fwd @?= HashMap.size bwd
+  -- Go through keys forward
+  for_ (ILM.toList fwd) $ \(x, fc) -> do
+    -- Assert is found in backward map AND maps back
+    HashMap.lookup fc bwd @?= Just x
+  -- Go through keys backward
+  for_ (HashMap.toList bwd) $ \(fc, x) ->
+    -- Assert is present in forward map AND maps back
+    ILM.lookup x fwd @?= Just fc
+
+-- | Asserts assoc is correctly structured (compact or not)
+assertAssocInvariants :: (Eq a, Hashable a) => Assoc ENodeId a -> Assertion
+assertAssocInvariants av = do
+  let fwd = assocFwd av
+      bwd = assocBwd av
   let nextId = unENodeId (sourcePeek (assocSrc av))
   -- Go through keys forward
   for_ (ILM.toList fwd) $ \(x, fc) -> do
     -- Assert is found in backward map
-    HashMap.lookup fc bwd @?= Just x
+    assertTrue (HashMap.member fc bwd)
     -- Assert is less than next fresh id
     assertTrue (nextId > unENodeId x)
   -- Go through keys backward
-  for_ (HashMap.toList bwd) $ \(fc, x) ->
+  for_ (HashMap.toList bwd) $ \(_, x) ->
     -- Assert is present in forward map
-    ILM.lookup x fwd @?= Just fc
+    assertTrue (ILM.member x fwd)
 
 data AssocCase = AssocCase !String ![(Int, Char)] ![(Int, Char, Int)] ![(Int, Char)]
 
@@ -255,13 +270,16 @@ testAssocCase :: AssocCase -> TestTree
 testAssocCase (AssocCase name start act end) = testCase name $ runAV start $ do
   testS $ \av -> do
     assertAssocInvariants av
+    assertAssocCompact av
     assocSize av @?= length start
   for_ act $ \(x, a, y) -> do
     z <- applyS (assocUpdate (ENodeId x) (toV a))
+    testS assertAssocInvariants
     liftIO (z @?= ENodeId y)
-  applyS assocClean
+  applyS assocCompact
   testS $ \av -> do
     assertAssocInvariants av
+    assertAssocCompact av
     assocSize av @?= length end
     endAv <- liftIO (mkAssoc end)
     assocFwd av @?= assocFwd endAv
@@ -274,10 +292,12 @@ testAssocUnit :: TestTree
 testAssocUnit = testCase "Assoc unit" $ do
   let a0 = assocNew (ENodeId 0) :: AV
   assertAssocInvariants a0
+  assertAssocCompact a0
   assocSize a0 @?= 0
   let members = [toV 'a', toV 'b', toV 'c'] :: [V]
   let a1 = execState (for_ members assocAdd) a0
   assertAssocInvariants a1
+  assertAssocCompact a0
   assocSize a1 @?= 3
   let aVal = toV 'a'
       aKey = fromJust (HashMap.lookup aVal (assocBwd a1))
@@ -285,11 +305,13 @@ testAssocUnit = testCase "Assoc unit" $ do
       bKey = fromJust (HashMap.lookup bVal (assocBwd a1))
   let (newAKey, a2) = runState (assocUpdate aKey bVal) a1
   newAKey @?= bKey
-  assertTrue (assocNeedsClean a2)
+  assertAssocInvariants a2
+  assertTrue (assocCanCompact a2)
   assocDeadFwd a2 @?= ILS.fromList [aKey]
   assocDeadBwd a2 @?= HashSet.fromList [aVal]
-  let a3 = execState assocClean a2
+  let a3 = execState assocCompact a2
   assertAssocInvariants a3
+  assertAssocCompact a3
   assocSize a3 @?= 2
 
 testEgUnit :: TestTree
@@ -406,7 +428,7 @@ instance EAnalysis EGD EGF MaxV where
   eaJoin _ v1 v2 = v1 <> v2
   eaModify _ _ g = g
 
-propEgInvariants :: (Show d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
+propEgInvariants :: (Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
 propEgInvariants eg = do
   -- Invariants require that no rebuild is needed (empty worklist)
   assert (not (egNeedsRebuild eg))
@@ -414,27 +436,32 @@ propEgInvariants eg = do
   let assoc = egNodeAssoc eg
       fwd = assocFwd assoc
       bwd = assocBwd assoc
+      deadFwd = assocDeadFwd assoc
+      deadBwd = assocDeadBwd assoc
   -- Assert that the assoc is 1-1 etc
   liftIO (assertAssocInvariants assoc)
   -- Now look at hashcons (NodeId -> ClassId)
   let hc = egHashCons eg
   -- Assert that the hashcons and assoc have equal key sets
   ILM.keys hc === ILM.keys fwd
-  -- Assert that hashcons has exactly the same values as unionfind roots
-  let hcClasses = ILS.fromList (ILM.elems hc)
-      uf = egUnionFind eg
+  -- Assert that hashcons has exactly the same values as unionfind roots for non-dead nodes
+  let uf = egUnionFind eg
       ufRootClasses = evalState ufRoots uf
-  hcClasses === ufRootClasses
+  for_ (ILM.toList hc) $ \(n, c) ->
+    unless (ILS.member n deadFwd) $ do
+      assert (ILS.member c ufRootClasses)
   -- Assert that classmap has exactly the same keys as unionfind roots
   let cm = egClassMap eg
       cmClasses = ILS.fromList (ILM.keys cm)
   cmClasses === ufRootClasses
+  -- TODO assert that classmap node values are non-empty
   -- TODO assert that classmap class has node values that are hashconsed to class
   -- TODO assert that all node values in all classmap classes equal hc keys
-  -- Now test recanonicalization
+  -- Now test recanonicalization for non-dead nodes
   for_ (HashMap.keys bwd) $ \fc ->
-    let recanon = evalState (egCanonicalize fc) eg
-    in recanon === Just fc
+    unless (HashSet.member fc deadBwd) $
+      let recanon = evalState (egCanonicalize fc) eg
+      in recanon === Just fc
 
 genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
 genNodePairs nOpsRange eg = genListOfDistinctPairs nOpsRange (ILM.keys (egClassMap eg))
@@ -444,35 +471,37 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
   let maxElems = 50
       eg0 = egNew :: EGV
   in property $ do
-    liftIO (putStrLn "===== eg0 =====")
-    liftIO (pPrint eg0)
+    -- liftIO (putStrLn "===== eg0 =====")
+    -- liftIO (pPrint eg0)
     assert (egNodeSize eg0 == 0)
     assert (egClassSize eg0 == 0)
     propEgInvariants eg0
     -- XXX add forAlls back
-    -- members <- forAll (genBinTreeMembers maxElems)
+    members <- forAll (genBinTreeMembers maxElems)
     -- let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
-    let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
+    -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
+    -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b'))]
     let nMembers = length members
         nOpsRange = Range.linear 0 (nMembers * nMembers)
     let eg1 = execState (for_ members (egAddTerm MaxV)) eg0
-    liftIO (putStrLn "===== eg1 =====")
-    liftIO (pPrint eg1)
+    -- liftIO (putStrLn "===== eg1 =====")
+    -- liftIO (pPrint eg1)
     propEgInvariants eg1
     assert (egNodeSize eg1 >= 0)
     egClassSize eg1 === egNodeSize eg1
     execState (egRebuild MaxV) eg1 === eg1
-    -- pairs <- forAll (genNodePairs nOpsRange eg1)
-    let pairs = [(EClassId 0, EClassId 1)]
+    pairs <- forAll (genNodePairs nOpsRange eg1)
+    -- let pairs = [(EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
+    -- let pairs = [(EClassId 0, EClassId 2), (EClassId 0, EClassId 1)]
     let eg2 = execState (for_ pairs (uncurry (egMerge MaxV))) eg1
-    liftIO (putStrLn "===== eg2 =====")
-    liftIO (pPrint eg2)
+    -- liftIO (putStrLn "===== eg2 =====")
+    -- liftIO (pPrint eg2)
     egNodeSize eg2 === egNodeSize eg1
     egNeedsRebuild eg2 === not (null pairs)
     let eg3 = execState (egRebuild MaxV) eg2
-    liftIO (putStrLn "===== eg3 =====")
-    liftIO (pPrint eg3)
+    -- liftIO (putStrLn "===== eg3 =====")
+    -- liftIO (pPrint eg3)
     egNodeSize eg3 === egNodeSize eg2
     propEgInvariants eg3
 
@@ -490,5 +519,5 @@ main = do
     , testAssocCases
     , testAssocUnit
     , testUfProp
-    -- , testEgProp
+    , testEgProp
     ]

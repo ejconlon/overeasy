@@ -16,13 +16,15 @@ module Overeasy.IntLike.Map
   , adjust
   , delete
   , minViewWithKey
+  , filter
+  , insertState
   ) where
 
 import Control.DeepSeq (NFData)
 import Data.Coerce (Coercible, coerce)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
-import Prelude hiding (lookup, null)
+import Prelude hiding (filter, lookup, null)
 
 newtype IntLikeMap x a = IntLikeMap { unIntLikeMap :: IntMap a }
   deriving stock (Show, Traversable)
@@ -90,3 +92,11 @@ delete x = IntLikeMap . IntMap.delete (coerce x) . unIntLikeMap
 minViewWithKey :: Coercible x Int => IntLikeMap x a -> Maybe ((x, a), IntLikeMap x a)
 minViewWithKey = coerce . IntMap.minViewWithKey . unIntLikeMap
 {-# INLINE minViewWithKey #-}
+
+filter :: (a -> Bool) -> IntLikeMap x a -> IntLikeMap x a
+filter f = IntLikeMap . IntMap.filter f . unIntLikeMap
+{-# INLINE filter #-}
+
+insertState :: Coercible x Int => (Maybe a -> b) -> x -> a -> IntLikeMap x a -> (b, IntLikeMap x a)
+insertState f x a = coerce . IntMap.alterF (\m -> (f m, Just a)) (coerce x) . unIntLikeMap
+{-# INLINE insertState #-}

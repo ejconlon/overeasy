@@ -20,13 +20,13 @@ module Overeasy.Assoc
   , assocDeleteByKey
   , assocDeleteByValue
   , assocUpdate
-  , assocNeedsClean
-  , assocClean
+  , assocCanCompact
+  , assocCompactInc
+  , assocCompact
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad (when)
-import Control.Monad.State.Strict (MonadState (..), State)
+import Control.Monad.State.Strict (MonadState (..), State, modify')
 import Data.Coerce (Coercible)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
@@ -187,14 +187,18 @@ assocUpdate x a1 = state $ \assoc@(Assoc fwd bwd deadFwd deadBwd n) ->
             in (y, Assoc fwd' bwd' deadFwd' deadBwd' n)
 
 -- | Are there dead elements in the forward map from 'assocUpdate'?
-assocNeedsClean :: Assoc x a -> Bool
-assocNeedsClean assoc = not (ILS.null (assocDeadFwd assoc) && HashSet.null (assocDeadBwd assoc))
+assocCanCompact :: Assoc x a -> Bool
+assocCanCompact assoc = not (ILS.null (assocDeadFwd assoc) && HashSet.null (assocDeadBwd assoc))
+
+assocCompactInc :: (Coercible x Int, Eq a, Hashable a) => Assoc x a -> Assoc x a
+assocCompactInc assoc@(Assoc fwd bwd deadFwd deadBwd n) =
+  if assocCanCompact assoc
+    then
+      let fwd' = foldr ILM.delete fwd (ILS.toList deadFwd)
+          bwd' = foldr HashMap.delete bwd deadBwd
+      in Assoc fwd' bwd' ILS.empty HashSet.empty n
+    else assoc
 
 -- | Removes all dead elements from the forward map
-assocClean :: (Coercible x Int, Eq a, Hashable a) => State (Assoc x a) ()
-assocClean = do
-  assoc@(Assoc fwd bwd deadFwd deadBwd n) <- get
-  when (assocNeedsClean assoc) $ do
-    let fwd' = foldr ILM.delete fwd (ILS.toList deadFwd)
-    let bwd' = foldr HashMap.delete bwd deadBwd
-    put (Assoc fwd' bwd' ILS.empty HashSet.empty n)
+assocCompact :: (Coercible x Int, Eq a, Hashable a) => State (Assoc x a) ()
+assocCompact = modify' assocCompactInc
