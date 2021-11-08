@@ -1,6 +1,6 @@
 module Overeasy.Test.Spec (main) where
 
-import Control.Monad (unless, void, when)
+import Control.Monad (unless, void, when, foldM)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT,
                                    runState)
@@ -23,7 +23,7 @@ import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocCanCompact, assocCompact,
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysis (..), EAnalysisOff (..), EClassId (..), EGraph (..), ENodeId (..), eciData, egAddTerm,
                         egCanonicalize, egClassInfo, egClassSize, egFindTerm, egMerge, egNeedsRebuild, egNew,
-                        egNodeSize, egRebuild, egTotalClassSize, egWorkList)
+                        egNodeSize, egRebuild, egTotalClassSize, egWorkList, EClassInfo (eciNodes), MergeItem (MergeItem))
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -62,6 +62,9 @@ foldS_ z as f = execStateT (for_ as f) z
 
 runS :: Monad m => s -> StateT s m () -> m ()
 runS = flip evalStateT
+
+flipFoldM :: Monad m => b -> [a] -> (b -> a -> m b) -> m b
+flipFoldM b as f = foldM f b as
 
 newtype V = V { unV :: Int }
   deriving newtype (Eq, Ord, Hashable)
@@ -367,30 +370,22 @@ testEgUnit = after AllSucceed "Assoc unit" $ testCase "EG unit" $ runEGA $ do
     egNeedsRebuild eg @?= False
     pure x
   -- Merge `4` and `4` and assert things haven't changed
-  applyTestS (egMerge noA cidFour cidFour) $ \m eg -> do
+  applyTestS (egMerge cidFour cidFour) $ \m eg -> do
     egNeedsRebuild eg @?= False
     case m of
       Nothing -> fail "Could not resolve cidFour"
-      Just (c, x) -> do
-        c @?= ChangedNo
-        x @?= cidFour
-        egFindTerm termFour eg @?= Just x
+      Just c -> c @?= ChangedNo
   -- Merge `2 + 2` and `4`
-  cidMerged <- applyTestS (egMerge noA cidPlus cidFour) $ \m eg -> do
+  cidMerged <- applyTestS (egMerge cidPlus cidFour) $ \m eg -> do
     let cidExpected = ufOnConflict cidPlus cidFour
     egNeedsRebuild eg @?= True
-    egWorkList eg @?= [cidExpected]
+    egWorkList eg @?= [MergeItem cidPlus cidFour]
     case m of
       Nothing -> fail "Could not resolve one of cidFour or cidPlus"
-      Just (c, x) -> do
-        c @?= ChangedYes
-        x @?= cidExpected
-        x @/= cidTwo
-        pure x
+      Just c -> c @?= ChangedYes
   -- Now rebuild
   applyTestS (egRebuild noA) $ \() eg -> do
-    egFindTerm termFour eg @?= Just cidMerged
-    egFindTerm termPlus eg @?= Just cidMerged
+    egFindTerm termFour eg @?= egFindTerm termPlus eg
     egFindTerm termTwo eg @?= Just cidTwo
     egNeedsRebuild eg @?= False
 
@@ -454,9 +449,17 @@ propEgInvariants eg = do
   let cm = egClassMap eg
       cmClasses = ILS.fromList (ILM.keys cm)
   cmClasses === ufRootClasses
-  -- TODO assert that classmap node values are non-empty
-  -- TODO assert that classmap class has node values that are hashconsed to class
-  -- TODO assert that all node values in all classmap classes equal hc keys
+  cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) -> do
+    let nodes = eciNodes eci
+    -- Assert that classmap node values are non-empty
+    nodes /== ILS.empty
+    -- Assert that classmap class has node values that are hashconsed to class
+    for_ (ILS.toList nodes) $ \n ->
+      ILM.lookup n hc === Just c
+    assert (ILS.disjoint nodes accNodes)
+    pure (accNodes <> nodes)
+  -- Assert that all node values in all classmap classes equal hc keys
+  cmNodes === ILS.fromList (ILM.keys hc)
   -- Now test recanonicalization for non-dead nodes
   for_ (HashMap.keys bwd) $ \fc ->
     unless (HashSet.member fc deadBwd) $
@@ -471,37 +474,40 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
   let maxElems = 50
       eg0 = egNew :: EGV
   in property $ do
-    -- liftIO (putStrLn "===== eg0 =====")
-    -- liftIO (pPrint eg0)
+    liftIO (putStrLn "===== eg0 =====")
+    liftIO (pPrint eg0)
     assert (egNodeSize eg0 == 0)
     assert (egClassSize eg0 == 0)
     propEgInvariants eg0
     -- XXX add forAlls back
-    members <- forAll (genBinTreeMembers maxElems)
+    -- members <- forAll (genBinTreeMembers maxElems)
     -- let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
     -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
     -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b'))]
+    let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'c'))]
     let nMembers = length members
         nOpsRange = Range.linear 0 (nMembers * nMembers)
     let eg1 = execState (for_ members (egAddTerm MaxV)) eg0
-    -- liftIO (putStrLn "===== eg1 =====")
-    -- liftIO (pPrint eg1)
+    liftIO (putStrLn "===== eg1 =====")
+    liftIO (pPrint eg1)
     propEgInvariants eg1
     assert (egNodeSize eg1 >= 0)
     egClassSize eg1 === egNodeSize eg1
     execState (egRebuild MaxV) eg1 === eg1
-    pairs <- forAll (genNodePairs nOpsRange eg1)
+    -- pairs <- forAll (genNodePairs nOpsRange eg1)
     -- let pairs = [(EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 0, EClassId 2), (EClassId 0, EClassId 1)]
-    let eg2 = execState (for_ pairs (uncurry (egMerge MaxV))) eg1
-    -- liftIO (putStrLn "===== eg2 =====")
-    -- liftIO (pPrint eg2)
+    -- let pairs = [(EClassId 0, EClassId 1), (EClassId 0, EClassId 2)]
+    let pairs = [(EClassId 0, EClassId 3), (EClassId 0, EClassId 1)]
+    let eg2 = execState (for_ pairs (uncurry egMerge)) eg1
+    liftIO (putStrLn "===== eg2 =====")
+    liftIO (pPrint eg2)
     egNodeSize eg2 === egNodeSize eg1
     egNeedsRebuild eg2 === not (null pairs)
     let eg3 = execState (egRebuild MaxV) eg2
-    -- liftIO (putStrLn "===== eg3 =====")
-    -- liftIO (pPrint eg3)
+    liftIO (putStrLn "===== eg3 =====")
+    liftIO (pPrint eg3)
     egNodeSize eg3 === egNodeSize eg2
     propEgInvariants eg3
 
@@ -519,5 +525,5 @@ main = do
     , testAssocCases
     , testAssocUnit
     , testUfProp
-    , testEgProp
+    -- , testEgProp
     ]

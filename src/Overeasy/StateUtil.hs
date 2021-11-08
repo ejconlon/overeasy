@@ -3,12 +3,14 @@ module Overeasy.StateUtil
   ( stateFail
   , stateFailChanged
   , stateLens
+  , stateFold
   ) where
 
 import Control.Monad.State.Strict (State, get, put, runState, state)
 import Lens.Micro (Lens', set)
 import Lens.Micro.Extras (view)
 import Overeasy.Classes (Changed (..))
+import Control.Monad (foldM)
 
 -- | Embeds a function that may fail in a stateful context
 stateFail :: (s -> Maybe (b, s)) -> State s (Maybe b)
@@ -32,3 +34,8 @@ stateLens l act = state $ \s ->
   let (b, a') = runState act (view l s)
       s' = set l a' s
   in (b, s')
+
+-- | 'foldM' specialized and flipped.
+stateFold :: b -> [a] -> (b -> a -> State s b) -> State s b
+stateFold b as f = foldM f b as
+{-# INLINE stateFold #-}

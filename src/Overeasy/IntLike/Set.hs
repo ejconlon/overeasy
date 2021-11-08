@@ -10,6 +10,7 @@ module Overeasy.IntLike.Set
   , insert
   , delete
   , minView
+  , disjoint
   , insertState
   , orderedPairs
   , unorderedPairs
@@ -64,6 +65,10 @@ delete x = IntLikeSet . IntSet.delete (coerce x) . unIntLikeSet
 minView :: Coercible x Int => IntLikeSet x -> Maybe (x, IntLikeSet x)
 minView = coerce . IntSet.minView . unIntLikeSet
 {-# INLINE minView #-}
+
+disjoint :: IntLikeSet x -> IntLikeSet x -> Bool
+disjoint a b = IntSet.disjoint (unIntLikeSet a) (unIntLikeSet b)
+{-# INLINE disjoint #-}
 
 insertState :: Coercible x Int => (Bool -> b) -> x -> IntLikeSet x -> (b, IntLikeSet x)
 insertState f x = coerce . IntSet.alterF (\b -> (f b, True)) (coerce x) . unIntLikeSet
