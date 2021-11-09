@@ -15,6 +15,7 @@ import Data.Hashable (Hashable)
 import Data.List (delete)
 import Data.Maybe (fromJust, isJust)
 import Data.Semigroup (Max (..))
+import qualified Data.Sequence as Seq
 import Hedgehog (Gen, PropertyT, Range, assert, forAll, property, (/==), (===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
@@ -386,7 +387,7 @@ testEgUnit = after AllSucceed "Assoc unit" $ testCase "EG unit" $ runEGA $ do
   -- Merge `2 + 2` and `4`
   applyTestS (egMerge cidPlus cidFour) $ \m eg -> do
     egNeedsRebuild eg @?= True
-    egWorkList eg @?= [ILS.fromList [cidPlus, cidFour]]
+    egWorkList eg @?= Seq.singleton (ILS.fromList [cidPlus, cidFour])
     case m of
       Nothing -> fail "Could not resolve one of cidFour or cidPlus"
       Just c -> c @?= ChangedYes

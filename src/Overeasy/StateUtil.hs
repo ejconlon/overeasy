@@ -36,6 +36,6 @@ stateLens l act = state $ \s ->
   in (b, s')
 
 -- | 'foldM' specialized and flipped.
-stateFold :: b -> [a] -> (b -> a -> State s b) -> State s b
+stateFold :: Foldable t => b -> t a -> (b -> a -> State s b) -> State s b
 stateFold b as f = foldM f b as
 {-# INLINE stateFold #-}

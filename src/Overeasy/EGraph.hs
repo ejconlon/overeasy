@@ -11,7 +11,8 @@ module Overeasy.EGraph
   , EAnalysisAlgebra (..)
   , EClassInfo (..)
   , EGraph
-  , MergeItem
+  , WorkItem
+  , WorkList
   , egSource
   , egUnionFind
   , egClassMap
@@ -36,13 +37,12 @@ module Overeasy.EGraph
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (State, get, gets, modify', put)
+import Control.Monad.State.Strict (State, get, gets, modify', put, state)
 import Data.Foldable (for_)
 import Data.Functor.Foldable (project)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NE
 import Data.Semigroup (sconcat)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
@@ -94,7 +94,7 @@ newtype EAnalysisAlgebra d f = EAnalysisAlgebra
 
 instance Semigroup d => EAnalysis d f (EAnalysisAlgebra d f) where
   eaMake (EAnalysisAlgebra g) fd = g fd
-  eaJoin _ d ds = sconcat (NE.cons d ds)
+  eaJoin _ d ds = d <> sconcat ds
 
 data ENodeTriple d = ENodeTriple
   { entNode :: !ENodeId
@@ -111,7 +111,8 @@ data EClassInfo d = EClassInfo
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
-type MergeItem = IntLikeSet EClassId
+type WorkItem = IntLikeSet EClassId
+type WorkList = Seq WorkItem
 
 -- private ctor
 data EGraph d f = EGraph
@@ -120,7 +121,7 @@ data EGraph d f = EGraph
   , egClassMap :: !(IntLikeMap EClassId (EClassInfo d))
   , egNodeAssoc :: !(Assoc ENodeId (f EClassId))
   , egHashCons :: !(IntLikeMap ENodeId EClassId)
-  , egWorkList :: ![MergeItem]
+  , egWorkList :: !WorkList
   } deriving stock (Generic)
 
 deriving stock instance (Eq d, Eq (f EClassId)) => Eq (EGraph d f)
@@ -165,7 +166,7 @@ egFindTerm t eg = foldWholeM (`egFindNode` eg) t
 
 -- | Creates a new 'EGraph'
 egNew :: EGraph d f
-egNew = EGraph (sourceNew (EClassId 0)) ufNew ILM.empty (assocNew (ENodeId 0)) ILM.empty []
+egNew = EGraph (sourceNew (EClassId 0)) ufNew ILM.empty (assocNew (ENodeId 0)) ILM.empty Empty
 
 -- | Yields all root classes
 egClasses :: State (EGraph d f) (IntLikeSet EClassId)
@@ -268,7 +269,7 @@ egMergeMany cs = do
       in if ILS.size rootsSet < 2
         then pure (Just ChangedNo)
         else do
-          stateLens egWorkListL (modify' (rootsSet:))
+          stateLens egWorkListL (modify' (:|> rootsSet))
           pure (Just ChangedYes)
 
 -- | Have we merged classes and do we need to rebuild before adding more terms?
@@ -276,26 +277,19 @@ egNeedsRebuild :: EGraph d f -> Bool
 egNeedsRebuild = not . null . egWorkList
 
 -- private
--- Take the worklist (swapping for []) and deduplicate it.
--- Since the worklist is reversed, folding and consing again will emit
--- deduplicated work in the correct order. Note that it's not strictly necessary
--- to work in order but it makes it easy to follow along.
-egTakeWorklist :: State (EGraph d f) [MergeItem]
-egTakeWorklist = go1 where
-  go1 = do
-    wl <- gets egWorkList
-    case wl of
-      [] -> pure []
-      _ -> do
-        stateLens egWorkListL (put [])
-        pure (reverse wl)
+-- Take the worklist (swapping for Empty).
+egTakeWorklist :: State (EGraph d f) WorkList
+egTakeWorklist = state $ \eg ->
+  let wl = egWorkList eg
+      eg' = case wl of { Empty -> eg; _ -> eg { egWorkList = Empty }}
+  in (wl, eg')
 
 -- private
-egRebuildMerge :: [MergeItem] -> State (EGraph d f) (IntLikeEquiv EClassId EClassId)
+egRebuildMerge :: WorkList -> State (EGraph d f) (IntLikeEquiv EClassId EClassId)
 egRebuildMerge = stateLens egUnionFindL . go ILS.empty where
   go !mems = \case
-    [] -> ufEquivRestricted (ILS.toList mems)
-    cs:rest -> do
+    Empty -> ufEquivRestricted (ILS.toList mems)
+    cs :<| rest -> do
       mr <- ufMergeMany cs
       case mr of
         MergeManyResEmbed (MergeResChanged _) -> go (mems <> cs) rest
@@ -307,14 +301,14 @@ egRebuildHashCons mergeEquiv = stateLens egHashConsL (modify' goHc) where
   goHc = ILM.map (`ILM.partialLookup` ILE.bwdView mergeEquiv)
 
 -- private
-egRebuildAssocNodes :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => IntLikeEquiv EClassId EClassId -> State (EGraph d f) ([ENodeId], IntLikeMap ENodeId ENodeId)
+egRebuildAssocNodes :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => IntLikeEquiv EClassId EClassId -> State (EGraph d f) (Seq ENodeId, IntLikeMap ENodeId ENodeId)
 egRebuildAssocNodes mergeEquiv =
   -- For each class that we're going to merge
-  stateFold ([], ILM.empty) (ILM.keys (ILE.bwdView mergeEquiv)) $ \(ps, m) c -> do
+  stateFold (Empty, ILM.empty) (ILM.keys (ILE.bwdView mergeEquiv)) $ \(ps, m) c -> do
     -- Get the class info
     eci <- gets (ILM.partialLookup c . egClassMap)
     -- Gather the parent nodes for later canonicalization
-    let ps' = ILM.keys (eciParents eci) ++ ps
+    let ps' = ps <> Seq.fromList (ILM.keys (eciParents eci))
     -- For each node in the class
     m'' <- stateFold m (ILS.toList (eciNodes eci)) $ \m' n -> do
       -- Canonicalize it and add to the map
@@ -338,7 +332,7 @@ egRebuildAssoc mergeEquiv = do
         pure (ILM.insert n n' m')
 
 -- private
-egRebuildCanonWl :: IntLikeMultiMap ENodeId ENodeId -> State (EGraph d f) [MergeItem]
+egRebuildCanonWl :: IntLikeMultiMap ENodeId ENodeId -> State (EGraph d f) WorkList
 egRebuildCanonWl nodeMultiMap = do
   hc <- gets egHashCons
   error "TODO"
@@ -347,11 +341,11 @@ egRebuildCanonWl nodeMultiMap = do
   --   then error "add it to the
 
 -- private
-egRebuildParentWl :: IntLikeEquiv EClassId EClassId -> IntLikeMap ENodeId ENodeId -> State (EGraph d f) [MergeItem]
+egRebuildParentWl :: IntLikeEquiv EClassId EClassId -> IntLikeMap ENodeId ENodeId -> State (EGraph d f) WorkList
 egRebuildParentWl = error "TODO"
 
 -- private
-egRebuildNodeRound :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => [MergeItem] -> State (EGraph d f) ([EClassId], IntLikeMap ENodeId ENodeId, [MergeItem])
+egRebuildNodeRound :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => WorkList -> State (EGraph d f) ([EClassId], IntLikeMap ENodeId ENodeId, WorkList)
 egRebuildNodeRound wl = do
   -- First merge all classes together and get merged sets
   mergeEquiv <- egRebuildMerge wl
@@ -369,13 +363,14 @@ egRebuildNodeRound wl = do
   parentWl <- egRebuildParentWl mergeEquiv nodeMap
   -- Track new class ids for final class rebuilding
   let touchedClasses = ILM.keys (ILE.bwdView mergeEquiv)
-  pure (touchedClasses, nodeMap, canonWl ++ parentWl)
+  pure (touchedClasses, nodeMap, canonWl <> parentWl)
 
 -- private
 egRebuildClassMap :: EAnalysis d f q => q -> IntLikeSet EClassId -> IntLikeMap ENodeId ENodeId -> State (EGraph d f) ()
 egRebuildClassMap = error "TODO"
 
 -- | Rebuilds the 'EGraph' after merging to allow adding more terms. (Always safe to call.)
+-- TODO return set of new class roots
 egRebuild :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> State (EGraph d f) ()
 egRebuild q = goRec where
   goRec = do
