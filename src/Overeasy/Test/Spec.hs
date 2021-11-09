@@ -14,7 +14,7 @@ import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
 import Data.List (delete)
 import Data.Maybe (fromJust, isJust)
-import Data.Semigroup (Max (..))
+import Data.Semigroup (Max (..), sconcat)
 import Hedgehog (Gen, PropertyT, Range, assert, forAll, property, (/==), (===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
@@ -27,6 +27,7 @@ import Overeasy.EGraph (EAnalysis (..), EAnalysisOff (..), EClassId (..), EClass
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
+import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
@@ -413,14 +414,10 @@ maxBinTreeLeaf :: Ord a => BinTree a -> a
 maxBinTreeLeaf = getMax . analyzeBinTree Max
 
 instance EAnalysis EGD EGF MaxV where
-  eaMake _ fc eg = case fc of
+  eaMake _ = \case
     BinTreeLeafF v -> Max v
-    BinTreeBranchF c1 c2 ->
-      let v1 = eciData (fromJust (egClassInfo c1 eg))
-          v2 = eciData (fromJust (egClassInfo c2 eg))
-      in v1 <> v2
-  eaJoin _ v1 v2 = v1 <> v2
-  eaModify _ _ g = g
+    BinTreeBranchF d1 d2 -> d1 <> d2
+  eaJoin _ = sconcat
 
 propEgInvariants :: (Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
 propEgInvariants eg = do
@@ -510,6 +507,15 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     egNodeSize eg3 === egNodeSize eg2
     propEgInvariants eg3
 
+type M = IntLikeMap ENodeId Char
+
+testILM :: TestTree
+testILM = testCase "ILM unit" $ do
+  let mLeft = ILM.fromList [(ENodeId 0, 'a'), (ENodeId 1, 'b')] :: M
+      mRight = ILM.fromList [(ENodeId 1, 'x'), (ENodeId 2, 'c')] :: M
+      mMerged = ILM.fromList [(ENodeId 0, 'a'), (ENodeId 1, 'b'), (ENodeId 2, 'c')] :: M
+  mLeft <> mRight @?= mMerged
+
 main :: IO ()
 main = do
   mayDebugStr <- lookupEnv "DEBUG"
@@ -519,7 +525,8 @@ main = do
     hSetBuffering stdout NoBuffering
     hSetBuffering stderr NoBuffering
   defaultMain $ testGroup "Overeasy"
-    [ testUfUnit
+    [ testILM
+    , testUfUnit
     -- , testEgUnit
     , testAssocCases
     , testAssocUnit
