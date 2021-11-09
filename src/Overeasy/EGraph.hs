@@ -366,12 +366,11 @@ egRebuildNodeRound wl = do
   pure (touchedClasses, nodeMap, canonWl <> parentWl)
 
 -- private
-egRebuildClassMap :: EAnalysis d f q => q -> IntLikeSet EClassId -> IntLikeMap ENodeId ENodeId -> State (EGraph d f) ()
+egRebuildClassMap :: EAnalysis d f q => q -> IntLikeSet EClassId -> IntLikeMap ENodeId ENodeId -> State (EGraph d f) (IntLikeSet EClassId)
 egRebuildClassMap = error "TODO"
 
 -- | Rebuilds the 'EGraph' after merging to allow adding more terms. (Always safe to call.)
--- TODO return set of new class roots
-egRebuild :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> State (EGraph d f) ()
+egRebuild :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> State (EGraph d f) (IntLikeSet EClassId)
 egRebuild q = goRec where
   goRec = do
     -- Read and clear the worklist - from now on nothing should add to it

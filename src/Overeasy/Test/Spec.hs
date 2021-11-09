@@ -392,9 +392,12 @@ testEgUnit = after AllSucceed "Assoc unit" $ testCase "EG unit" $ runEGA $ do
       Nothing -> fail "Could not resolve one of cidFour or cidPlus"
       Just c -> c @?= ChangedYes
   -- Now rebuild
-  applyTestS (egRebuild noA) $ \() eg -> do
-    egFindTerm termFour eg @?= egFindTerm termPlus eg
+  applyTestS (egRebuild noA) $ \newRoots eg -> do
+    let newCidFour = fromJust (egFindTerm termFour eg)
+        newCidPlus = fromJust (egFindTerm termPlus eg)
+    newCidFour @?= newCidPlus
     egFindTerm termTwo eg @?= Just cidTwo
+    newRoots @?= ILS.fromList [newCidFour]
     egNeedsRebuild eg @?= False
 
 genBinTree :: Gen a -> Gen (BinTree a)
