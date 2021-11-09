@@ -196,12 +196,10 @@ data MergeManyRes x =
 
 ufMergeManyInc :: Coercible x Int => IntLikeSet x -> UnionFind x -> (MergeManyRes x, UnionFind x)
 ufMergeManyInc cs u =
-  case ILS.minView cs of
-    Nothing -> (MergeManyResEmpty, u)
-    Just (h, cs') ->
-      if ILS.null cs'
-        then (MergeManyResEmbed (MergeResUnchanged h), u)
-        else error "TODO"
+  case ILS.toList cs of
+    [] -> (MergeManyResEmpty, u)
+    [h] -> (MergeManyResEmbed (MergeResUnchanged h), u)
+    _ -> error "TODO"
 
 ufMergeMany :: Coercible x Int => IntLikeSet x -> State (UnionFind x) (MergeManyRes x)
 ufMergeMany = state . ufMergeManyInc

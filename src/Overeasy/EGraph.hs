@@ -183,14 +183,6 @@ egCanonicalizeInternal x = do
   fz <- stateLens egUnionFindL (traverse ufPartialFind node)
   stateLens egNodeAssocL (assocUpdate x fz)
 
--- -- private
--- egMake :: EAnalysis d f q => q -> f EClassId -> State (EGraph d f) d
--- egMake q fc = fmap (eaMake q fc) get
-
--- -- private
--- egModify :: EAnalysis d f q => q -> EClassId -> State (EGraph d f) ()
--- egModify q x = modify' (eaModify q x)
-
 data AddNodeRes d = AddNodeRes !Changed !(Seq (ENodeTriple d))
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
