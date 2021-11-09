@@ -34,8 +34,8 @@ import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions (assertFalse, assertTrue, (@/=))
-import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufFind, ufMembers, ufMerge, ufNew, ufOnConflict,
-                           ufRoots, ufTotalSize)
+import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufFind, ufMembers, ufMerge, ufMergeMany, ufNew,
+                           ufOnConflict, ufRoots, ufTotalSize)
 import System.Environment (lookupEnv, setEnv)
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
@@ -156,8 +156,11 @@ genMembers maxElems = do
 mkInitUf :: [V] -> UF
 mkInitUf vs = execState (for_ vs ufAdd) ufNew
 
-mkMergedUf :: [(V, V)] -> UF -> UF
-mkMergedUf vvs = execState (for_ vvs (uncurry ufMerge))
+mkSingleMergedUf :: [(V, V)] -> UF -> UF
+mkSingleMergedUf vvs = execState (for_ vvs (uncurry ufMerge))
+
+mkMultiMergedUf :: [(V, V)] -> UF -> UF
+mkMultiMergedUf vvs = execState (for_ vvs (\(x, y) -> ufMergeMany (ILS.fromList [x, y])))
 
 testUfProp :: TestTree
 testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
@@ -180,7 +183,11 @@ testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
       lift (x /== y)
     -- generate some pairs and merge them
     mergePairs <- forAll (genListOfDistinctPairs nOpsRange memberList)
-    let mergedUf = mkMergedUf mergePairs initUf
+    shouldMultiMerge <- forAll Gen.bool_
+    let mergedUf =
+          if shouldMultiMerge
+            then mkMultiMergedUf mergePairs initUf
+            else mkSingleMergedUf mergePairs initUf
     -- assert that total size is unchanged
     ufTotalSize mergedUf === nMembers
     -- calculate components by graph reachability

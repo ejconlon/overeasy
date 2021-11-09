@@ -36,7 +36,6 @@ import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
 import qualified Overeasy.IntLike.MultiMap as ILMM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
-import Overeasy.StateUtil (stateFail)
 
 -- | Our default choice for merging class ids.
 ufOnConflict :: Ord x => x -> x -> x
@@ -69,7 +68,7 @@ ufMembers = state ufMembersInc
 ufMembersRestrictedInc :: (Coercible x Int, Eq x) => [x] -> UnionFind x -> (IntLikeMultiMap x x, UnionFind x)
 ufMembersRestrictedInc mems u = foldr go (ILM.empty, u) mems where
   go x1 (m, v) =
-    let (x2, v') = ufFindRootInc v x1
+    let (x2, v') = ufFindRootInc x1 v
         m' = ILMM.insert x2 x1 m
     in (m', v')
 
@@ -85,7 +84,7 @@ ufEquiv = state ufEquivInc
 ufEquivRestrictedInc :: (Coercible x Int, Eq x) => [x] -> UnionFind x -> (IntLikeEquiv x x, UnionFind x)
 ufEquivRestrictedInc mems u = foldr go (ILE.empty, u) mems where
   go x1 (m, v) =
-    let (x2, v') = ufFindRootInc v x1
+    let (x2, v') = ufFindRootInc x1 v
     in case ILE.insert x2 x1 m of
       Left _ -> error "UF equiv failure"
       Right m' -> (m', v')
@@ -97,7 +96,7 @@ ufEquivRestricted = state . ufEquivRestrictedInc
 ufRootsInc :: (Coercible x Int, Eq x) => UnionFind x -> (IntLikeSet x, UnionFind x)
 ufRootsInc u@(UnionFind _ p) = foldr go (ILS.empty, u) (ILM.keys p) where
   go x1 (s, v) =
-    let (x2, v') = ufFindRootInc v x1
+    let (x2, v') = ufFindRootInc x1 v
         s' = ILS.insert x2 s
     in (s', v')
 
@@ -126,8 +125,8 @@ ufFindRootAcc p acc x1 =
     else ufFindRootAcc p (x1:acc) x2
 
 -- private
-ufFindRootInc :: (Coercible x Int, Eq x) => UnionFind x -> x -> (x, UnionFind x)
-ufFindRootInc u@(UnionFind z p) x1 =
+ufFindRootInc :: (Coercible x Int, Eq x) => x -> UnionFind x -> (x, UnionFind x)
+ufFindRootInc x1 u@(UnionFind z p) =
   let (acc, x2) = ufFindRootAcc p [] x1
       u' = case acc of
             [] -> u
@@ -136,12 +135,17 @@ ufFindRootInc u@(UnionFind z p) x1 =
   in (x2, u')
 
 -- private
-ufFindInc :: (Coercible x Int, Eq x) => x -> UnionFind x -> Maybe (x, UnionFind x)
-ufFindInc a u@(UnionFind _ p) = fmap (ufFindRootInc u) (ILM.lookup a p)
+ufFindInc :: (Coercible x Int, Eq x) => x -> UnionFind x -> (Maybe x, UnionFind x)
+ufFindInc a u@(UnionFind _ p) =
+  case ILM.lookup a p of
+    Nothing -> (Nothing, u)
+    Just x ->
+      let (y, u') = ufFindRootInc x u
+      in (Just y, u')
 
 -- | Finds the canonical class member of the UF or 'Nothing' if not found
 ufFind :: (Coercible x Int, Eq x) => x -> State (UnionFind x) (Maybe x)
-ufFind x = stateFail (ufFindInc x)
+ufFind x = state (ufFindInc x)
 
 -- | Finds the canonical class member of the UF or calls 'error'.
 -- NOTE: THIS IS PARTIAL!
@@ -194,12 +198,37 @@ data MergeManyRes x =
   deriving stock (Eq, Show, Functor, Foldable, Traversable, Generic)
   deriving anyclass (NFData)
 
-ufMergeManyInc :: Coercible x Int => IntLikeSet x -> UnionFind x -> (MergeManyRes x, UnionFind x)
+ufFindAllSeqInc :: (Coercible x Int, Eq x) => [x] -> UnionFind x -> (Either x (IntLikeSet x), UnionFind x)
+ufFindAllSeqInc = go ILS.empty where
+  go !acc !xs !u =
+    case xs of
+      [] -> (Right acc, u)
+      y:ys ->
+        let (mz, u') = ufFindInc y u
+        in case mz of
+          Nothing -> (Left y, u')
+          Just z -> go (ILS.insert z acc) ys u'
+
+ufMergeManyInc :: (Coercible x Int, Ord x) => IntLikeSet x -> UnionFind x -> (MergeManyRes x, UnionFind x)
 ufMergeManyInc cs u =
   case ILS.toList cs of
     [] -> (MergeManyResEmpty, u)
     [h] -> (MergeManyResEmbed (MergeResUnchanged h), u)
-    _ -> error "TODO"
+    hs ->
+      let (e, u') = ufFindAllSeqInc hs u
+      in case e of
+        Left x -> (MergeManyResEmbed (MergeResMissing x), u')
+        Right xs ->
+          case ILS.minView xs of
+            Nothing -> error "impossible"
+            Just (y, ys) ->
+              if ILS.null ys && ILS.member y cs
+                then (MergeManyResEmbed (MergeResUnchanged y), u')
+                else
+                  let UnionFind z p = u'
+                      p' = foldr (`ILM.insert` y) p (ILS.toList ys)
+                      u'' = UnionFind z p'
+                  in (MergeManyResEmbed (MergeResChanged y), u'')
 
-ufMergeMany :: Coercible x Int => IntLikeSet x -> State (UnionFind x) (MergeManyRes x)
+ufMergeMany :: (Coercible x Int, Ord x) => IntLikeSet x -> State (UnionFind x) (MergeManyRes x)
 ufMergeMany = state . ufMergeManyInc
