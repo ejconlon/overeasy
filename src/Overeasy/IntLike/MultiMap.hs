@@ -1,6 +1,7 @@
 module Overeasy.IntLike.MultiMap
   ( IntLikeMultiMap
   , empty
+  , toList
   , insert
   , member
   , invertDisjoint
@@ -19,6 +20,10 @@ type IntLikeMultiMap k v = IntLikeMap k (IntLikeSet v)
 empty :: IntLikeMultiMap k v
 empty = ILM.empty
 {-# INLINE empty #-}
+
+toList :: Coercible k Int => IntLikeMultiMap k v -> [(k, IntLikeSet v)]
+toList = ILM.toList
+{-# INLINE toList #-}
 
 insert :: (Coercible k Int, Coercible v Int) => k -> v -> IntLikeMultiMap k v -> IntLikeMultiMap k v
 insert k v = ILM.insertWith (<>) k (ILS.singleton v)

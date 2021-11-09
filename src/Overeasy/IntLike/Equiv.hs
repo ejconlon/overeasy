@@ -1,5 +1,7 @@
 module Overeasy.IntLike.Equiv
-  ( IntLikeEquiv (..)
+  ( IntLikeEquiv
+  , fwdView
+  , bwdView
   , empty
   , insert
   , partialInsert
@@ -15,8 +17,8 @@ import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
 import qualified Overeasy.IntLike.MultiMap as ILMM
 
 data IntLikeEquiv k v = IntLikeEquiv
-  { intLikeEquivFwd :: !(IntLikeMultiMap k v)
-  , intLikeEquivBwd :: !(IntLikeMap v k)
+  { fwdView :: !(IntLikeMultiMap k v)
+  , bwdView :: !(IntLikeMap v k)
   } deriving stock (Eq, Show)
 
 empty :: IntLikeEquiv k v
@@ -36,4 +38,4 @@ member :: (Eq k, Coercible v Int) => k -> v -> IntLikeEquiv k v -> Bool
 member k v m = Just k == lookupClass v m
 
 lookupClass :: (Coercible v Int) => v -> IntLikeEquiv k v -> Maybe k
-lookupClass v = ILM.lookup v . intLikeEquivBwd
+lookupClass v = ILM.lookup v . bwdView
