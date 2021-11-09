@@ -42,6 +42,7 @@ import Data.Functor.Foldable (project)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Semigroup (sconcat)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
@@ -78,14 +79,14 @@ newtype ENodeId = ENodeId { unENodeId :: Int }
 -- | The definition of an 'EGraph' analysis.
 class EAnalysis d f q | q -> d f where
   eaMake :: q -> f d -> d
-  eaJoin :: q -> NonEmpty d -> d
+  eaJoin :: q -> d -> NonEmpty d -> d
 
 -- | A disabled analysis
 data EAnalysisOff (f :: Type -> Type) = EAnalysisOff
 
 instance EAnalysis () f (EAnalysisOff f) where
   eaMake _ _ = ()
-  eaJoin _ _ = ()
+  eaJoin _ _ _ = ()
 
 newtype EAnalysisAlgebra d f = EAnalysisAlgebra
   { unEAnalysisAlgebra :: f d -> d
@@ -93,7 +94,7 @@ newtype EAnalysisAlgebra d f = EAnalysisAlgebra
 
 instance Semigroup d => EAnalysis d f (EAnalysisAlgebra d f) where
   eaMake (EAnalysisAlgebra g) fd = g fd
-  eaJoin _ = sconcat
+  eaJoin _ d ds = sconcat (NE.cons d ds)
 
 data ENodeTriple d = ENodeTriple
   { entNode :: !ENodeId

@@ -14,16 +14,16 @@ import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
 import Data.List (delete)
 import Data.Maybe (fromJust, isJust)
-import Data.Semigroup (Max (..), sconcat)
+import Data.Semigroup (Max (..))
 import Hedgehog (Gen, PropertyT, Range, assert, forAll, property, (/==), (===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocCanCompact, assocCompact, assocDeadBwd, assocDeadFwd,
                        assocFromPairs, assocFwd, assocNew, assocSize, assocSrc, assocUpdate)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EGraph (EAnalysis (..), EAnalysisOff (..), EClassId (..), EClassInfo (eciNodes), EGraph (..),
-                        ENodeId (..), MergeItem, eciData, egAddTerm, egCanonicalize, egClassInfo, egClassSize,
-                        egFindTerm, egMerge, egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
+import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
+                        ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egNeedsRebuild,
+                        egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -35,7 +35,7 @@ import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions (assertFalse, assertTrue, (@/=))
 import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufFind, ufMembers, ufMerge, ufMergeMany, ufNew,
-                           ufOnConflict, ufRoots, ufTotalSize)
+                           ufRoots, ufTotalSize)
 import System.Environment (lookupEnv, setEnv)
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
@@ -409,7 +409,11 @@ type EGD = Max V
 type EGF = BinTreeF V
 type EGT = BinTree V
 type EGV = EGraph EGD EGF
-data MaxV = MaxV
+
+maxVAnalysis :: EAnalysisAlgebra EGD EGF
+maxVAnalysis = EAnalysisAlgebra $ \case
+  BinTreeLeafF v -> Max v
+  BinTreeBranchF d1 d2 -> d1 <> d2
 
 analyzeBinTree :: Semigroup m => (a -> m) -> BinTree a -> m
 analyzeBinTree f = cata go where
@@ -419,12 +423,6 @@ analyzeBinTree f = cata go where
 
 maxBinTreeLeaf :: Ord a => BinTree a -> a
 maxBinTreeLeaf = getMax . analyzeBinTree Max
-
-instance EAnalysis EGD EGF MaxV where
-  eaMake _ = \case
-    BinTreeLeafF v -> Max v
-    BinTreeBranchF d1 d2 -> d1 <> d2
-  eaJoin _ = sconcat
 
 propEgInvariants :: (Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
 propEgInvariants eg = do
@@ -490,13 +488,13 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'c'))]
     let nMembers = length members
         nOpsRange = Range.linear 0 (nMembers * nMembers)
-    let eg1 = execState (for_ members (egAddTerm MaxV)) eg0
+    let eg1 = execState (for_ members (egAddTerm maxVAnalysis)) eg0
     liftIO (putStrLn "===== eg1 =====")
     liftIO (pPrint eg1)
     propEgInvariants eg1
     assert (egNodeSize eg1 >= 0)
     egClassSize eg1 === egNodeSize eg1
-    execState (egRebuild MaxV) eg1 === eg1
+    execState (egRebuild maxVAnalysis) eg1 === eg1
     -- pairs <- forAll (genNodePairs nOpsRange eg1)
     -- let pairs = [(EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
@@ -508,7 +506,7 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     liftIO (pPrint eg2)
     egNodeSize eg2 === egNodeSize eg1
     egNeedsRebuild eg2 === not (null pairs)
-    let eg3 = execState (egRebuild MaxV) eg2
+    let eg3 = execState (egRebuild maxVAnalysis) eg2
     liftIO (putStrLn "===== eg3 =====")
     liftIO (pPrint eg3)
     egNodeSize eg3 === egNodeSize eg2
