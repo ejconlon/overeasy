@@ -6,10 +6,10 @@ parameters:
     default: "overeasy"
   cache_ver:
     type: string
-    default: "v3"
+    default: "v4"
   haskell_image:
     type: string
-    default: "ejconlon/haskell-custom"
+    default: "haskell"
 
 commands:
   install_native_deps:
