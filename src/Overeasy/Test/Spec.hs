@@ -1,6 +1,6 @@
 module Overeasy.Test.Spec (main) where
 
-import Control.Monad (unless, void, when, foldM)
+import Control.Monad (foldM, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT,
                                    runState)
@@ -21,9 +21,9 @@ import qualified Hedgehog.Range as Range
 import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocCanCompact, assocCompact, assocDeadBwd, assocDeadFwd,
                        assocFromPairs, assocFwd, assocNew, assocSize, assocSrc, assocUpdate)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EGraph (EAnalysis (..), EAnalysisOff (..), EClassId (..), EGraph (..), ENodeId (..), eciData, egAddTerm,
-                        egCanonicalize, egClassInfo, egClassSize, egFindTerm, egMerge, egNeedsRebuild, egNew,
-                        egNodeSize, egRebuild, egTotalClassSize, egWorkList, EClassInfo (eciNodes), MergeItem)
+import Overeasy.EGraph (EAnalysis (..), EAnalysisOff (..), EClassId (..), EClassInfo (eciNodes), EGraph (..),
+                        ENodeId (..), MergeItem, eciData, egAddTerm, egCanonicalize, egClassInfo, egClassSize,
+                        egFindTerm, egMerge, egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG

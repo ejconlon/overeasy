@@ -39,7 +39,7 @@ module Overeasy.EGraph
 import Control.DeepSeq (NFData)
 import Control.Monad (foldM, unless, void)
 import Control.Monad.State.Strict (State, get, gets, modify', put)
-import Data.Foldable (for_, foldl')
+import Data.Foldable (foldl', for_)
 import Data.Functor.Foldable (project)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
@@ -47,6 +47,7 @@ import Data.Maybe (fromJust)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
 import Data.Traversable (for)
+import Debug.Trace (traceM)
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocEnsure, assocLookupByValue, assocNew,
@@ -62,10 +63,10 @@ import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
-import Overeasy.StateUtil (stateLens, stateFold)
-import Overeasy.UnionFind (MergeManyRes (..), MergeRes (..), UnionFind, ufAdd, ufFind, ufMerge, ufNew, ufPartialFind, ufRoots, ufSize,
-                           ufTotalSize, ufMembersRestricted, ufEquivRestricted, ufMergeMany)
-import Debug.Trace (traceM)
+import Overeasy.StateUtil (stateFold, stateLens)
+import Overeasy.UnionFind (MergeManyRes (..), MergeRes (..), UnionFind, ufAdd, ufEquivRestricted, ufFind,
+                           ufMembersRestricted, ufMerge, ufMergeMany, ufNew, ufPartialFind, ufRoots, ufSize,
+                           ufTotalSize)
 
 -- | An opaque class id
 newtype EClassId = EClassId { unEClassId :: Int }
