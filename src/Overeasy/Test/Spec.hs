@@ -393,11 +393,13 @@ testEgUnit = after AllSucceed "Assoc unit" $ testCase "EG unit" $ runEGA $ do
       Just c -> c @?= ChangedYes
   -- Now rebuild
   applyTestS (egRebuild noA) $ \newRoots eg -> do
-    let newCidFour = fromJust (egFindTerm termFour eg)
-        newCidPlus = fromJust (egFindTerm termPlus eg)
-    newCidFour @?= newCidPlus
+    cidMerged <-
+      case ILS.toList newRoots of
+        [x] -> pure x
+        _ -> fail "Expected singleton root list"
+    egFindTerm termFour eg @?= Just cidMerged
+    egFindTerm termPlus eg @?= Just cidMerged
     egFindTerm termTwo eg @?= Just cidTwo
-    newRoots @?= ILS.fromList [newCidFour]
     egNeedsRebuild eg @?= False
 
 genBinTree :: Gen a -> Gen (BinTree a)
