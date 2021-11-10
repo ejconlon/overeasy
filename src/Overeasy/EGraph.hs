@@ -37,7 +37,7 @@ module Overeasy.EGraph
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (State, get, gets, modify', put, state)
+import Control.Monad.State.Strict (State, get, gets, modify', state)
 import Data.Foldable (for_)
 import Data.Functor.Foldable (project)
 import Data.Hashable (Hashable)
@@ -333,12 +333,21 @@ egRebuildAssoc mergeEquiv = do
 
 -- private
 egRebuildCanonWl :: IntLikeMultiMap ENodeId ENodeId -> State (EGraph d f) WorkList
-egRebuildCanonWl nodeMultiMap = do
-  hc <- gets egHashCons
-  error "TODO"
-  -- stateFold [] (ILMM.toList nodeMultiMap) $ \ms (newNode, oldNodes) -> do
-  -- if ILS.size oldNodes > 1
-  --   then error "add it to the
+egRebuildCanonWl nodeMultiMap = goRoot where
+  goRoot = do
+    hc <- gets egHashCons
+    -- For each node in the new -> old multimap
+    pure (foldr (goEach hc) Empty (ILMM.toList nodeMultiMap))
+  goEach hc (_, oldNodes) ms =
+    -- See what classes the nodes map to
+    if ILS.size oldNodes > 1
+      then
+        -- Add to worklist if there are at least two classes for the same node
+        let cs = ILS.map (`ILM.partialLookup` hc) oldNodes
+        in if ILS.size cs > 1
+          then ms :|> cs
+          else ms
+      else ms
 
 -- private
 egRebuildParentWl :: IntLikeEquiv EClassId EClassId -> IntLikeMap ENodeId ENodeId -> State (EGraph d f) WorkList
