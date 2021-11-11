@@ -560,7 +560,7 @@ main = do
   defaultMain $ testGroup "Overeasy"
     [ testILM
     , testUfUnit
-    -- , testEgUnit
+    , testEgUnit
     , testAssocCases
     , testAssocUnit
     , testUfProp
