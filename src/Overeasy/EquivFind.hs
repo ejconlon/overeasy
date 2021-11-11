@@ -16,6 +16,8 @@ module Overeasy.EquivFind
   , efAdd
   , efEnsureInc
   , efEnsure
+  , efEquivs
+  , efClosure
   , efFind
   , efPartialFind
   , EquivMergeRes (..)
@@ -71,6 +73,15 @@ efEnsureInc x u@(EquivFind fwd bwd) =
 efEnsure :: Coercible x Int => x -> State (EquivFind x) x
 efEnsure = state . efEnsureInc
 
+efEquivs :: Coercible x Int => x -> EquivFind x -> IntLikeSet x
+efEquivs x (EquivFind fwd bwd) =
+  case ILM.lookup x bwd of
+    Nothing -> ILS.empty
+    Just y -> ILM.partialLookup y fwd
+
+efClosure :: Coercible x Int => [x] -> EquivFind x -> IntLikeSet x
+efClosure xs ef = foldl (\c x -> if ILS.member x c then c else efEquivs x ef <> c) ILS.empty xs
+
 efFind :: Coercible x Int => x -> EquivFind x -> Maybe x
 efFind x = ILM.lookup x . efBwd
 
@@ -99,8 +110,8 @@ efElems = ILM.keys . efBwd
 data EquivMergeRes x =
     EquivMergeResMissing !x
   | EquivMergeResUnchanged !x
-  | EquivMergeResChanged !x
-  deriving stock (Eq, Show, Functor, Foldable, Traversable, Generic)
+  | EquivMergeResChanged !x !(IntLikeSet x)
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
 efMergeInc :: (Coercible x Int, Ord x) => x -> x -> EquivFind x -> (EquivMergeRes x, EquivFind x)
@@ -119,7 +130,7 @@ efMergeInc i j u@(EquivFind fwd bwd) =
                   hiSet = ILM.partialLookup hiKey fwd
                   finalFwd = ILM.adjust (hiSet <>) loKey (ILM.delete hiKey fwd)
                   finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList hiSet)
-              in (EquivMergeResChanged loKey, EquivFind finalFwd finalBwd)
+              in (EquivMergeResChanged loKey hiSet, EquivFind finalFwd finalBwd)
 
 efMerge :: (Coercible x Int, Ord x) => x -> x -> State (EquivFind x) (EquivMergeRes x)
 efMerge i j = state (efMergeInc i j)
@@ -128,7 +139,7 @@ efMerge i j = state (efMergeInc i j)
 data EquivMergeManyRes x =
     EquivMergeManyResEmpty
   | EquivMergeManyResEmbed !(EquivMergeRes x)
-  deriving stock (Eq, Show, Functor, Foldable, Traversable, Generic)
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
 efMergeManyInc :: Coercible x Int => IntLikeSet x -> EquivFind x -> (EquivMergeManyRes x, EquivFind x)
@@ -144,11 +155,11 @@ efMergeManyInc cs u@(EquivFind fwd bwd) =
           in if ILS.null ys && ILS.member loKey cs
             then (EquivMergeManyResEmbed (EquivMergeResUnchanged loKey), u)
             else
-              let loSet = foldr (\k s -> ILM.partialLookup k fwd <> s) ILS.empty (ILS.toList xs)
-                  finalFwd = ILM.insert loKey loSet (foldr ILM.delete fwd (ILS.toList ys))
-                  finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList loSet)
+              let hiSet = foldr (\k s -> ILM.partialLookup k fwd <> s) ILS.empty (ILS.toList ys)
+                  finalFwd = ILM.adjust (hiSet <>) loKey (foldr ILM.delete fwd (ILS.toList ys))
+                  finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList hiSet)
                   finalU = EquivFind finalFwd finalBwd
-              in (EquivMergeManyResEmbed (EquivMergeResChanged loKey), finalU)
+              in (EquivMergeManyResEmbed (EquivMergeResChanged loKey hiSet), finalU)
 
 efMergeMany :: Coercible x Int => IntLikeSet x -> State (EquivFind x) (EquivMergeManyRes x)
 efMergeMany = state . efMergeManyInc

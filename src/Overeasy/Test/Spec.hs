@@ -108,7 +108,7 @@ testUfSimple = testCase "UF simple" $ runUF $ do
     efTotalSize ef @?= 3
     ILS.fromList (efRoots ef) @?= setV "abc"
   applyTestS (efMerge (toV 'a') (toV 'c')) $ \res ef -> do
-    res @?= EquivMergeResChanged (toV 'a')
+    res @?= EquivMergeResChanged (toV 'a') (setV "c")
     efSize ef @?= 2
     efTotalSize ef @?= 3
     ILS.fromList (efRoots ef) @?= setV "ab"
