@@ -108,7 +108,7 @@ data ENodeTriple d = ENodeTriple
 data EClassInfo d = EClassInfo
   { eciData :: !d
   , eciNodes :: !(IntLikeSet ENodeId)
-  , eciParents :: !(IntLikeMap ENodeId EClassId)
+  , eciParents :: !(IntLikeSet ENodeId)
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
@@ -222,7 +222,7 @@ egAddNodeSub q fcd = do
       stateLens egHashConsL (modify' (ILM.insert n x))
       -- analyze the node and put that info in the class map
       let d = eaMake q (fmap entData fcd)
-          i = EClassInfo d (ILS.singleton n) ILM.empty
+          i = EClassInfo d (ILS.singleton n) ILS.empty
       stateLens egClassMapL (modify' (ILM.insert x i))
       pure (ENodeTriple n x d)
   pure (c, p)
@@ -243,8 +243,7 @@ egAddTermSub q = go where
     (changed2, z@(ENodeTriple n x _)) <- egAddNodeSub q fx
     -- now update all its children to add this as a parent
     for_ children $ \(ENodeTriple _ c _) ->
-      -- it's ok to overwrite class ids per node because they're guaranteed to be in the same equivalence class
-      stateLens egClassMapL (modify' (ILM.adjust (\v -> v { eciParents = ILM.insert n x (eciParents v) }) c))
+      stateLens egClassMapL (modify' (ILM.adjust (\v -> v { eciParents = ILS.insert n (eciParents v) }) c))
     pure (AddNodeRes (changed1 <> changed2) (Seq.singleton z), z)
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
@@ -301,6 +300,7 @@ egRebuildMerge wl parents = stateLens egUnionFindL (go ILS.empty wl) where
         _ -> go mems rest
 
 -- private
+-- TODO loop through merged classes instead of rewriting whole hashcons
 egRebuildHashCons :: IntLikeEquiv EClassId EClassId -> State (EGraph d f) ()
 egRebuildHashCons mergeEquiv = stateLens egHashConsL (modify' goHc) where
   bwd = ILE.bwdView mergeEquiv
@@ -309,7 +309,6 @@ egRebuildHashCons mergeEquiv = stateLens egHashConsL (modify' goHc) where
 -- private
 egRebuildAssoc :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => IntLikeEquiv EClassId EClassId -> State (EGraph d f) (IntLikeSet EClassId, IntLikeMap ENodeId ENodeId, WorkList)
 egRebuildAssoc mergeEquiv = do
-  let bwd = ILE.bwdView mergeEquiv
   hc <- gets egHashCons
   -- For each class that we're going to merge
   stateFold (ILS.empty, ILM.empty, Empty) (ILM.keys (ILE.bwdView mergeEquiv)) $ \(ps, m, parentWl) c -> do
@@ -317,7 +316,9 @@ egRebuildAssoc mergeEquiv = do
     -- Get the class info
     eci <- gets (ILM.partialLookup c . egClassMap)
     -- Gather the parent classes for the next round
-    let ps' = ILS.fromList (fmap (\p -> ILM.findWithDefault p p bwd) (ILM.elems (eciParents eci))) <> ps
+    let thisPs = ILS.map (`ILM.partialLookup` hc) (eciParents eci)
+    traceM (unwords ["REBUILD ASSOC PARENTS", "c=", show c, "eciParents=", show (eciParents eci), "thisPs=", show thisPs])
+    let ps' = thisPs <> ps
     -- For each node in the class
     (finalM, finalParentWl) <- stateFold (m, parentWl) (ILS.toList (eciNodes eci)) $ \(m', parentWl') n -> do
       -- Canonicalize it and add to the node map
@@ -359,8 +360,13 @@ egRebuildNodeRound wl parents = do
   traceM (unwords ["#########################\n", "START ROUND", "wl=", show wl, "parents=", show parents])
   -- First merge all classes together and get merged class sets
   (mergeEquiv, roundOnly) <- egRebuildMerge wl parents
+  traceM (unwords ["POST MERGE", "mergeEquiv=", show mergeEquiv, "roundOnly=", show roundOnly])
+  uf <- gets egUnionFind
+  traceM (unwords ["POST UF", "uf=", show uf])
   -- Now update the hashcons so node ids point to merged classes
   egRebuildHashCons mergeEquiv
+  hc <- gets egHashCons
+  traceM (unwords ["POST HASHCONS", "hc=", show hc])
   -- Traverse all classes and canonicalize their nodes,
   -- recording the mapping from old -> new
   -- Also track all possible parent classes
@@ -376,22 +382,19 @@ egRebuildNodeRound wl parents = do
   -- And track next worklist
   let finalWl = parentWl <> canonWl
   -- And track parent classes for next round
-  let finalParents = ILS.filter (not . (`ILS.member` roundOnly)) candParents
+  let finalParents = ILS.filter (not . (`ILS.member` touchedClasses)) candParents  -- TODO roundOnly instead of touchedClasses?
   traceM (unwords ["END ROUND", "touchedClasses=", show touchedClasses, "nodeMap=", show nodeMap, "canonWl=", show canonWl, "finalParents=", show finalParents])
   pure (touchedClasses, nodeMap, finalWl, finalParents)
 
 egRebuildClassSingle :: EAnalysis d f q => q -> IntLikeMap EClassId EClassId -> IntLikeMap ENodeId ENodeId -> (EClassId, IntLikeSet EClassId) -> IntLikeMap EClassId (EClassInfo d) -> IntLikeMap EClassId (EClassInfo d)
-egRebuildClassSingle q classAssign nodeMap (newClass, oldClasses) initCm =
+egRebuildClassSingle q _ nodeMap (newClass, oldClasses) initCm =
   let EClassInfo rootData rootNodes rootParents = ILM.partialLookup newClass initCm
       finalData = eaJoin q rootData (fmap (\c -> eciData (ILM.partialLookup c initCm)) (ILS.toList oldClasses))
       lookupClassNodes c = eciNodes (ILM.partialLookup c initCm)
       lookupClassParents c = eciParents (ILM.partialLookup c initCm)
-      allClassParents = ILM.toList rootParents ++ (ILS.toList oldClasses >>= ILM.toList . lookupClassParents)
+      allClassParents = foldr (\c s -> lookupClassParents c <> s) rootParents (ILS.toList oldClasses)
       finalNodes = foldr (\c s -> lookupClassNodes c <> s) rootNodes (ILS.toList oldClasses)
-      finalParents = ILM.fromList $ allClassParents >>= \(pn, pc) ->
-        let pn' = ILM.partialLookup pn nodeMap
-            pc' = ILM.partialLookup pc classAssign
-        in [(pn', pc') | pc' /= newClass]
+      finalParents = ILS.fromList $ ILS.toList allClassParents >>= \pn -> [pn | not (ILS.member pn finalNodes)]
       finalInfo = EClassInfo finalData finalNodes finalParents
       finalCm = ILM.insert newClass finalInfo (foldr ILM.delete initCm (ILS.toList oldClasses))
   in finalCm

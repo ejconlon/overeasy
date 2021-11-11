@@ -27,6 +27,7 @@ library
       Overeasy.Assoc
       Overeasy.Classes
       Overeasy.EGraph
+      Overeasy.EquivFind
       Overeasy.Expressions.BinTree
       Overeasy.Expressions.Free
       Overeasy.Expressions.Sexp

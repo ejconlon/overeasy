@@ -9,6 +9,7 @@ module Overeasy.IntLike.Set
   , toList
   , insert
   , delete
+  , findMin
   , minView
   , disjoint
   , map
@@ -63,6 +64,10 @@ insert x = IntLikeSet . IntSet.insert (coerce x) . unIntLikeSet
 delete :: Coercible x Int => x -> IntLikeSet x -> IntLikeSet x
 delete x = IntLikeSet . IntSet.delete (coerce x) . unIntLikeSet
 {-# INLINE delete #-}
+
+findMin :: Coercible x Int => IntLikeSet x -> x
+findMin = coerce . IntSet.findMin . unIntLikeSet
+{-# INLINE findMin #-}
 
 minView :: Coercible x Int => IntLikeSet x -> Maybe (x, IntLikeSet x)
 minView = coerce . IntSet.minView . unIntLikeSet

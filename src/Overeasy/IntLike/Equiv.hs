@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+
 module Overeasy.IntLike.Equiv
   ( IntLikeEquiv
   , fwdView
@@ -9,8 +11,10 @@ module Overeasy.IntLike.Equiv
   , lookupClass
   ) where
 
+import Control.DeepSeq (NFData)
 import Data.Coerce (Coercible)
 import Data.Either (fromRight)
+import GHC.Generics (Generic)
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
@@ -19,7 +23,8 @@ import qualified Overeasy.IntLike.MultiMap as ILMM
 data IntLikeEquiv k v = IntLikeEquiv
   { fwdView :: !(IntLikeMultiMap k v)
   , bwdView :: !(IntLikeMap v k)
-  } deriving stock (Eq, Show)
+  } deriving stock (Eq, Show, Generic)
+    deriving anyclass (NFData)
 
 empty :: IntLikeEquiv k v
 empty = IntLikeEquiv ILMM.empty ILM.empty

@@ -1,6 +1,7 @@
 module Overeasy.IntLike.MultiMap
   ( IntLikeMultiMap
   , empty
+  , size
   , toList
   , insert
   , member
@@ -20,6 +21,10 @@ type IntLikeMultiMap k v = IntLikeMap k (IntLikeSet v)
 empty :: IntLikeMultiMap k v
 empty = ILM.empty
 {-# INLINE empty #-}
+
+size :: IntLikeMultiMap k v -> Int
+size = ILM.size
+{-# INLINE size #-}
 
 toList :: Coercible k Int => IntLikeMultiMap k v -> [(k, IntLikeSet v)]
 toList = ILM.toList
