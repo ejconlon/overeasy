@@ -38,7 +38,6 @@ import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions (assertFalse, assertTrue, (@/=))
-import Overeasy.UnionFind (ufRoots)
 import System.Environment (lookupEnv, setEnv)
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
@@ -495,24 +494,43 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     assert (egNodeSize eg0 == 0)
     assert (egClassSize eg0 == 0)
     propEgInvariants eg0
+    -- -- Case 1: Recursive parents and so on
+    -- let members = [ BinTreeBranch
+    --                     (BinTreeBranch
+    --                        (BinTreeBranch (BinTreeLeaf (toV 'l')) (BinTreeLeaf (toV 'j')))
+    --                        (BinTreeLeaf (toV 'b')))
+    --                     (BinTreeLeaf (toV 'j'))
+    --                 , BinTreeLeaf (toV 'a')
+    --                 , BinTreeBranch
+    --                     (BinTreeLeaf (toV 'a'))
+    --                     (BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'a')))
+    --               ]
+    -- let pairs = [(EClassId 4, EClassId 0), (EClassId 5, EClassId 6), (EClassId 0, EClassId 1)]
+    -- -- Case 2:
+    -- let members = [BinTreeLeaf (toV 'a') , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b'))]
+    -- let pairs = [(EClassId 0, EClassId 1)]
+    -- -- Case 3:
+    -- let members = [BinTreeLeaf (toV 'a') , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')) , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b')) ]
+    -- -- Case 4:
+    -- let leafA = BinTreeLeaf (toV 'a')
+    --     doubleA = BinTreeBranch leafA leafA
+    --     members = [leafA , doubleA , BinTreeBranch doubleA leafA]
+    --     pairs = [(EClassId 0, EClassId 2)]
+    -- -- Case 5:
+    -- let members = [BinTreeLeaf (toV 'a') , BinTreeLeaf (toV 'b') , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'c'))]
+    -- let pairs = [(EClassId 0, EClassId 2)]
     -- XXX add forAlls back
-    -- members <- forAll (genBinTreeMembers maxElems)
+    members <- forAll (genBinTreeMembers maxElems)
     -- let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
     -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
     -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b'))]
     -- let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'c'))]
-    -- let members = [ BinTreeLeaf (toV 'a') , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')) , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b')) ]
     -- let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
-    let members = [ BinTreeBranch
-                        (BinTreeBranch
-                           (BinTreeBranch (BinTreeLeaf (toV 'l')) (BinTreeLeaf (toV 'j')))
-                           (BinTreeLeaf (toV 'b')))
-                        (BinTreeLeaf (toV 'j'))
-                    , BinTreeLeaf (toV 'a')
-                    , BinTreeBranch
-                        (BinTreeLeaf (toV 'a'))
-                        (BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'a')))
-                  ]
+    -- let zerolevel = fmap (BinTreeLeaf . toV) "a"
+    --     onelevel = BinTreeBranch <$> zerolevel <*> zerolevel
+    --     twolevel = (BinTreeBranch <$> onelevel <*> zerolevel) ++ (BinTreeBranch <$> zerolevel <*> onelevel) ++ (BinTreeBranch <$> onelevel <*> onelevel)
+    --     anylevel = zerolevel ++ onelevel ++ twolevel
+    -- members <- forAll (Gen.subsequence anylevel)
     let nMembers = length members
         nOpsRange = Range.linear 0 (nMembers * nMembers)
     let eg1 = force (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
@@ -522,13 +540,17 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     assert (egNodeSize eg1 >= 0)
     egClassSize eg1 === egNodeSize eg1
     execState (egRebuild maxVAnalysis) eg1 === eg1
-    -- pairs <- forAll (genNodePairs nOpsRange eg1)
+    pairs <- forAll (genNodePairs nOpsRange eg1)
     -- let pairs = [(EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 0, EClassId 2), (EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 0, EClassId 1), (EClassId 0, EClassId 2)]
+    -- let pairs = [(EClassId 0, EClassId 1), (EClassId 0, EClassId 3)]
     -- let pairs = [(EClassId 0, EClassId 3), (EClassId 0, EClassId 1)]
-    let pairs = [(EClassId 4, EClassId 0), (EClassId 5, EClassId 6), (EClassId 0, EClassId 1)]
+    liftIO (putStrLn "===== members =====")
+    liftIO (pPrint members)
+    liftIO (putStrLn "===== pairs =====")
+    liftIO (pPrint pairs)
     let eg2 = force (execState (for_ pairs (uncurry egMerge)) eg1)
     liftIO (putStrLn "===== eg2 =====")
     liftIO (pPrint eg2)

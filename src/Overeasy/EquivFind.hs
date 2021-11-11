@@ -39,6 +39,7 @@ import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
 import qualified Overeasy.IntLike.MultiMap as ILMM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
+import Data.Foldable (foldl')
 
 -- private ctor
 data EquivFind x = EquivFind
@@ -80,7 +81,7 @@ efEquivs x (EquivFind fwd bwd) =
     Just y -> ILM.partialLookup y fwd
 
 efClosure :: Coercible x Int => [x] -> EquivFind x -> IntLikeSet x
-efClosure xs ef = foldl (\c x -> if ILS.member x c then c else efEquivs x ef <> c) ILS.empty xs
+efClosure xs ef = foldl' (\c x -> if ILS.member x c then c else efEquivs x ef <> c) ILS.empty xs
 
 efFind :: Coercible x Int => x -> EquivFind x -> Maybe x
 efFind x = ILM.lookup x . efBwd
