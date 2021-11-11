@@ -3,7 +3,7 @@ module Overeasy.Test.Spec (main) where
 import Control.Monad (foldM, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT,
-                                   runState)
+                                   runState, modify', gets)
 import Control.Monad.Trans (MonadTrans (lift))
 import Data.Bifunctor (bimap)
 import Data.Char (chr, ord)
@@ -35,8 +35,8 @@ import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions (assertFalse, assertTrue, (@/=))
-import Overeasy.UnionFind (MergeRes (..), UnionFind (..), ufAdd, ufFind, ufMembers, ufMerge, ufMergeMany, ufNew,
-                           ufRoots, ufTotalSize)
+import Overeasy.EquivFind (EquivMergeRes (..), EquivFind (..), efAdd, efFind, efElems, efMerge, efMergeMany, efNew,
+                           efRoots, efSize, efTotalSize)
 import System.Environment (lookupEnv, setEnv)
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
@@ -44,6 +44,7 @@ import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
 import Text.Pretty.Simple (pPrint)
 import Control.DeepSeq (force, NFData)
+import Overeasy.UnionFind (ufRoots)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -84,46 +85,49 @@ fromV = chr . unV
 setV :: String -> IntLikeSet V
 setV = ILS.fromList . fmap toV
 
-type UF = UnionFind V
+type UF = EquivFind V
 
 runUF :: StateT UF IO () -> IO ()
-runUF = runS ufNew
+runUF = runS efNew
 
 testUfSimple :: TestTree
 testUfSimple = testCase "UF simple" $ runUF $ do
-  testS $ \uf -> ufSize uf @?= 0
-  testS $ \uf -> ufTotalSize uf @?= 0
-  applyTestS ufRoots $ \rs _ -> rs @?= ILS.empty
-  applyS (ufAdd (toV 'a'))
-  testS $ \uf -> ufSize uf @?= 1
-  testS $ \uf -> ufTotalSize uf @?= 1
-  applyTestS ufRoots $ \rs _ -> rs @?= setV "a"
-  applyS (ufAdd (toV 'b'))
-  applyS (ufAdd (toV 'c'))
-  testS $ \uf -> ufSize uf @?= 3
-  testS $ \uf -> ufTotalSize uf @?= 3
-  applyTestS ufRoots $ \rs _ -> rs @?= setV "abc"
-  applyTestS (ufMerge (toV 'a') (toV 'c')) $ \res uf -> do
-    res @?= MergeResChanged (toV 'a')
-    ufSize uf @?= 2
-    ufTotalSize uf @?= 3
-  applyTestS ufRoots $ \rs _ -> rs @?= setV "ab"
-  applyTestS ufMembers $ \rs _ -> rs @?= ILM.fromList [(toV 'a', setV "ac"), (toV 'b', setV "b")]
-  applyTestS (ufMerge (toV 'c') (toV 'a')) $ \res _ -> res @?= MergeResUnchanged (toV 'a')
-  applyTestS (ufMerge (toV 'b') (toV 'z')) $ \res _ -> res @?= MergeResMissing (toV 'z')
+  testS $ \ef -> do
+    efSize ef @?= 0
+    efTotalSize ef @?= 0
+    efRoots ef @?= []
+  applyS (modify' (efAdd (toV 'a')))
+  testS $ \ef -> do
+    efSize ef @?= 1
+    efTotalSize ef @?= 1
+    ILS.fromList (efRoots ef) @?= setV "a"
+  applyS (modify' (efAdd (toV 'b')))
+  applyS (modify' (efAdd (toV 'c')))
+  testS $ \ef -> do
+    efSize ef @?= 3
+    efTotalSize ef @?= 3
+    ILS.fromList (efRoots ef) @?= setV "abc"
+  applyTestS (state (efMerge (toV 'a') (toV 'c'))) $ \res ef -> do
+    res @?= EquivMergeResChanged (toV 'a')
+    efSize ef @?= 2
+    efTotalSize ef @?= 3
+    ILS.fromList (efRoots ef) @?= setV "ab"
+    efFwd ef @?= ILM.fromList [(toV 'a', setV "ac"), (toV 'b', setV "b")]
+  applyTestS (state (efMerge (toV 'c') (toV 'a'))) $ \res _ -> res @?= EquivMergeResUnchanged (toV 'a')
+  applyTestS (state (efMerge (toV 'b') (toV 'z'))) $ \res _ -> res @?= EquivMergeResMissing (toV 'z')
 
 testUfRec :: TestTree
 testUfRec = testCase "UF rec" $ runUF $ do
-  applyS (ufAdd (toV 'a'))
-  applyS (ufAdd (toV 'b'))
-  applyS (ufAdd (toV 'c'))
-  applyS_ (ufMerge (toV 'b') (toV 'c'))
-  applyS_ (ufMerge (toV 'a') (toV 'c'))
-  testS $ \uf -> do
-    ufSize uf @?= 1
-    ufTotalSize uf @?= 3
-  applyTestS ufRoots $ \rs _ -> rs @?= setV "a"
-  applyTestS ufMembers $ \rs _ -> rs @?= ILM.fromList [(toV 'a', setV "abc")]
+  applyS (modify' (efAdd (toV 'a')))
+  applyS (modify' (efAdd (toV 'b')))
+  applyS (modify' (efAdd (toV 'c')))
+  applyS_ (state (efMerge (toV 'b') (toV 'c')))
+  applyS_ (state (efMerge (toV 'a') (toV 'c')))
+  testS $ \ef -> do
+    efSize ef @?= 1
+    efTotalSize ef @?= 3
+    ILS.fromList (efRoots ef) @?= setV "a"
+    efFwd ef @?= ILM.fromList [(toV 'a', setV "abc")]
 
 testUfUnit :: TestTree
 testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec]
@@ -156,13 +160,13 @@ genMembers maxElems = do
   pure (fmap (\i -> V (minVal + i)) [0..n-1])
 
 mkInitUf :: [V] -> UF
-mkInitUf vs = execState (for_ vs ufAdd) ufNew
+mkInitUf vs = execState (for_ vs (modify' . efAdd)) efNew
 
 mkSingleMergedUf :: [(V, V)] -> UF -> UF
-mkSingleMergedUf vvs = execState (for_ vvs (uncurry ufMerge))
+mkSingleMergedUf vvs = execState (for_ vvs (\(x, y) -> state (efMerge x y)))
 
 mkMultiMergedUf :: [(V, V)] -> UF -> UF
-mkMultiMergedUf vvs = execState (for_ vvs (\(x, y) -> ufMergeMany (ILS.fromList [x, y])))
+mkMultiMergedUf vvs = execState (for_ vvs (\(x, y) -> state (efMergeMany (ILS.fromList [x, y]))))
 
 testUfProp :: TestTree
 testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
@@ -176,12 +180,12 @@ testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
         nOpsRange = Range.linear 0 (nMembers * nMembers)
     let initUf = mkInitUf memberList
     -- assert that sizes indicate nothing is merged
-    ufSize initUf === nMembers
-    ufTotalSize initUf === nMembers
+    efSize initUf === nMembers
+    efTotalSize initUf === nMembers
     -- assert that find indicates nothing is merged
     for_ allPairs $ \(a, b) -> flip evalStateT initUf $ do
-      x <- applyS (ufFind a)
-      y <- applyS (ufFind b)
+      x <- applyS (gets (efFind a))
+      y <- applyS (gets (efFind b))
       lift (x /== y)
     -- generate some pairs and merge them
     mergePairs <- forAll (genListOfDistinctPairs nOpsRange memberList)
@@ -191,13 +195,13 @@ testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
             then mkMultiMergedUf mergePairs initUf
             else mkSingleMergedUf mergePairs initUf
     -- assert that total size is unchanged
-    ufTotalSize mergedUf === nMembers
+    efTotalSize mergedUf === nMembers
     -- calculate components by graph reachability
     let components = ILG.undirectedComponents mergePairs
     -- assert that elements are equal or not according to component
     void $ foldS_ mergedUf allPairs $ \(a, b) -> do
-      x <- applyS (ufFind a)
-      y <- applyS (ufFind b)
+      x <- applyS (gets (efFind a))
+      y <- applyS (gets (efFind b))
       let aComponent = ILE.lookupClass a components
           bComponent = ILE.lookupClass b components
       if isJust aComponent && aComponent == bComponent
@@ -554,11 +558,11 @@ main = do
     hSetBuffering stdout NoBuffering
     hSetBuffering stderr NoBuffering
   defaultMain $ testGroup "Overeasy"
-    -- [ testILM
-    -- , testUfUnit
-    [ testEgUnit
-    -- , testAssocCases
-    -- , testAssocUnit
-    -- , testUfProp
-    , testEgProp
+    [ testILM
+    , testUfUnit
+    -- , testEgUnit
+    , testAssocCases
+    , testAssocUnit
+    , testUfProp
+    -- , testEgProp
     ]

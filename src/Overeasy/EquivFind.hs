@@ -1,8 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 
--- | A Union-Find implementation.
--- Not the best - requires at least 2 lookups to find the root.
--- But at least it's a persistent impl, and it compresses paths as it goes.
+-- | A Union-Find implementation using explicit equivalence classes.
+-- We inevitably have to construct these classes so we might as well just do it as we go!
 module Overeasy.EquivFind
   ( EquivFind
   , efFwd
@@ -14,6 +13,7 @@ module Overeasy.EquivFind
   , efRoots
   , efElems
   , efAdd
+  , efEnsure
   , efFind
   , efPartialFind
   , EquivMergeRes (..)
@@ -53,6 +53,12 @@ efNew = EquivFind ILMM.empty ILM.empty
 
 efAdd :: Coercible x Int => x -> EquivFind x -> EquivFind x
 efAdd x u@(EquivFind fwd bwd) = if ILM.member x bwd then u else EquivFind (ILMM.insert x x fwd) (ILM.insert x x bwd)
+
+efEnsure :: Coercible x Int => x -> EquivFind x -> (x, EquivFind x)
+efEnsure x u@(EquivFind fwd bwd) =
+  case ILM.lookup x bwd of
+    Nothing -> (x, EquivFind (ILMM.insert x x fwd) (ILM.insert x x bwd))
+    Just y -> (y, u)
 
 efFind :: Coercible x Int => x -> EquivFind x -> Maybe x
 efFind x = ILM.lookup x . efBwd
@@ -126,6 +132,6 @@ efMergeMany cs u@(EquivFind fwd bwd) =
             else
               let loSet = foldr (\k s -> ILM.partialLookup k fwd <> s) ILS.empty (ILS.toList xs)
                   finalFwd = ILM.insert loKey loSet (foldr ILM.delete fwd (ILS.toList ys))
-                  finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList ys)
+                  finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList loSet)
                   finalU = EquivFind finalFwd finalBwd
               in (EquivMergeManyResEmbed (EquivMergeResChanged loKey), finalU)
