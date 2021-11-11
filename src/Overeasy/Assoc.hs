@@ -19,6 +19,7 @@ module Overeasy.Assoc
   , assocPartialLookupByValue
   , assocDeleteByKey
   , assocDeleteByValue
+  , assocUpdateInc
   , assocUpdate
   , assocCanCompact
   , assocCompactInc
@@ -42,6 +43,7 @@ import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize, sourceSkipInc)
 import Overeasy.StateUtil (stateFail, stateFailChanged)
+import Data.Maybe (fromMaybe)
 
 -- private ctor
 data Assoc x a = Assoc
@@ -139,15 +141,16 @@ assocDeleteByValue = stateFailChanged . assocDeleteByValueInc
 -- | Updates the assoc. You may need to clean the 'Assoc' with 'assocClean' when you have finished updating.
 -- If (x, a0) is in the assoc fwd and you update with (x, a1) where a0 /= a1, you should not call with a0 again.
 -- May break the 1-1 fwd and bwd mappings until you clean.
-assocUpdate :: (Coercible x Int, Eq x, Eq a, Hashable a) => x -> a -> State (Assoc x a) x
-assocUpdate x a1 = state $ \assoc@(Assoc fwd bwd deadFwd deadBwd n) ->
+-- If returns nothing, the assoc was not updated.
+assocUpdateInc :: (Coercible x Int, Eq x, Eq a, Hashable a) => x -> a -> Assoc x a -> Maybe (x, Assoc x a)
+assocUpdateInc x a1 (Assoc fwd bwd deadFwd deadBwd n) =
   case (ILM.lookup x fwd, HashMap.lookup a1 bwd) of
     (Nothing, Nothing) ->
       -- Neither x nor a1 were ever in the map - simply insert
       let fwd' = ILM.insert x a1 fwd
           bwd' = HashMap.insert a1 x bwd
           n' = sourceSkipInc x n
-      in (x, Assoc fwd' bwd' deadFwd deadBwd n')
+      in Just (x, Assoc fwd' bwd' deadFwd deadBwd n')
     (Nothing, Just y) ->
       -- x was not in the map but a1 was
       -- Update fwd x a1, mark x for deletion, return y
@@ -155,7 +158,7 @@ assocUpdate x a1 = state $ \assoc@(Assoc fwd bwd deadFwd deadBwd n) ->
       let fwd' = ILM.insert x a1 fwd
           deadFwd' = ILS.insert x deadFwd
           n' = sourceSkipInc x n
-      in (y, Assoc fwd' bwd deadFwd' deadBwd n')
+      in Just (y, Assoc fwd' bwd deadFwd' deadBwd n')
     (Just a0, Nothing) ->
       -- x was in the map but a1 was not
       -- Update fwd bwd for x a1, mark original a for deletion, then return x
@@ -163,12 +166,12 @@ assocUpdate x a1 = state $ \assoc@(Assoc fwd bwd deadFwd deadBwd n) ->
         let fwd' = ILM.insert x a1 fwd
             bwd' = HashMap.insert a1 x bwd
             deadBwd' = HashSet.insert a0 deadBwd
-        in (x, Assoc fwd' bwd' deadFwd deadBwd' n)
+        in Just (x, Assoc fwd' bwd' deadFwd deadBwd' n)
     (Just a0, Just y) ->
       -- x and a1 are in the map already
       if a0 == a1
         -- duplicate insert, no change
-        then (x, assoc)
+        then Nothing
         else if x == y
           -- (a1 -> x) in bwd but (x -> a0) in fwd
           -- Update fwd for x a1, mark a0 for deletion, then return x.
@@ -176,7 +179,7 @@ assocUpdate x a1 = state $ \assoc@(Assoc fwd bwd deadFwd deadBwd n) ->
           then
             let fwd' = ILM.insert x a1 fwd
                 deadBwd' = HashSet.insert a0 deadBwd
-            in (x, Assoc fwd' bwd deadFwd deadBwd' n)
+            in Just (x, Assoc fwd' bwd deadFwd deadBwd' n)
           -- Update fwd for x a1, update bwd for a0 y, mark original x and a for deletion, then return y.
           -- This makes fwd and bwd many-to-one. No elem in fwd will point to a0, no elem in bwd will point to x.
           else
@@ -184,7 +187,10 @@ assocUpdate x a1 = state $ \assoc@(Assoc fwd bwd deadFwd deadBwd n) ->
                 bwd' = HashMap.insert a0 y bwd
                 deadFwd' = ILS.insert x deadFwd
                 deadBwd' = HashSet.insert a0 deadBwd
-            in (y, Assoc fwd' bwd' deadFwd' deadBwd' n)
+            in Just (y, Assoc fwd' bwd' deadFwd' deadBwd' n)
+
+assocUpdate :: (Coercible x Int, Eq x, Eq a, Hashable a) => x -> a -> State (Assoc x a) x
+assocUpdate x a = state (\assoc -> fromMaybe (x, assoc) (assocUpdateInc x a assoc))
 
 -- | Are there dead elements in the forward map from 'assocUpdate'?
 assocCanCompact :: Assoc x a -> Bool

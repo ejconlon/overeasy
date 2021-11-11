@@ -14,7 +14,7 @@ module Overeasy.EGraph
   , WorkItem
   , WorkList
   , egSource
-  , egUnionFind
+  , egEquivFind
   , egClassMap
   , egNodeAssoc
   , egHashCons
@@ -50,7 +50,7 @@ import Debug.Trace (traceM)
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocEnsure, assocLookupByValue, assocNew,
-                       assocPartialLookupByKey, assocUpdate)
+                       assocPartialLookupByKey, assocUpdate, assocUpdateInc)
 import Overeasy.Classes (Changed (..))
 import Overeasy.IntLike.Equiv (IntLikeEquiv)
 import qualified Overeasy.IntLike.Equiv as ILE
@@ -63,8 +63,8 @@ import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateFold, stateLens)
-import Overeasy.UnionFind (MergeManyRes (..), MergeRes (..), UnionFind, ufAdd, ufEquivRestricted, ufFind, ufMergeMany,
-                           ufNew, ufPartialFind, ufRoots, ufSize, ufTotalSize)
+import Overeasy.EquivFind (EquivMergeManyRes (..), EquivMergeRes (..), EquivFind, efAdd, efFind, efMergeMany,
+                           efNew, efPartialFind, efRoots, efSize, efTotalSize, efFwd)
 
 -- | An opaque class id
 newtype EClassId = EClassId { unEClassId :: Int }
@@ -118,7 +118,7 @@ type WorkList = Seq WorkItem
 -- private ctor
 data EGraph d f = EGraph
   { egSource :: !(Source EClassId)
-  , egUnionFind :: !(UnionFind EClassId)
+  , egEquivFind :: !(EquivFind EClassId)
   , egClassMap :: !(IntLikeMap EClassId (EClassInfo d))
   , egNodeAssoc :: !(Assoc ENodeId (f EClassId))
   , egHashCons :: !(IntLikeMap ENodeId EClassId)
@@ -131,7 +131,7 @@ deriving anyclass instance (NFData d, NFData (f EClassId)) => NFData (EGraph d f
 
 makeLensesFor
   [ ("egSource", "egSourceL")
-  , ("egUnionFind", "egUnionFindL")
+  , ("egEquivFind", "egEquivFindL")
   , ("egClassMap", "egClassMapL")
   , ("egNodeAssoc", "egNodeAssocL")
   , ("egHashCons", "egHashConsL")
@@ -140,11 +140,11 @@ makeLensesFor
 
 -- | Number of equivalent classes in the 'EGraph' (see 'ufSize')
 egClassSize :: EGraph d f -> Int
-egClassSize = ufSize . egUnionFind
+egClassSize = efSize . egEquivFind
 
 -- | Number of total classes in the 'EGraph' (see 'ufTotalSize')
 egTotalClassSize :: EGraph d f -> Int
-egTotalClassSize = ufTotalSize . egUnionFind
+egTotalClassSize = efTotalSize . egEquivFind
 
 -- | Number of nodes in the 'EGraph'
 egNodeSize :: EGraph d f -> Int
@@ -167,23 +167,27 @@ egFindTerm t eg = foldWholeM (`egFindNode` eg) t
 
 -- | Creates a new 'EGraph'
 egNew :: EGraph d f
-egNew = EGraph (sourceNew (EClassId 0)) ufNew ILM.empty (assocNew (ENodeId 0)) ILM.empty Empty
+egNew = EGraph (sourceNew (EClassId 0)) efNew ILM.empty (assocNew (ENodeId 0)) ILM.empty Empty
 
 -- | Yields all root classes
-egClasses :: State (EGraph d f) (IntLikeSet EClassId)
-egClasses = stateLens egUnionFindL ufRoots
+egClasses :: State (EGraph d f) [EClassId]
+egClasses = gets (efRoots . egEquivFind)
 
 -- | Find the canonical form of a node
 egCanonicalize :: Traversable f => f EClassId -> State (EGraph d f) (Maybe (f EClassId))
-egCanonicalize = stateLens egUnionFindL . fmap sequence . traverse ufFind
+egCanonicalize fc = fmap (\ef -> traverse (`efFind` ef) fc) (gets egEquivFind)
 
 -- private
 egCanonicalizeInternal :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => ENodeId -> State (EGraph d f) ENodeId
-egCanonicalizeInternal x = do
-  node <- stateLens egNodeAssocL (gets (assocPartialLookupByKey x))
-  -- partial: guaranteed present by construction
-  fz <- stateLens egUnionFindL (traverse ufPartialFind node)
-  stateLens egNodeAssocL (assocUpdate x fz)
+egCanonicalizeInternal x = state $ \eg ->
+  let ef = egEquivFind eg
+      assoc = egNodeAssoc eg
+      node = assocPartialLookupByKey x assoc
+      -- partial: guaranteed present by construction
+      fz = fmap (`efPartialFind` ef) node
+  in case assocUpdateInc x fz assoc of
+    Nothing -> (x, eg)
+    Just (y, assoc') -> (y, eg { egNodeAssoc = assoc' })
 
 data AddNodeRes d = AddNodeRes !Changed !(Seq (ENodeTriple d))
   deriving stock (Eq, Show, Generic)
@@ -217,7 +221,7 @@ egAddNodeSub q fcd = do
       -- node does not exist; get a new class id
       x <- stateLens egSourceL sourceAdd
       -- add it to the uf
-      stateLens egUnionFindL (ufAdd x)
+      stateLens egEquivFindL (efAdd x)
       -- map the node to the class id
       stateLens egHashConsL (modify' (ILM.insert n x))
       -- analyze the node and put that info in the class map
@@ -262,8 +266,8 @@ egMerge i j = egMergeMany (ILS.fromList [i, j])
 egMergeMany :: IntLikeSet EClassId -> State (EGraph d f) (Maybe Changed)
 egMergeMany cs = do
   traceM (unwords ["MERGE", "cs=", show cs])
-  mayRoots <- stateLens egUnionFindL (traverse ufFind (ILS.toList cs))
-  case sequence mayRoots of
+  mayRoots <- fmap (\ef -> traverse (`efFind` ef) (ILS.toList cs)) (gets egEquivFind)
+  case mayRoots of
     Nothing -> pure Nothing
     Just roots ->
       let rootsSet = ILS.fromList roots
@@ -287,17 +291,19 @@ egTakeWorklist = state $ \eg ->
 
 -- private
 egRebuildMerge :: WorkList -> IntLikeSet EClassId -> State (EGraph d f) (IntLikeEquiv EClassId EClassId, IntLikeSet EClassId)
-egRebuildMerge wl parents = stateLens egUnionFindL (go ILS.empty wl) where
-  go !mems = \case
-    Empty -> do
-      mergeEquiv <- ufEquivRestricted (ILS.toList (parents <> mems))
-      let roundOnly = ILS.map (`ILM.partialLookup` ILE.bwdView mergeEquiv) mems
-      pure (mergeEquiv, roundOnly)
-    cs :<| rest -> do
-      mr <- ufMergeMany cs
-      case mr of
-        MergeManyResEmbed (MergeResChanged _) -> go (cs <> mems) rest
-        _ -> go mems rest
+egRebuildMerge = undefined -- TODO fold over items in worklist to merge, summing all touched classes. return that and the closure of their roots too. dont take parents
+-- egRebuildMerge wl parents = stateLens egUnionFindL (go ILS.empty wl) where
+--   go !mems = \case
+--     Empty -> do
+--       fwd <- gets efFwd
+--       mergeEquiv <- ILM.restrictKeys d) (parents <> mems)
+--       let roundOnly = ILS.map (`ILM.partialLookup` ILE.bwdView mergeEquiv) mems
+--       pure (mergeEquiv, roundOnly)
+--     cs :<| rest -> do
+--       mr <- ufMergeMany cs
+--       case mr of
+--         EquivMergeManyResEmbed (EquivMergeResChanged _) -> go (cs <> mems) rest
+--         _ -> go mems rest
 
 -- private
 -- TODO loop through merged classes instead of rewriting whole hashcons
@@ -361,8 +367,8 @@ egRebuildNodeRound wl parents = do
   -- First merge all classes together and get merged class sets
   (mergeEquiv, roundOnly) <- egRebuildMerge wl parents
   traceM (unwords ["POST MERGE", "mergeEquiv=", show mergeEquiv, "roundOnly=", show roundOnly])
-  uf <- gets egUnionFind
-  traceM (unwords ["POST UF", "uf=", show uf])
+  ef <- gets egEquivFind
+  traceM (unwords ["POST EF", "ef=", show ef])
   -- Now update the hashcons so node ids point to merged classes
   egRebuildHashCons mergeEquiv
   hc <- gets egHashCons
@@ -403,13 +409,14 @@ egRebuildClassSingle q _ nodeMap (newClass, oldClasses) initCm =
 -- Rebuilds the classmap: merges old class infos into root class infos
 -- Returns list of modified root classes
 egRebuildClassMap :: EAnalysis d f q => q -> IntLikeSet EClassId -> IntLikeMap ENodeId ENodeId -> State (EGraph d f) (IntLikeSet EClassId)
-egRebuildClassMap q touchedClasses nodeMap = do
-  -- Calculate final merged class sets
-  mergeEquiv <- stateLens egUnionFindL (ufEquivRestricted (ILS.toList touchedClasses))
-  -- For each class set, rebuild the root class and update the class map
-  stateLens egClassMapL $ modify' $ \initCm ->
-    foldr (egRebuildClassSingle q (ILE.bwdView mergeEquiv) nodeMap) initCm (ILMM.toList (ILE.fwdView mergeEquiv))
-  pure (ILS.fromList (ILM.keys (ILE.fwdView mergeEquiv)))
+egRebuildClassMap = undefined -- TODO something
+-- egRebuildClassMap q touchedClasses nodeMap = do
+--   -- Calculate final merged class sets
+--   mergeEquiv <- stateLens egUnionFindL (ufEquivRestricted (ILS.toList touchedClasses))
+--   -- For each class set, rebuild the root class and update the class map
+--   stateLens egClassMapL $ modify' $ \initCm ->
+--     foldr (egRebuildClassSingle q (ILE.bwdView mergeEquiv) nodeMap) initCm (ILMM.toList (ILE.fwdView mergeEquiv))
+--   pure (ILS.fromList (ILM.keys (ILE.fwdView mergeEquiv)))
 
 -- | Rebuilds the 'EGraph' after merging to allow adding more terms. (Always safe to call.)
 egRebuild :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> State (EGraph d f) (IntLikeSet EClassId)

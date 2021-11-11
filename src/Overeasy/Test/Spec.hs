@@ -3,7 +3,7 @@ module Overeasy.Test.Spec (main) where
 import Control.Monad (foldM, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT,
-                                   runState, modify', gets)
+                                   runState, gets)
 import Control.Monad.Trans (MonadTrans (lift))
 import Data.Bifunctor (bimap)
 import Data.Char (chr, ord)
@@ -96,33 +96,33 @@ testUfSimple = testCase "UF simple" $ runUF $ do
     efSize ef @?= 0
     efTotalSize ef @?= 0
     efRoots ef @?= []
-  applyS (modify' (efAdd (toV 'a')))
+  applyS (efAdd (toV 'a'))
   testS $ \ef -> do
     efSize ef @?= 1
     efTotalSize ef @?= 1
     ILS.fromList (efRoots ef) @?= setV "a"
-  applyS (modify' (efAdd (toV 'b')))
-  applyS (modify' (efAdd (toV 'c')))
+  applyS (efAdd (toV 'b'))
+  applyS (efAdd (toV 'c'))
   testS $ \ef -> do
     efSize ef @?= 3
     efTotalSize ef @?= 3
     ILS.fromList (efRoots ef) @?= setV "abc"
-  applyTestS (state (efMerge (toV 'a') (toV 'c'))) $ \res ef -> do
+  applyTestS (efMerge (toV 'a') (toV 'c')) $ \res ef -> do
     res @?= EquivMergeResChanged (toV 'a')
     efSize ef @?= 2
     efTotalSize ef @?= 3
     ILS.fromList (efRoots ef) @?= setV "ab"
     efFwd ef @?= ILM.fromList [(toV 'a', setV "ac"), (toV 'b', setV "b")]
-  applyTestS (state (efMerge (toV 'c') (toV 'a'))) $ \res _ -> res @?= EquivMergeResUnchanged (toV 'a')
-  applyTestS (state (efMerge (toV 'b') (toV 'z'))) $ \res _ -> res @?= EquivMergeResMissing (toV 'z')
+  applyTestS (efMerge (toV 'c') (toV 'a')) $ \res _ -> res @?= EquivMergeResUnchanged (toV 'a')
+  applyTestS (efMerge (toV 'b') (toV 'z')) $ \res _ -> res @?= EquivMergeResMissing (toV 'z')
 
 testUfRec :: TestTree
 testUfRec = testCase "UF rec" $ runUF $ do
-  applyS (modify' (efAdd (toV 'a')))
-  applyS (modify' (efAdd (toV 'b')))
-  applyS (modify' (efAdd (toV 'c')))
-  applyS_ (state (efMerge (toV 'b') (toV 'c')))
-  applyS_ (state (efMerge (toV 'a') (toV 'c')))
+  applyS (efAdd (toV 'a'))
+  applyS (efAdd (toV 'b'))
+  applyS (efAdd (toV 'c'))
+  applyS_ (efMerge (toV 'b') (toV 'c'))
+  applyS_ (efMerge (toV 'a') (toV 'c'))
   testS $ \ef -> do
     efSize ef @?= 1
     efTotalSize ef @?= 3
@@ -160,13 +160,13 @@ genMembers maxElems = do
   pure (fmap (\i -> V (minVal + i)) [0..n-1])
 
 mkInitUf :: [V] -> UF
-mkInitUf vs = execState (for_ vs (modify' . efAdd)) efNew
+mkInitUf vs = execState (for_ vs efAdd) efNew
 
 mkSingleMergedUf :: [(V, V)] -> UF -> UF
-mkSingleMergedUf vvs = execState (for_ vvs (\(x, y) -> state (efMerge x y)))
+mkSingleMergedUf vvs = execState (for_ vvs (uncurry efMerge))
 
 mkMultiMergedUf :: [(V, V)] -> UF -> UF
-mkMultiMergedUf vvs = execState (for_ vvs (\(x, y) -> state (efMergeMany (ILS.fromList [x, y]))))
+mkMultiMergedUf vvs = execState (for_ vvs (\(x, y) -> efMergeMany (ILS.fromList [x, y])))
 
 testUfProp :: TestTree
 testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
@@ -452,15 +452,15 @@ propEgInvariants eg = do
   -- Assert that the hashcons and assoc have equal key sets
   ILM.keys hc === ILM.keys fwd
   -- Assert that hashcons has exactly the same values as unionfind roots for non-dead nodes
-  let uf = egUnionFind eg
-      ufRootClasses = evalState ufRoots uf
+  let ef = egEquivFind eg
+      efRootClasses = ILS.fromList (efRoots ef)
   for_ (ILM.toList hc) $ \(n, c) ->
     unless (ILS.member n deadFwd) $ do
-      assert (ILS.member c ufRootClasses)
+      assert (ILS.member c efRootClasses)
   -- Assert that classmap has exactly the same keys as unionfind roots
   let cm = egClassMap eg
       cmClasses = ILS.fromList (ILM.keys cm)
-  cmClasses === ufRootClasses
+  cmClasses === efRootClasses
   cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) -> do
     let nodes = eciNodes eci
     -- Assert that classmap node values are non-empty
