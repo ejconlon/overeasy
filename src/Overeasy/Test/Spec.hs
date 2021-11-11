@@ -43,6 +43,7 @@ import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
 import Text.Pretty.Simple (pPrint)
+import Control.DeepSeq (force, NFData)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -69,7 +70,7 @@ flipFoldM :: Monad m => b -> [a] -> (b -> a -> m b) -> m b
 flipFoldM b as f = foldM f b as
 
 newtype V = V { unV :: Int }
-  deriving newtype (Eq, Ord, Hashable)
+  deriving newtype (Eq, Ord, Hashable, NFData)
 
 instance Show V where
   show = show . fromV
@@ -145,7 +146,7 @@ genV :: Int -> Gen V
 genV maxElems =
   let minVal = ord 'a'
       maxVal = minVal + maxElems * maxElems
-  in fmap V (Gen.int (Range.linear minVal maxVal))
+  in fmap V (Gen.int (Range.constant minVal maxVal))
 
 genMembers :: Int -> Gen [V]
 genMembers maxElems = do
@@ -409,7 +410,7 @@ genBinTree genA = genEither where
   genEither = Gen.recursive Gen.choice [genLeaf] [genBranch]
 
 genBinTreeMembers :: Int -> Gen [BinTree V]
-genBinTreeMembers maxElems = Gen.list (Range.linear 0 maxElems) (genBinTree (genV maxElems))
+genBinTreeMembers maxElems = Gen.list (Range.constant 0 maxElems) (genBinTree (genV maxElems))
 
 type EGD = Max V
 type EGF = BinTreeF V
@@ -468,21 +469,25 @@ propEgInvariants eg = do
   -- Assert that all node values in all classmap classes equal hc keys
   cmNodes === ILS.fromList (ILM.keys hc)
   -- Now test recanonicalization for non-dead nodes
-  for_ (HashMap.keys bwd) $ \fc ->
+  for_ (HashMap.toList bwd) $ \(fc, n) ->
     unless (HashSet.member fc deadBwd) $
       let recanon = evalState (egCanonicalize fc) eg
-      in recanon === Just fc
+      in do
+        liftIO (pPrint n)
+        liftIO (pPrint fc)
+        liftIO (pPrint recanon)
+        recanon === Just fc
 
 genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
 genNodePairs nOpsRange eg = genListOfDistinctPairs nOpsRange (ILM.keys (egClassMap eg))
 
 testEgProp :: TestTree
 testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
-  let maxElems = 50
-      eg0 = egNew :: EGV
+  let maxElems = 5
+      eg0 = force egNew :: EGV
   in property $ do
-    liftIO (putStrLn "===== eg0 =====")
-    liftIO (pPrint eg0)
+    -- liftIO (putStrLn "===== eg0 =====")
+    -- liftIO (pPrint eg0)
     assert (egNodeSize eg0 == 0)
     assert (egClassSize eg0 == 0)
     propEgInvariants eg0
@@ -491,12 +496,24 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     -- let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
     -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
     -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b'))]
-    let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'c'))]
+    -- let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'c'))]
+    -- let members = [ BinTreeLeaf (toV 'a') , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')) , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b')) ]
+    -- let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
+    let members = [ BinTreeBranch
+                        (BinTreeBranch
+                           (BinTreeBranch (BinTreeLeaf (toV 'l')) (BinTreeLeaf (toV 'j')))
+                           (BinTreeLeaf (toV 'b')))
+                        (BinTreeLeaf (toV 'j'))
+                    , BinTreeLeaf (toV 'a')
+                    , BinTreeBranch
+                        (BinTreeLeaf (toV 'a'))
+                        (BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'a')))
+                  ]
     let nMembers = length members
         nOpsRange = Range.linear 0 (nMembers * nMembers)
-    let eg1 = execState (for_ members (egAddTerm maxVAnalysis)) eg0
-    liftIO (putStrLn "===== eg1 =====")
-    liftIO (pPrint eg1)
+    let eg1 = force (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
+    -- liftIO (putStrLn "===== eg1 =====")
+    -- liftIO (pPrint eg1)
     propEgInvariants eg1
     assert (egNodeSize eg1 >= 0)
     egClassSize eg1 === egNodeSize eg1
@@ -506,13 +523,14 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     -- let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 0, EClassId 2), (EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 0, EClassId 1), (EClassId 0, EClassId 2)]
-    let pairs = [(EClassId 0, EClassId 3), (EClassId 0, EClassId 1)]
-    let eg2 = execState (for_ pairs (uncurry egMerge)) eg1
+    -- let pairs = [(EClassId 0, EClassId 3), (EClassId 0, EClassId 1)]
+    let pairs = [(EClassId 4, EClassId 0), (EClassId 5, EClassId 6), (EClassId 0, EClassId 1)]
+    let eg2 = force (execState (for_ pairs (uncurry egMerge)) eg1)
     liftIO (putStrLn "===== eg2 =====")
     liftIO (pPrint eg2)
     egNodeSize eg2 === egNodeSize eg1
     egNeedsRebuild eg2 === not (null pairs)
-    let eg3 = execState (egRebuild maxVAnalysis) eg2
+    let eg3 = force (execState (egRebuild maxVAnalysis) eg2)
     liftIO (putStrLn "===== eg3 =====")
     liftIO (pPrint eg3)
     egNodeSize eg3 === egNodeSize eg2
@@ -536,11 +554,11 @@ main = do
     hSetBuffering stdout NoBuffering
     hSetBuffering stderr NoBuffering
   defaultMain $ testGroup "Overeasy"
-    [ testILM
-    , testUfUnit
-    -- , testEgUnit
-    , testAssocCases
-    , testAssocUnit
-    , testUfProp
-    -- , testEgProp
+    -- [ testILM
+    -- , testUfUnit
+    [ testEgUnit
+    -- , testAssocCases
+    -- , testAssocUnit
+    -- , testUfProp
+    , testEgProp
     ]

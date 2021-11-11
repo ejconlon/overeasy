@@ -11,6 +11,7 @@ module Overeasy.IntLike.Map
   , elems
   , lookup
   , partialLookup
+  , findWithDefault
   , insert
   , insertWith
   , adjust
@@ -65,6 +66,7 @@ keys = coerce . IntMap.keys . unIntLikeMap
 
 elems :: IntLikeMap x a -> [a]
 elems = IntMap.elems . unIntLikeMap
+{-# INLINE elems #-}
 
 lookup :: Coercible x Int => x -> IntLikeMap x a -> Maybe a
 lookup x = IntMap.lookup (coerce x) . unIntLikeMap
@@ -73,6 +75,10 @@ lookup x = IntMap.lookup (coerce x) . unIntLikeMap
 partialLookup :: Coercible x Int => x -> IntLikeMap x a -> a
 partialLookup x m = unIntLikeMap m IntMap.! coerce x
 {-# INLINE partialLookup #-}
+
+findWithDefault :: Coercible x Int => a -> x -> IntLikeMap x a -> a
+findWithDefault a x = IntMap.findWithDefault a (coerce x) . unIntLikeMap
+{-# INLINE findWithDefault #-}
 
 insert :: Coercible x Int => x -> a -> IntLikeMap x a -> IntLikeMap x a
 insert x a = IntLikeMap . IntMap.insert (coerce x) a . unIntLikeMap

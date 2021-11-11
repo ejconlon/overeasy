@@ -12,6 +12,7 @@ module Overeasy.IntLike.Set
   , minView
   , disjoint
   , map
+  , filter
   , insertState
   , orderedPairs
   , unorderedPairs
@@ -21,7 +22,7 @@ import Control.DeepSeq (NFData)
 import Data.Coerce (Coercible, coerce)
 import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
-import Prelude hiding (map, null)
+import Prelude hiding (filter, map, null)
 
 newtype IntLikeSet x = IntLikeSet { unIntLikeSet :: IntSet }
   deriving stock (Show)
@@ -74,6 +75,10 @@ disjoint a b = IntSet.disjoint (unIntLikeSet a) (unIntLikeSet b)
 map :: (Coercible x Int, Coercible y Int) => (x -> y) -> IntLikeSet x -> IntLikeSet y
 map f = IntLikeSet . IntSet.map (coerce f) . unIntLikeSet
 {-# INLINE map #-}
+
+filter :: (Coercible x Int) => (x -> Bool) -> IntLikeSet x -> IntLikeSet x
+filter f = IntLikeSet . IntSet.filter (coerce f) . unIntLikeSet
+{-# INLINE filter #-}
 
 insertState :: Coercible x Int => (Bool -> b) -> x -> IntLikeSet x -> (b, IntLikeSet x)
 insertState f x = coerce . IntSet.alterF (\b -> (f b, True)) (coerce x) . unIntLikeSet
