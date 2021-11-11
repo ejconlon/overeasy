@@ -34,6 +34,7 @@ import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
+import Data.Maybe (fromMaybe)
 import Data.Tuple (swap)
 import GHC.Generics (Generic)
 import Overeasy.Classes (Changed (..))
@@ -43,7 +44,6 @@ import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize, sourceSkipInc)
 import Overeasy.StateUtil (stateFail, stateFailChanged)
-import Data.Maybe (fromMaybe)
 
 -- private ctor
 data Assoc x a = Assoc

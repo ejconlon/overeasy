@@ -1,9 +1,10 @@
 module Overeasy.Test.Spec (main) where
 
+import Control.DeepSeq (NFData, force)
 import Control.Monad (foldM, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT,
-                                   runState, gets)
+import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT, gets,
+                                   runState)
 import Control.Monad.Trans (MonadTrans (lift))
 import Data.Bifunctor (bimap)
 import Data.Char (chr, ord)
@@ -25,6 +26,8 @@ import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egNeedsRebuild,
                         egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
+import Overeasy.EquivFind (EquivFind (..), EquivMergeRes (..), efAdd, efElems, efFind, efMerge, efMergeMany, efNew,
+                           efRoots, efSize, efTotalSize)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -35,16 +38,13 @@ import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions (assertFalse, assertTrue, (@/=))
-import Overeasy.EquivFind (EquivMergeRes (..), EquivFind (..), efAdd, efFind, efElems, efMerge, efMergeMany, efNew,
-                           efRoots, efSize, efTotalSize)
+import Overeasy.UnionFind (ufRoots)
 import System.Environment (lookupEnv, setEnv)
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.Hedgehog (testProperty)
 import Text.Pretty.Simple (pPrint)
-import Control.DeepSeq (force, NFData)
-import Overeasy.UnionFind (ufRoots)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState

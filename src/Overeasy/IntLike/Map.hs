@@ -27,8 +27,8 @@ import Control.DeepSeq (NFData)
 import Data.Coerce (Coercible, coerce)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
-import Prelude hiding (filter, lookup, map, null)
 import Overeasy.IntLike.Set (IntLikeSet (..))
+import Prelude hiding (filter, lookup, map, null)
 
 newtype IntLikeMap x a = IntLikeMap { unIntLikeMap :: IntMap a }
   deriving stock (Show, Traversable)

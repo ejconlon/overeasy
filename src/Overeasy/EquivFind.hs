@@ -27,6 +27,7 @@ module Overeasy.EquivFind
   ) where
 
 import Control.DeepSeq (NFData)
+import Control.Monad.State.Strict (State, modify', state)
 import Data.Coerce (Coercible)
 import Data.Maybe (fromJust)
 import GHC.Generics (Generic)
@@ -36,7 +37,6 @@ import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
 import qualified Overeasy.IntLike.MultiMap as ILMM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
-import Control.Monad.State.Strict (State, state, modify')
 
 -- private ctor
 data EquivFind x = EquivFind

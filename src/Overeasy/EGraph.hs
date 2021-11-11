@@ -52,6 +52,8 @@ import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocEnsure, assocLookupByValue, assocNew,
                        assocPartialLookupByKey, assocUpdate, assocUpdateInc)
 import Overeasy.Classes (Changed (..))
+import Overeasy.EquivFind (EquivFind, EquivMergeManyRes (..), EquivMergeRes (..), efAdd, efFind, efFwd, efMergeMany,
+                           efNew, efPartialFind, efRoots, efSize, efTotalSize)
 import Overeasy.IntLike.Equiv (IntLikeEquiv)
 import qualified Overeasy.IntLike.Equiv as ILE
 import Overeasy.IntLike.Map (IntLikeMap)
@@ -63,8 +65,6 @@ import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateFold, stateLens)
-import Overeasy.EquivFind (EquivMergeManyRes (..), EquivMergeRes (..), EquivFind, efAdd, efFind, efMergeMany,
-                           efNew, efPartialFind, efRoots, efSize, efTotalSize, efFwd)
 
 -- | An opaque class id
 newtype EClassId = EClassId { unEClassId :: Int }
