@@ -17,7 +17,7 @@ import Data.List (delete)
 import Data.Maybe (fromJust, isJust)
 import Data.Semigroup (Max (..))
 import qualified Data.Sequence as Seq
-import Hedgehog (Gen, PropertyT, Range, assert, forAll, property)
+import Hedgehog (Gen, Range, forAll, property)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocCanCompact, assocCompact, assocDeadBwd, assocDeadFwd,
@@ -40,9 +40,9 @@ import Overeasy.Test.Assertions (MonadAssert (..), Unit (..), (@/=), (@?), (@?=)
 import System.Environment (lookupEnv, setEnv)
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
-import Test.Tasty.HUnit (Assertion, testCase)
+import Test.Tasty.HUnit (testCase)
 import Test.Tasty.Hedgehog (testProperty)
-import Text.Pretty.Simple (pPrint)
+-- import Text.Pretty.Simple (pPrint)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -479,10 +479,10 @@ analyzeBinTree f = cata go where
 maxBinTreeLeaf :: Ord a => BinTree a -> a
 maxBinTreeLeaf = getMax . analyzeBinTree Max
 
-propEgInvariants :: (Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> PropertyT IO ()
-propEgInvariants eg = do
+assertEgInvariants :: (MonadAssert m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
+assertEgInvariants eg = do
   -- Invariants require that no rebuild is needed (empty worklist)
-  assert (not (egNeedsRebuild eg))
+  not (egNeedsRebuild eg) @? "must be rebuilt"
   -- First look at the assoc (NodeId <-> f ClassId)
   let assoc = egNodeAssoc eg
       fwd = assocFwd assoc
@@ -500,7 +500,7 @@ propEgInvariants eg = do
       efRootClasses = ILS.fromList (efRoots ef)
   for_ (ILM.toList hc) $ \(n, c) ->
     unless (ILS.member n deadFwd) $ do
-      assert (ILS.member c efRootClasses)
+      ILS.member c efRootClasses @? "must be member of classes"
   -- Assert that classmap has exactly the same keys as unionfind roots
   let cm = egClassMap eg
       cmClasses = ILS.fromList (ILM.keys cm)
@@ -512,12 +512,12 @@ propEgInvariants eg = do
     -- Assert that classmap class has node values that are hashconsed to class
     for_ (ILS.toList nodes) $ \n ->
       ILM.lookup n hc @?= Just c
-    assert (ILS.disjoint nodes accNodes)
+    ILS.disjoint nodes accNodes @? "should be disjoint"
     pure (accNodes <> nodes)
   -- Assert that all node values in all classmap classes equal hc keys
   cmNodes @?= ILS.fromList (ILM.keys hc)
   -- Now test recanonicalization for non-dead nodes
-  for_ (HashMap.toList bwd) $ \(fc, n) ->
+  for_ (HashMap.toList bwd) $ \(fc, _) ->
     unless (HashSet.member fc deadBwd) $
       let recanon = evalState (egCanonicalize fc) eg
       in do
@@ -544,9 +544,9 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
   in property $ do
     -- liftIO (putStrLn "===== eg0 =====")
     -- liftIO (pPrint eg0)
-    assert (egNodeSize eg0 == 0)
-    assert (egClassSize eg0 == 0)
-    propEgInvariants eg0
+    egNodeSize eg0 @?= 0
+    egClassSize eg0 @?= 0
+    assertEgInvariants eg0
     -- -- Case 1: Recursive parents and so on
     -- let members = [ BinTreeBranch
     --                     (BinTreeBranch
@@ -605,8 +605,7 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     let eg1 = force (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
     -- liftIO (putStrLn "===== eg1 =====")
     -- liftIO (pPrint eg1)
-    propEgInvariants eg1
-    assert (egNodeSize eg1 >= 0)
+    assertEgInvariants eg1
     egClassSize eg1 @?= egNodeSize eg1
     execState (egRebuild maxVAnalysis) eg1 @?= eg1
     pairs <- forAll (genNodePairs nOpsRange eg1)
@@ -629,7 +628,7 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     -- liftIO (putStrLn "===== eg3 =====")
     -- liftIO (pPrint eg3)
     egNodeSize eg3 @?= egNodeSize eg2
-    propEgInvariants eg3
+    assertEgInvariants eg3
 
 type M = IntLikeMap ENodeId Char
 
