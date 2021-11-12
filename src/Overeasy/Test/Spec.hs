@@ -26,7 +26,8 @@ import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egNeedsRebuild,
                         egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
-import Overeasy.EquivFind (EquivFind (..), efAdd, efFind, efMerge, efMergeMany, efNew, efRoots, efSize, efTotalSize)
+import Overeasy.EquivFind (EquivFind (..), efAdd, efFind, efMerge, efMergeMany, efMergeSets, efNew, efRoots, efSize,
+                           efTotalSize)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -152,8 +153,22 @@ testUfMany = testCase "UF many" $ runUF $ do
     ILS.fromList (efRoots ef) @?= setV "a"
     efFwd ef @?= ILM.fromList [(toV 'a', setV "abcde")]
 
+testUfSets :: TestTree
+testUfSets = testCase "UF sets" $ runUF $ do
+  applyS (efAdd (toV 'a'))
+  applyS (efAdd (toV 'b'))
+  applyS (efAdd (toV 'c'))
+  applyS (efAdd (toV 'd'))
+  applyS (efAdd (toV 'e'))
+  applyTestS (efMergeSets [setV "cde", setV "abc"]) $ \res ef -> do
+    res @?= Just (setV "a", setV "bcde")
+    efSize ef @?= 1
+    efTotalSize ef @?= 5
+    ILS.fromList (efRoots ef) @?= setV "a"
+    efFwd ef @?= ILM.fromList [(toV 'a', setV "abcde")]
+
 testUfUnit :: TestTree
-testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec, testUfMany]
+testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec, testUfMany, testUfSets]
 
 genDistinctPairFromList :: Eq a => [a] -> Gen (a, a)
 genDistinctPairFromList = \case
@@ -189,9 +204,12 @@ mkPairsMergedUf :: [(V, V)] -> UF -> UF
 mkPairsMergedUf vvs = execState (for_ vvs (uncurry efMerge))
 
 mkSetsMergedUf :: [(V, V)] -> UF -> UF
-mkSetsMergedUf vvs = execState (for_ vvs (\(x, y) -> efMergeMany (ILS.fromList [x, y])))
+mkSetsMergedUf vvs = execState (for_ (fmap (\(x, y) -> ILS.fromList [x, y]) vvs) efMergeMany)
 
-data MergeStrat = MergeStratPairs | MergeStratSets -- MergeStratSingle
+mkSingleMergedUf :: [(V, V)] -> UF -> UF
+mkSingleMergedUf vvs = execState (efMergeSets (fmap (\(x, y) -> ILS.fromList [x, y]) vvs))
+
+data MergeStrat = MergeStratPairs | MergeStratSets | MergeStratSingle
   deriving stock (Eq, Show, Enum, Bounded)
 
 genMergeStrat :: Gen MergeStrat
@@ -223,7 +241,7 @@ testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
           case mergeStrat of
             MergeStratPairs -> mkPairsMergedUf mergePairs initUf
             MergeStratSets -> mkSetsMergedUf mergePairs initUf
-            -- MergeStratSingle -> mkSingleMergedUf mergePairs initUf
+            MergeStratSingle -> mkSingleMergedUf mergePairs initUf
     -- assert that total size is unchanged
     efTotalSize mergedUf === nMembers
     -- calculate components by graph reachability
@@ -613,7 +631,7 @@ main = do
   defaultMain $ testGroup "Overeasy"
     [ testILM
     , testUfUnit
-    , testEgUnit
+    -- , testEgUnit
     , testAssocCases
     , testAssocUnit
     , testUfProp

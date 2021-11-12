@@ -178,38 +178,40 @@ data EquivMergeSetsRes x =
     EquivMergeSetsResEmptySet
   | EquivMergeSetsResMissing !x
   | EquivMergeSetsResUnchanged !(IntLikeSet x)
-  | EquivMergeSetsResChanged !(IntLikeSet x) !(IntLikeMap x x) !(EquivFind x)
+  | EquivMergeSetsResChanged !(IntLikeSet x) !(IntLikeSet x) !(EquivFind x)
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
 efMergeSetsInc :: Coercible x Int => [IntLikeSet x] -> EquivFind x -> EquivMergeSetsRes x
-efMergeSetsInc = error "TODO"
--- efMergeSetsInc css u0 = res where
---   res =
---     case css of
---       [] -> (EquivMergeSetsResUnchanged ILS.empty, u0)
---       hs -> go ILS.empty ILM.empty u0 css
---   go !roots !classMap !u cs =
---     case cs of
---       [] -> (EquivMergeSetsResEmptySet, u)
---       [h] ->
---         case efFind h u of
---           Nothing -> ()
---       case efFindAll hs u of
---         Left x -> (EquivMergeManyResEmbed (EquivMergeResMissing x), u)
---         Right xs ->
---           let (loKey, ys) = fromJust (ILS.minView xs)
---           in if ILS.null ys && ILS.member loKey cs
---             then (EquivMergeManyResEmbed (EquivMergeResUnchanged loKey), u)
---             else
---               let hiSet = foldr (\k s -> ILM.partialLookup k fwd <> s) ILS.empty (ILS.toList ys)
---                   finalFwd = ILM.adjust (hiSet <>) loKey (foldr ILM.delete fwd (ILS.toList ys))
---                   finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList hiSet)
---                   finalU = EquivFind finalFwd finalBwd
---               in (EquivMergeManyResEmbed (EquivMergeResChanged loKey hiSet), finalU)
+efMergeSetsInc css0 u0 = res where
+  res =
+    case css0 of
+      [] -> EquivMergeSetsResUnchanged ILS.empty
+      _ -> go ILS.empty ILS.empty u0 css0
+  go !roots !classRemapSet u@(EquivFind fwd bwd) css =
+    case css of
+      [] ->
+        let finalRoots = ILS.map (`ILM.partialLookup` bwd) roots
+        in if ILS.null classRemapSet
+          then EquivMergeSetsResUnchanged finalRoots
+          else EquivMergeSetsResChanged finalRoots classRemapSet u
+      ds:dss ->
+        case ILS.toList ds of
+          [] -> go roots classRemapSet u dss
+          zs -> case efFindAll zs u of
+            Left x -> EquivMergeSetsResMissing x
+            Right xs ->
+              let (loKey, ys) = fromJust (ILS.minView xs)
+                  newRoots = ILS.insert loKey roots
+                  hiSet = foldr (\k s -> ILM.partialLookup k fwd <> s) ILS.empty (ILS.toList ys)
+                  newClassRemapSet = hiSet <> classRemapSet
+                  newFwd = ILM.adjust (hiSet <>) loKey (foldr ILM.delete fwd (ILS.toList ys))
+                  newBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList hiSet)
+                  newU = EquivFind newFwd newBwd
+              in go newRoots newClassRemapSet newU dss
 
-efMergeSets :: Coercible x Int => [IntLikeSet x] -> State (EquivFind x) (Maybe (IntLikeSet x, IntLikeMap x x))
+efMergeSets :: Coercible x Int => [IntLikeSet x] -> State (EquivFind x) (Maybe (IntLikeSet x, IntLikeSet x))
 efMergeSets css = state $ \ef ->
   case efMergeSetsInc css ef of
-    EquivMergeSetsResChanged roots classRemap ef' -> (Just (roots, classRemap), ef')
+    EquivMergeSetsResChanged roots classRemapSet ef' -> (Just (roots, classRemapSet), ef')
     _ -> (Nothing, ef)
