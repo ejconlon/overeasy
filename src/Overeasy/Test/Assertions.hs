@@ -10,12 +10,12 @@ module Overeasy.Test.Assertions
 
 import Control.Monad (unless)
 import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.State.Strict (StateT)
+import Control.Monad.Trans (lift)
 import GHC.Stack (HasCallStack)
 import Hedgehog (PropertyT)
 import qualified Hedgehog as HG
 import qualified Test.Tasty.HUnit as HU
-import Control.Monad.State.Strict (StateT)
-import Control.Monad.Trans (lift)
 
 assertUnaryPredicate :: (MonadFail m, Show a) => (a -> Bool) -> String -> a -> m ()
 assertUnaryPredicate predicate preface value = unless (predicate value) (fail msg) where

@@ -208,7 +208,7 @@ egAddNodeSub q fcd = do
   -- important: node should already be canonicalized!
   -- first lookup the node in the assoc to ensure uniqueness
   (c, n) <- stateLens egNodeAssocL (assocEnsure fc)
-  -- traceM(unwords ["ADD NODE", "n=", show n, "fc=", show fc, "c=", show c])
+  -- traceM (unwords ["ADD NODE", "n=", show n, "fc=", show fc, "c=", show c])
   p <- case c of
     ChangedNo -> do
       -- node already exists; just return existing class id
@@ -266,7 +266,7 @@ egMerge i j = egMergeMany (ILS.fromList [i, j])
 
 egMergeMany :: IntLikeSet EClassId -> State (EGraph d f) (Maybe Changed)
 egMergeMany cs = do
-  -- traceM(unwords ["MERGE", "cs=", show cs])
+  -- traceM (unwords ["MERGE", "cs=", show cs])
   mayRoots <- fmap (\ef -> traverse (`efFind` ef) (ILS.toList cs)) (gets egEquivFind)
   case mayRoots of
     Nothing -> pure Nothing
@@ -338,7 +338,7 @@ egRebuildAssoc origHc classRemap touchedClasses = do
   cm <- gets egClassMap
   -- For each class that we're going to merge
   stateFold (ILS.empty, ILM.empty, Empty) (ILS.toList touchedClasses) $ \(ps, m, parentWl) c -> do
-    -- traceM(unwords ["REBUILD ASSOC CLASS", "c=", show c])
+    -- traceM (unwords ["REBUILD ASSOC CLASS", "c=", show c])
     -- Get the class info
     let eci = ILM.partialLookup c cm
     -- For each node in the class
@@ -359,7 +359,7 @@ egRebuildAssoc origHc classRemap touchedClasses = do
     let emitParents = finalChanged || ILM.member c classRemap
         addlParents = ILS.map (`ILM.partialLookup` origHc) (eciParents eci)
         ps' = if emitParents then addlParents <> ps else ps
-    -- traceM(unwords ["REBUILD ASSOC CLASS END", "c=", show c, "emitParents=", show emitParents, "addlParents=", show addlParents])
+    -- traceM (unwords ["REBUILD ASSOC CLASS END", "c=", show c, "emitParents=", show emitParents, "addlParents=", show addlParents])
     pure (ps', finalM, finalParentWl)
 
 -- private
@@ -383,23 +383,23 @@ egRebuildCanonWl nodeMultiMap = goRoot where
 -- private
 egRebuildNodeRound :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => IntLikeMap ENodeId EClassId -> WorkList -> IntLikeSet EClassId -> State (EGraph d f) (IntLikeSet EClassId, WorkList, IntLikeSet EClassId)
 egRebuildNodeRound origHc wl parents = do
-  -- traceM(unwords ["#########################\n", "START ROUND", "wl=", show wl, "parents=", show parents])
+  -- traceM (unwords ["#########################\n", "START ROUND", "wl=", show wl, "parents=", show parents])
   -- First merge all classes together and get merged class sets
   (classRemap, classClosure) <- egRebuildMerge wl
-  -- traceM(unwords ["POST MERGE", "classRemap=", show classRemap, "classClosure=", show classClosure])
+  -- traceM (unwords ["POST MERGE", "classRemap=", show classRemap, "classClosure=", show classClosure])
   ef <- gets egEquivFind
-  -- traceM(unwords ["POST EF", "ef=", show ef])
+  -- traceM (unwords ["POST EF", "ef=", show ef])
   -- Now update the hashcons so node ids point to merged classes
   egRebuildHashCons classRemap
   -- hc <- gets egHashCons
-  -- -- traceM(unwords ["POST HASHCONS", "hc=", show hc])
+  -- -- traceM (unwords ["POST HASHCONS", "hc=", show hc])
   -- Track all classes touched here
   let touchedClasses = parents <> classClosure
   -- Traverse all classes and canonicalize their nodes,
   -- recording the mapping from old -> new
   -- Also track all possible parent classes
   (candParents, nodeMap, parentWl) <- egRebuildAssoc origHc classRemap touchedClasses
-  -- traceM(unwords ["POST ASSOC", "candParents=", show candParents, "nodeMap=", show nodeMap, "parentWl=", show parentWl])
+  -- traceM (unwords ["POST ASSOC", "candParents=", show candParents, "nodeMap=", show nodeMap, "parentWl=", show parentWl])
   -- Invert the node map to find new equivalences
   -- This produces a multimap of new -> set of old
   let nodeMultiMap = ILMM.fromInvertedMap nodeMap
@@ -412,7 +412,7 @@ egRebuildNodeRound origHc wl parents = do
   -- I think we need to keep the original HC around just to look up node parents.
   -- Otherwise we need closure of merged classes to get the original classes back.
   let finalParents = ILS.deleteAll touchedClasses candParents
-  -- traceM(unwords ["END ROUND", "nodeMap=", show nodeMap, "canonWl=", show canonWl, "finalParents=", show finalParents])
+  -- traceM (unwords ["END ROUND", "nodeMap=", show nodeMap, "canonWl=", show canonWl, "finalParents=", show finalParents])
   pure (touchedClasses, finalWl, finalParents)
 
 egRebuildClassSingle :: EAnalysis d f q => q -> EClassId -> IntLikeSet EClassId -> IntLikeMap EClassId (EClassInfo d) -> IntLikeMap EClassId (EClassInfo d)

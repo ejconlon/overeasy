@@ -17,6 +17,7 @@ import Data.List (delete)
 import Data.Maybe (fromJust, isJust)
 import Data.Semigroup (Max (..))
 import qualified Data.Sequence as Seq
+import Data.Traversable (for)
 import Hedgehog (Gen, Range, forAll, property)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
@@ -24,8 +25,8 @@ import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocCanCompact, assocCompact,
                        assocFromPairs, assocFwd, assocNew, assocSize, assocSrc, assocUpdate)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
-                        ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egNeedsRebuild,
-                        egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList, egMergeMany)
+                        ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egMergeMany,
+                        egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efFind, efMerge, efMergeSets, efNew, efRoots, efSize, efTotalSize)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
@@ -42,7 +43,6 @@ import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase)
 import Test.Tasty.Hedgehog (testProperty)
-import Data.Traversable (for)
 -- import Text.Pretty.Simple (pPrint)
 
 applyS :: Monad m => State s a -> StateT s m a
@@ -549,16 +549,44 @@ allEgCases =
       leafB = BinTreeLeaf (toV 'b')
       leafC = BinTreeLeaf (toV 'c')
       leafD = BinTreeLeaf (toV 'd')
-      leaves = [leafA, leafB, leafC, leafD]
+      leafTerms = [leafA, leafB, leafC, leafD]
+      parentAC = BinTreeBranch leafA leafC
+      parentAD = BinTreeBranch leafA leafD
+      parentBD = BinTreeBranch leafB leafD
+      simpleParentTerms = [parentAC, parentAD]
+      complexParentTerms = [parentAC, parentBD]
+      grandparentAC = BinTreeBranch leafA parentAC
+      grandparentAD = BinTreeBranch leafA parentAD
+      simpleGrandparentTerms = [grandparentAC, grandparentAD]
   in [ EgCase "simple"
-        [ EgRound leaves [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafB, leafC)]
+        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC)]
+        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafB, leafC)]
         ]
      , EgCase "transitive one round"
-        [ EgRound leaves [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
+        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+        , EgRound [] [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
         ]
      , EgCase "transitive two round"
-        [ EgRound leaves [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
+        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
         , EgRound [] [[leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
+        ]
+     , EgCase "simple parents"
+        [ EgRound simpleParentTerms [] [] [(leafC, leafD), (parentAC, parentAD)]
+        , EgRound [] [[leafC, leafD]] [[parentAC, parentAD]] []
+        ]
+     , EgCase "complex parents one round"
+        [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
+        , EgRound [] [[leafA, leafB], [leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
+        ]
+     , EgCase "complex parents two round"
+        [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
+        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafC, leafD), (parentAC, parentBD)]
+        , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
+        ]
+     , EgCase "simple grandparents"
+        [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (grandparentAC, grandparentAD)]
+        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD]] []
         ]
      ]
 
