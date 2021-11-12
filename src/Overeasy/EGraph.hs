@@ -47,10 +47,10 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Semigroup (sconcat)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
-import Debug.Trace (traceM)
+-- import Debug.Trace (traceM)
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
-import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocEnsure, assocLookupByValue, assocNew,
+import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocDeadFwd, assocEnsure, assocLookupByValue, assocNew,
                        assocPartialLookupByKey, assocUpdateInc)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EquivFind (EquivFind, EquivMergeSetsRes (..), efAdd, efBwd, efClosure, efFind, efFwd, efMergeSetsInc,
@@ -318,7 +318,7 @@ egRebuildMerge wl = finalRes where
       EquivMergeSetsResChanged roots classRemapSet ef' ->
         let bwd = efBwd ef'
             classRemap = ILM.fromList (fmap (\c -> (c, ILM.partialLookup c bwd)) (ILS.toList classRemapSet))
-            closure = ILS.deleteAll dc (efClosure (ILS.toList roots) ef')
+            closure = ILS.difference (efClosure (ILS.toList roots) ef') dc
         in ((classRemap, closure), eg { egEquivFind = ef' })
       _ -> ((ILM.empty, ILS.empty), eg)
 
@@ -411,7 +411,7 @@ egRebuildNodeRound origHc wl parents = do
   -- TODO figure out why we need the closure here... this is a straight up HACK
   -- I think we need to keep the original HC around just to look up node parents.
   -- Otherwise we need closure of merged classes to get the original classes back.
-  let finalParents = ILS.deleteAll touchedClasses candParents
+  let finalParents = ILS.difference candParents touchedClasses
   -- traceM (unwords ["END ROUND", "nodeMap=", show nodeMap, "canonWl=", show canonWl, "finalParents=", show finalParents])
   pure (touchedClasses, finalWl, finalParents)
 
@@ -437,7 +437,7 @@ egRebuildClassMap q touchedClasses = state $ \eg ->
       fwd = efFwd ef
       bwd = efBwd ef
       roots = ILS.map (`ILM.partialLookup` bwd) touchedClasses
-      rootMap = ILM.fromList (fmap (\r -> (r, ILS.filter (/= r) (ILS.deleteAll dc (ILM.partialLookup r fwd)))) (ILS.toList roots))
+      rootMap = ILM.fromList (fmap (\r -> (r, ILS.filter (/= r) (ILS.difference (ILM.partialLookup r fwd) dc))) (ILS.toList roots))
       cm' = foldl' (\cm (r, vs) -> egRebuildClassSingle q r vs cm) (egClassMap eg) (ILM.toList rootMap)
       dc' = foldr (<>) (egDeadClasses eg) (ILM.elems rootMap)
   in (rootMap, eg { egClassMap = cm', egDeadClasses = dc' })
@@ -463,18 +463,19 @@ egRebuild q = goRec where
         goNodeRounds origHc mergedTc newWl newParents
 
 egCanCompact :: EGraph d f -> Bool
-egCanCompact = assocCanCompact . egNodeAssoc
+egCanCompact eg = assocCanCompact (egNodeAssoc eg) || not (ILS.null (egDeadClasses eg))
 
 egCompactInc :: (Eq (f EClassId), Hashable (f EClassId)) => EGraph d f -> EGraph d f
 egCompactInc eg =
   let assoc = egNodeAssoc eg
-  in if assocCanCompact assoc
-    then
-      -- TODO take assocDeadFwd as non-canonical nodes
-      -- remove them from classmap nodes, hashcons, and unionfind
-      let assoc' = assocCompactInc assoc
-      in eg { egNodeAssoc = assoc'}
-    else eg
+      deadClasses = egDeadClasses eg
+      deadNodes = assocDeadFwd assoc
+      assoc' = assocCompactInc assoc
+    -- TODO drop self-parents from classes
+    -- TODO remove dead classes from classmap, unionfind
+    -- TODO remove dead nodes from classmap, hashcons
+    -- TODO stifle classmap deletions from rebuild
+  in eg { egNodeAssoc = assoc' }
 
 egCompact :: (Eq (f EClassId), Hashable (f EClassId)) => State (EGraph d f) ()
 egCompact = modify' egCompactInc

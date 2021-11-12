@@ -45,7 +45,7 @@ infix 1 @?, @?=, @/=
 (@/=) = assertNotEqual
 
 instance Monad m => MonadAssert (PropertyT m) where
-  assertTrue x p = HG.footnote p *> HG.assert x
+  assertTrue x _ = HG.assert x
   assertEqual = (HG.===)
   assertNotEqual = (HG./==)
 
