@@ -532,9 +532,13 @@ propEgInvariants eg = do
 genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
 genNodePairs nOpsRange eg = genListOfDistinctPairs nOpsRange (ILM.keys (egClassMap eg))
 
+genSomeList :: [a] -> Gen [a]
+genSomeList xs = go where
+  go = Gen.recursive Gen.choice [Gen.constant [], fmap pure (Gen.element xs)] [Gen.subterm2 go go (++)]
+
 testEgProp :: TestTree
 testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
-  let maxElems = 5
+  let maxElems = 10
       eg0 = force egNew :: EGV
   in property $ do
     -- liftIO (putStrLn "===== eg0 =====")
@@ -567,17 +571,33 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     -- -- Case 5:
     -- let members = [BinTreeLeaf (toV 'a') , BinTreeLeaf (toV 'b') , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'c'))]
     -- let pairs = [(EClassId 0, EClassId 2)]
+    -- Case 6:
+    let leafA = BinTreeLeaf (toV 'a')
+        leafB = BinTreeLeaf (toV 'b')
+        members =
+          [ BinTreeBranch
+              (BinTreeBranch leafA leafA)
+              leafB
+          , BinTreeBranch
+              (BinTreeBranch leafA leafB)
+              leafA
+          , BinTreeBranch
+              (BinTreeBranch leafB leafA)
+              leafA
+          ]
+        pairs = [(EClassId 7, EClassId 2), (EClassId 0, EClassId 6)]
     -- XXX add forAlls back
-    members <- forAll (genBinTreeMembers maxElems)
+    -- members <- forAll (genBinTreeMembers maxElems)
     -- let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
     -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
     -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b'))]
     -- let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'c'))]
     -- let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
-    -- let zerolevel = fmap (BinTreeLeaf . toV) "a"
+    -- let zerolevel = fmap (BinTreeLeaf . toV) "ab"
     --     onelevel = BinTreeBranch <$> zerolevel <*> zerolevel
     --     twolevel = (BinTreeBranch <$> onelevel <*> zerolevel) ++ (BinTreeBranch <$> zerolevel <*> onelevel) ++ (BinTreeBranch <$> onelevel <*> onelevel)
     --     anylevel = zerolevel ++ onelevel ++ twolevel
+    -- members <- forAll (genSomeList anylevel)
     -- members <- forAll (Gen.subsequence anylevel)
     let nMembers = length members
         nOpsRange = Range.linear 0 (nMembers * nMembers)
@@ -588,7 +608,7 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     assert (egNodeSize eg1 >= 0)
     egClassSize eg1 === egNodeSize eg1
     execState (egRebuild maxVAnalysis) eg1 === eg1
-    pairs <- forAll (genNodePairs nOpsRange eg1)
+    -- pairs <- forAll (genNodePairs nOpsRange eg1)
     -- let pairs = [(EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 0, EClassId 2), (EClassId 0, EClassId 1)]
@@ -630,9 +650,9 @@ main = do
   defaultMain $ testGroup "Overeasy"
     [ testILM
     , testUfUnit
-    , testEgUnit
+    -- , testEgUnit
     , testAssocCases
     , testAssocUnit
-    , testUfProp
-    -- , testEgProp
+    -- , testUfProp
+    , testEgProp
     ]
