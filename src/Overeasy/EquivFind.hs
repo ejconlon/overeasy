@@ -23,9 +23,6 @@ module Overeasy.EquivFind
   , EquivMergeRes (..)
   , efMergeInc
   , efMerge
-  , EquivMergeManyRes (..)
-  , efMergeManyInc
-  , efMergeMany
   , EquivMergeSetsRes (..)
   , efMergeSetsInc
   , efMergeSets
@@ -148,31 +145,6 @@ data EquivMergeManyRes x =
   | EquivMergeManyResEmbed !(EquivMergeRes x)
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
-
-efMergeManyInc :: Coercible x Int => IntLikeSet x -> EquivFind x -> EquivMergeManyRes x
-efMergeManyInc cs u@(EquivFind fwd bwd) =
-  case ILS.toList cs of
-    [] -> EquivMergeManyResEmpty
-    [h] -> EquivMergeManyResEmbed (EquivMergeResUnchanged h)
-    hs ->
-      case efFindAll hs u of
-        Left x -> EquivMergeManyResEmbed (EquivMergeResMissing x)
-        Right xs ->
-          let (loKey, ys) = fromJust (ILS.minView xs)
-          in if ILS.null ys && ILS.member loKey cs
-            then EquivMergeManyResEmbed (EquivMergeResUnchanged loKey)
-            else
-              let hiSet = foldr (\k s -> ILM.partialLookup k fwd <> s) ILS.empty (ILS.toList ys)
-                  finalFwd = ILM.adjust (hiSet <>) loKey (foldr ILM.delete fwd (ILS.toList ys))
-                  finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList hiSet)
-                  finalU = EquivFind finalFwd finalBwd
-              in EquivMergeManyResEmbed (EquivMergeResChanged loKey hiSet finalU)
-
-efMergeMany :: Coercible x Int => IntLikeSet x -> State (EquivFind x) (Maybe (x, IntLikeSet x))
-efMergeMany cs = state $ \ef ->
-  case efMergeManyInc cs ef of
-    EquivMergeManyResEmbed (EquivMergeResChanged loKey hiSet ef') -> (Just (loKey, hiSet), ef')
-    _ -> (Nothing, ef)
 
 data EquivMergeSetsRes x =
     EquivMergeSetsResEmptySet

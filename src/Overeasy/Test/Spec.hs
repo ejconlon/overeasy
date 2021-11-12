@@ -26,8 +26,7 @@ import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egNeedsRebuild,
                         egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
-import Overeasy.EquivFind (EquivFind (..), efAdd, efFind, efMerge, efMergeMany, efMergeSets, efNew, efRoots, efSize,
-                           efTotalSize)
+import Overeasy.EquivFind (EquivFind (..), efAdd, efFind, efMerge, efMergeSets, efNew, efRoots, efSize, efTotalSize)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -140,14 +139,14 @@ testUfMany = testCase "UF many" $ runUF $ do
   applyS (efAdd (toV 'c'))
   applyS (efAdd (toV 'd'))
   applyS (efAdd (toV 'e'))
-  applyTestS (efMergeMany (setV "cde")) $ \res ef -> do
-    res @?= Just (toV 'c', setV "de")
+  applyTestS (efMergeSets [setV "cde"]) $ \res ef -> do
+    res @?= Just (setV "c", setV "de")
     efSize ef @?= 3
     efTotalSize ef @?= 5
     ILS.fromList (efRoots ef) @?= setV "abc"
     efFwd ef @?= ILM.fromList [(toV 'a', setV "a"), (toV 'b', setV "b"), (toV 'c', setV "cde")]
-  applyTestS (efMergeMany (setV "abd")) $ \res ef -> do
-    res @?= Just (toV 'a', setV "bcde")
+  applyTestS (efMergeSets [setV "abd"]) $ \res ef -> do
+    res @?= Just (setV "a", setV "bcde")
     efSize ef @?= 1
     efTotalSize ef @?= 5
     ILS.fromList (efRoots ef) @?= setV "a"
@@ -204,7 +203,7 @@ mkPairsMergedUf :: [(V, V)] -> UF -> UF
 mkPairsMergedUf vvs = execState (for_ vvs (uncurry efMerge))
 
 mkSetsMergedUf :: [(V, V)] -> UF -> UF
-mkSetsMergedUf vvs = execState (for_ (fmap (\(x, y) -> ILS.fromList [x, y]) vvs) efMergeMany)
+mkSetsMergedUf vvs = execState (for_ (fmap (\(x, y) -> [ILS.fromList [x, y]]) vvs) efMergeSets)
 
 mkSingleMergedUf :: [(V, V)] -> UF -> UF
 mkSingleMergedUf vvs = execState (efMergeSets (fmap (\(x, y) -> ILS.fromList [x, y]) vvs))
@@ -631,7 +630,7 @@ main = do
   defaultMain $ testGroup "Overeasy"
     [ testILM
     , testUfUnit
-    -- , testEgUnit
+    , testEgUnit
     , testAssocCases
     , testAssocUnit
     , testUfProp

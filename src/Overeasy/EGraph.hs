@@ -38,7 +38,7 @@ module Overeasy.EGraph
 
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (State, get, gets, modify', state)
-import Data.Foldable (foldl', for_)
+import Data.Foldable (foldl', for_, toList)
 import Data.Functor.Foldable (project)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
@@ -52,8 +52,8 @@ import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocEnsure, assocLookupByValue, assocNew,
                        assocPartialLookupByKey, assocUpdateInc)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EquivFind (EquivFind, EquivMergeManyRes (..), EquivMergeRes (..), efAdd, efBwd, efClosure, efFind,
-                           efFwd, efMergeManyInc, efNew, efPartialFind, efRoots, efSize, efTotalSize)
+import Overeasy.EquivFind (EquivFind, EquivMergeSetsRes (..), efAdd, efBwd, efClosure, efFind, efFwd, efMergeSetsInc,
+                           efNew, efPartialFind, efRoots, efSize, efTotalSize)
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
@@ -199,7 +199,7 @@ instance Monoid (AddNodeRes d) where
   mappend = (<>)
 
 -- private
-egAddNodeSub :: (Show d, Show (f EClassId), EAnalysis d f q, Functor f, Eq (f EClassId), Hashable (f EClassId)) => q -> f (ENodeTriple d) -> State (EGraph d f) (Changed, ENodeTriple d)
+egAddNodeSub :: (Show (f EClassId), EAnalysis d f q, Functor f, Eq (f EClassId), Hashable (f EClassId)) => q -> f (ENodeTriple d) -> State (EGraph d f) (Changed, ENodeTriple d)
 egAddNodeSub q fcd = do
   let fc = fmap entClass fcd
   -- important: node should already be canonicalized!
@@ -231,7 +231,7 @@ egAddNodeSub q fcd = do
 
 -- private
 -- Similar in structure to foldWholeTrackM
-egAddTermSub :: (Show d, Show (f EClassId), EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (AddNodeRes d, ENodeTriple d)
+egAddTermSub :: (Show (f EClassId), EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (AddNodeRes d, ENodeTriple d)
 egAddTermSub q = go where
   go t = do
     -- unwrap to work with the functor layer
@@ -242,7 +242,7 @@ egAddTermSub q = go where
     let (AddNodeRes changed1 children, fx) = sequenceA frx
     -- now fx should be canonicalized by construction
     -- add the node to get its node and class ids
-    (changed2, z@(ENodeTriple n x _)) <- egAddNodeSub q fx
+    (changed2, z@(ENodeTriple n _ _)) <- egAddNodeSub q fx
     -- now update all its children to add this as a parent
     for_ children $ \(ENodeTriple _ c _) ->
       stateLens egClassMapL (modify' (ILM.adjust (\v -> v { eciParents = ILS.insert n (eciParents v) }) c))
@@ -250,7 +250,7 @@ egAddTermSub q = go where
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
 -- returns 'ChangedYes' and a new class id.
-egAddTerm :: (Show d, Show (f EClassId), EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (Changed, EClassId)
+egAddTerm :: (Show (f EClassId), EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (Changed, EClassId)
 egAddTerm q t = fmap (\(AddNodeRes c _, ENodeTriple _ x _) -> (c, x)) (egAddTermSub q t)
 
 -- | Merges two classes:
@@ -310,13 +310,13 @@ egRebuildMerge :: WorkList -> State (EGraph d f) (IntLikeMap EClassId EClassId, 
 egRebuildMerge wl = finalRes where
   finalRes = state $ \eg ->
     let ef = egEquivFind eg
-        (remap, roots, ef') = foldl' goMerge (ILM.empty, ILS.empty, ef) wl
-        closure = efClosure (ILS.toList roots) ef'
-    in ((remap, closure), eg { egEquivFind = ef' })
-  goMerge trip@(remap, roots, ef) item =
-    case efMergeManyInc item ef of
-      EquivMergeManyResEmbed (EquivMergeResChanged root changed ef') -> (foldr (`ILM.insert` root) remap (ILS.toList changed), ILS.insert root roots, ef')
-      _ -> trip
+    in case efMergeSetsInc (toList wl) ef of
+      EquivMergeSetsResChanged roots classRemapSet ef' ->
+        let bwd = efBwd ef'
+            classRemap = ILM.fromList (fmap (\c -> (c, ILM.partialLookup c bwd)) (ILS.toList classRemapSet))
+            closure = efClosure (ILS.toList roots) ef'
+        in ((classRemap, closure), eg { egEquivFind = ef' })
+      _ -> ((ILM.empty, ILS.empty), eg)
 
 -- private
 -- Loop through nodes of all changed classes and update the hashcons to point to new classes
