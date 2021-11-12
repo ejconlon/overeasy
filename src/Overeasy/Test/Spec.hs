@@ -524,9 +524,13 @@ propEgInvariants eg = do
     unless (HashSet.member fc deadBwd) $
       let recanon = evalState (egCanonicalize fc) eg
       in do
-        liftIO (pPrint n)
-        liftIO (pPrint fc)
-        liftIO (pPrint recanon)
+        -- liftIO (putStrLn "~~~~~~~~~~~~~~~~~~~")
+        -- liftIO (putStrLn "----- node id -----")
+        -- liftIO (pPrint n)
+        -- liftIO (putStrLn "----- fc (expected) -----")
+        -- liftIO (pPrint (Just fc))
+        -- liftIO (putStrLn "----- recanon (actual) -----")
+        -- liftIO (pPrint recanon)
         recanon === Just fc
 
 genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
@@ -538,7 +542,7 @@ genSomeList xs = go where
 
 testEgProp :: TestTree
 testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
-  let maxElems = 10
+  let maxElems = 50
       eg0 = force egNew :: EGV
   in property $ do
     -- liftIO (putStrLn "===== eg0 =====")
@@ -571,23 +575,23 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     -- -- Case 5:
     -- let members = [BinTreeLeaf (toV 'a') , BinTreeLeaf (toV 'b') , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'c'))]
     -- let pairs = [(EClassId 0, EClassId 2)]
-    -- Case 6:
-    let leafA = BinTreeLeaf (toV 'a')
-        leafB = BinTreeLeaf (toV 'b')
-        members =
-          [ BinTreeBranch
-              (BinTreeBranch leafA leafA)
-              leafB
-          , BinTreeBranch
-              (BinTreeBranch leafA leafB)
-              leafA
-          , BinTreeBranch
-              (BinTreeBranch leafB leafA)
-              leafA
-          ]
-        pairs = [(EClassId 7, EClassId 2), (EClassId 0, EClassId 6)]
+    -- -- Case 6:
+    -- let leafA = BinTreeLeaf (toV 'a')
+    --     leafB = BinTreeLeaf (toV 'b')
+    --     members =
+    --       [ BinTreeBranch
+    --           (BinTreeBranch leafA leafA)
+    --           leafB
+    --       , BinTreeBranch
+    --           (BinTreeBranch leafA leafB)
+    --           leafA
+    --       , BinTreeBranch
+    --           (BinTreeBranch leafB leafA)
+    --           leafA
+    --       ]
+    --     pairs = [(EClassId 7, EClassId 2), (EClassId 0, EClassId 6)]
     -- XXX add forAlls back
-    -- members <- forAll (genBinTreeMembers maxElems)
+    members <- forAll (genBinTreeMembers maxElems)
     -- let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
     -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
     -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b'))]
@@ -608,25 +612,25 @@ testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
     assert (egNodeSize eg1 >= 0)
     egClassSize eg1 === egNodeSize eg1
     execState (egRebuild maxVAnalysis) eg1 === eg1
-    -- pairs <- forAll (genNodePairs nOpsRange eg1)
+    pairs <- forAll (genNodePairs nOpsRange eg1)
     -- let pairs = [(EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 0, EClassId 2), (EClassId 0, EClassId 1)]
     -- let pairs = [(EClassId 0, EClassId 1), (EClassId 0, EClassId 2)]
     -- let pairs = [(EClassId 0, EClassId 1), (EClassId 0, EClassId 3)]
     -- let pairs = [(EClassId 0, EClassId 3), (EClassId 0, EClassId 1)]
-    liftIO (putStrLn "===== members =====")
-    liftIO (pPrint members)
-    liftIO (putStrLn "===== pairs =====")
-    liftIO (pPrint pairs)
+    -- liftIO (putStrLn "===== members =====")
+    -- liftIO (pPrint members)
+    -- liftIO (putStrLn "===== pairs =====")
+    -- liftIO (pPrint pairs)
     let eg2 = force (execState (for_ pairs (uncurry egMerge)) eg1)
-    liftIO (putStrLn "===== eg2 =====")
-    liftIO (pPrint eg2)
+    -- liftIO (putStrLn "===== eg2 =====")
+    -- liftIO (pPrint eg2)
     egNodeSize eg2 === egNodeSize eg1
     egNeedsRebuild eg2 === not (null pairs)
     let eg3 = force (execState (egRebuild maxVAnalysis) eg2)
-    liftIO (putStrLn "===== eg3 =====")
-    liftIO (pPrint eg3)
+    -- liftIO (putStrLn "===== eg3 =====")
+    -- liftIO (pPrint eg3)
     egNodeSize eg3 === egNodeSize eg2
     propEgInvariants eg3
 
@@ -650,9 +654,9 @@ main = do
   defaultMain $ testGroup "Overeasy"
     [ testILM
     , testUfUnit
-    -- , testEgUnit
+    , testEgUnit
     , testAssocCases
     , testAssocUnit
-    -- , testUfProp
+    , testUfProp
     , testEgProp
     ]
