@@ -26,8 +26,8 @@ import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egNeedsRebuild,
                         egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
-import Overeasy.EquivFind (EquivFind (..), EquivMergeRes (..), efAdd, efElems, efFind, efMerge, efMergeMany, efNew,
-                           efRoots, efSize, efTotalSize)
+import Overeasy.EquivFind (EquivFind (..), EquivMergeManyRes (EquivMergeManyResEmbed), EquivMergeRes (..), efAdd,
+                           efElems, efFind, efMerge, efMergeMany, efNew, efRoots, efSize, efTotalSize)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -120,16 +120,41 @@ testUfRec = testCase "UF rec" $ runUF $ do
   applyS (efAdd (toV 'a'))
   applyS (efAdd (toV 'b'))
   applyS (efAdd (toV 'c'))
-  applyS_ (efMerge (toV 'b') (toV 'c'))
-  applyS_ (efMerge (toV 'a') (toV 'c'))
-  testS $ \ef -> do
+  applyTestS (efMerge (toV 'b') (toV 'c')) $ \res ef -> do
+    res @?= EquivMergeResChanged (toV 'b') (setV "c")
+    efSize ef @?= 2
+    efTotalSize ef @?= 3
+    ILS.fromList (efRoots ef) @?= setV "ab"
+    efFwd ef @?= ILM.fromList [(toV 'a', setV "a"), (toV 'b', setV "bc")]
+  applyTestS (efMerge (toV 'a') (toV 'c')) $ \res ef -> do
+    res @?= EquivMergeResChanged (toV 'a') (setV "bc")
     efSize ef @?= 1
     efTotalSize ef @?= 3
     ILS.fromList (efRoots ef) @?= setV "a"
     efFwd ef @?= ILM.fromList [(toV 'a', setV "abc")]
 
+testUfMany :: TestTree
+testUfMany = testCase "UF many" $ runUF $ do
+  applyS (efAdd (toV 'a'))
+  applyS (efAdd (toV 'b'))
+  applyS (efAdd (toV 'c'))
+  applyS (efAdd (toV 'd'))
+  applyS (efAdd (toV 'e'))
+  applyTestS (efMergeMany (setV "cde")) $ \res ef -> do
+    res @?= EquivMergeManyResEmbed (EquivMergeResChanged (toV 'c') (setV "de"))
+    efSize ef @?= 3
+    efTotalSize ef @?= 5
+    ILS.fromList (efRoots ef) @?= setV "abc"
+    efFwd ef @?= ILM.fromList [(toV 'a', setV "a"), (toV 'b', setV "b"), (toV 'c', setV "cde")]
+  applyTestS (efMergeMany (setV "abd")) $ \res ef -> do
+    res @?= EquivMergeManyResEmbed (EquivMergeResChanged (toV 'a') (setV "bcde"))
+    efSize ef @?= 1
+    efTotalSize ef @?= 5
+    ILS.fromList (efRoots ef) @?= setV "a"
+    efFwd ef @?= ILM.fromList [(toV 'a', setV "abcde")]
+
 testUfUnit :: TestTree
-testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec]
+testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec, testUfMany]
 
 genDistinctPairFromList :: Eq a => [a] -> Gen (a, a)
 genDistinctPairFromList = \case

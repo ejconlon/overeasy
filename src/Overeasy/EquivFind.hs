@@ -31,6 +31,7 @@ module Overeasy.EquivFind
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (State, modify', state)
 import Data.Coerce (Coercible)
+import Data.Foldable (foldl')
 import Data.Maybe (fromJust)
 import GHC.Generics (Generic)
 import Overeasy.IntLike.Map (IntLikeMap)
@@ -39,7 +40,6 @@ import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
 import qualified Overeasy.IntLike.MultiMap as ILMM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
-import Data.Foldable (foldl')
 
 -- private ctor
 data EquivFind x = EquivFind

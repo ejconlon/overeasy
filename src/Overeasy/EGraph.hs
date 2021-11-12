@@ -38,7 +38,7 @@ module Overeasy.EGraph
 
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (State, get, gets, modify', state)
-import Data.Foldable (for_, foldl')
+import Data.Foldable (foldl', for_)
 import Data.Functor.Foldable (project)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
