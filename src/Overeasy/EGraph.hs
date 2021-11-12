@@ -46,7 +46,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Semigroup (sconcat)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
-import Debug.Trace (traceM)
+-- import Debug.Trace (traceM)
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocEnsure, assocLookupByValue, assocNew,
@@ -199,7 +199,7 @@ instance Monoid (AddNodeRes d) where
   mappend = (<>)
 
 -- private
-egAddNodeSub :: (Show (f EClassId), EAnalysis d f q, Functor f, Eq (f EClassId), Hashable (f EClassId)) => q -> f (ENodeTriple d) -> State (EGraph d f) (Changed, ENodeTriple d)
+egAddNodeSub :: ({-Show (f EClassId),-} EAnalysis d f q, Functor f, Eq (f EClassId), Hashable (f EClassId)) => q -> f (ENodeTriple d) -> State (EGraph d f) (Changed, ENodeTriple d)
 egAddNodeSub q fcd = do
   let fc = fmap entClass fcd
   -- important: node should already be canonicalized!
@@ -231,7 +231,7 @@ egAddNodeSub q fcd = do
 
 -- private
 -- Similar in structure to foldWholeTrackM
-egAddTermSub :: (Show (f EClassId), EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (AddNodeRes d, ENodeTriple d)
+egAddTermSub :: ({-Show (f EClassId),-} EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (AddNodeRes d, ENodeTriple d)
 egAddTermSub q = go where
   go t = do
     -- unwrap to work with the functor layer
@@ -250,7 +250,7 @@ egAddTermSub q = go where
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
 -- returns 'ChangedYes' and a new class id.
-egAddTerm :: (Show (f EClassId), EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (Changed, EClassId)
+egAddTerm :: ({-Show (f EClassId),-} EAnalysis d f q, RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> t -> State (EGraph d f) (Changed, EClassId)
 egAddTerm q t = fmap (\(AddNodeRes c _, ENodeTriple _ x _) -> (c, x)) (egAddTermSub q t)
 
 -- | Merges two classes:
@@ -386,11 +386,10 @@ egRebuildNodeRound wl parents = do
   -- traceM (unwords ["POST EF", "ef=", show ef])
   -- Now update the hashcons so node ids point to merged classes
   egRebuildHashCons classRemap
-  hc <- gets egHashCons
+  -- hc <- gets egHashCons
   -- traceM (unwords ["POST HASHCONS", "hc=", show hc])
   -- Track all classes touched here
-  -- TODO take closure here or below?
-  let touchedClasses = efClosure (ILS.toList parents) ef <> classClosure
+  let touchedClasses = parents <> classClosure
   -- Traverse all classes and canonicalize their nodes,
   -- recording the mapping from old -> new
   -- Also track all possible parent classes
@@ -404,7 +403,8 @@ egRebuildNodeRound wl parents = do
   -- Track next worklist
   let finalWl = parentWl <> canonWl
   -- Track parent classes for next round
-  let finalParents = ILS.filter (not . (`ILS.member` touchedClasses)) candParents
+  -- TODO figure out why we need the closure here... this is a straight up HACK
+  let finalParents = efClosure (filter (not . (`ILS.member` touchedClasses)) (ILS.toList candParents)) ef
   -- traceM (unwords ["END ROUND", "nodeMap=", show nodeMap, "canonWl=", show canonWl, "finalParents=", show finalParents])
   pure (touchedClasses, finalWl, finalParents)
 
