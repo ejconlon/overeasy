@@ -531,32 +531,74 @@ assertEgInvariants eg = do
         -- liftIO (pPrint recanon)
         recanon @?= Just fc
 
-data EgCase = EgCase !String ![EGT] ![[EGT]] ![[EGT]]
+data EgRound = EgRound
+  { egRoundTerms :: ![EGT]
+  , egRoundSets :: ![[EGT]]
+  , egRoundEqTests :: ![[EGT]]
+  , egRoundNeqTests :: ![(EGT, EGT)]
+  } deriving stock (Eq, Show)
+
+data EgCase = EgCase
+  { egCaseName :: !String
+  , egCaseRounds :: ![EgRound]
+  } deriving stock (Eq, Show)
 
 allEgCases :: [EgCase]
 allEgCases =
   let leafA = BinTreeLeaf (toV 'a')
       leafB = BinTreeLeaf (toV 'b')
-  in [ EgCase "simple" [leafA, leafB] [[leafA, leafB]] [[leafA, leafB]]
+      leafC = BinTreeLeaf (toV 'c')
+      leafD = BinTreeLeaf (toV 'd')
+      leaves = [leafA, leafB, leafC, leafD]
+  in [ EgCase "simple"
+        [ EgRound leaves [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafB, leafC)]
+        ]
+     , EgCase "transitive one round"
+        [ EgRound leaves [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
+        ]
+    -- TODO fix this!
+    --  , EgCase "transitive two round"
+    --     [ EgRound leaves [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
+    --     , EgRound [] [[leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
+    --     ]
      ]
 
 testEgCase :: EgCase -> TestTree
-testEgCase (EgCase name start act end) = kase where
-  findTerm t = fmap (fromJust . egFindTerm t) get
+testEgCase (EgCase name rounds) = kase where
+  findMayTerm t = fmap (egFindTerm t) get
+  findTerm t = fmap fromJust (findMayTerm t)
   findTerms ts = fmap ILS.fromList (for ts findTerm)
+  assertTermFound t = findMayTerm t >>= \mi -> isJust mi @? "term not found: " ++ show t
+  assertTermsFound ts = for_ ts assertTermFound
   kase = testCase name $ runUnit $ runS egNew $ do
-    applyS (for_ start (egAddTerm maxVAnalysis))
-    testS $ \eg -> do
-      assertEgInvariants eg
-      -- TODO assert that all mentioned terms are in the egraph
-    applyS $ do
-      sets <- for act findTerms
-      for_ sets egMergeMany
-      void (egRebuild maxVAnalysis)
-    testS assertEgInvariants
-    for_ end $ \ts -> do
-      set <- applyS (findTerms ts)
-      ILS.size set @?= 1
+    for_ rounds $ \(EgRound start act endEq endNeq) -> do
+      -- add initial terms and assert invariants hold
+      applyS (for_ start (egAddTerm maxVAnalysis))
+      testS assertEgInvariants
+      -- assert that all mentioned terms are in the egraph
+      assertTermsFound start
+      for_ act assertTermsFound
+      for_ endEq assertTermsFound
+      for_ endNeq $ \(x, y) -> do
+        -- also assert that neq terms are not themselves equal
+        x @/= y
+        assertTermFound x
+        assertTermFound y
+      -- merge sets of terms, rebuild, and assert invariants hold
+      applyS $ do
+        sets <- for act findTerms
+        for_ sets egMergeMany
+        void (egRebuild maxVAnalysis)
+      testS assertEgInvariants
+      -- find final eq terms and assert they are in same classes
+      for_ endEq $ \ts -> do
+        set <- applyS (findTerms ts)
+        ILS.size set @?= 1
+      -- find final neq terms and assert they are not in same class
+      for_ endNeq $ \(x, y) -> do
+        i <- applyS (findTerm x)
+        j <- applyS (findTerm y)
+        i @/= j
 
 testEgCases :: TestTree
 testEgCases = testGroup "Eg case" (fmap testEgCase allEgCases)
