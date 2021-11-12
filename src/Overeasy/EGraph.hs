@@ -389,6 +389,7 @@ egRebuildNodeRound wl parents = do
   hc <- gets egHashCons
   -- traceM (unwords ["POST HASHCONS", "hc=", show hc])
   -- Track all classes touched here
+  -- TODO take closure here or below?
   let touchedClasses = efClosure (ILS.toList parents) ef <> classClosure
   -- Traverse all classes and canonicalize their nodes,
   -- recording the mapping from old -> new
