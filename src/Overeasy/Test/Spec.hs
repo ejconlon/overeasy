@@ -25,7 +25,7 @@ import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocCanCompact, assocCompact,
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egNeedsRebuild,
-                        egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
+                        egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList, egMergeMany)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efFind, efMerge, efMergeSets, efNew, efRoots, efSize, efTotalSize)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
@@ -42,6 +42,7 @@ import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 import Test.Tasty.HUnit (testCase)
 import Test.Tasty.Hedgehog (testProperty)
+import Data.Traversable (for)
 -- import Text.Pretty.Simple (pPrint)
 
 applyS :: Monad m => State s a -> StateT s m a
@@ -229,7 +230,7 @@ testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
     for_ allPairs $ \(a, b) -> flip evalStateT initUf $ do
       x <- applyS (gets (efFind a))
       y <- applyS (gets (efFind b))
-      lift (x @/= y)
+      x @/= y
     -- generate some pairs and merge them
     mergePairs <- forAll (genListOfDistinctPairs nOpsRange memberList)
     mergeStrat <- forAll genMergeStrat
@@ -249,8 +250,8 @@ testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
       let aComponent = ILE.lookupClass a components
           bComponent = ILE.lookupClass b components
       if isJust aComponent && aComponent == bComponent
-        then lift (x @?= y)
-        else lift (x @/= y)
+        then x @?= y
+        else x @/= y
 
 type EGA = EGraph () ArithF
 
@@ -336,7 +337,7 @@ testAssocCase (AssocCase name start act end) = testCase name $ runAV start $ do
   for_ act $ \(x, a, y) -> do
     z <- applyS (assocUpdate (ENodeId x) (toV a))
     testS assertAssocInvariants
-    lift (z @?= ENodeId y)
+    z @?= ENodeId y
   applyS assocCompact
   testS $ \av -> do
     assertAssocInvariants av
@@ -530,6 +531,36 @@ assertEgInvariants eg = do
         -- liftIO (pPrint recanon)
         recanon @?= Just fc
 
+data EgCase = EgCase !String ![EGT] ![[EGT]] ![[EGT]]
+
+allEgCases :: [EgCase]
+allEgCases =
+  let leafA = BinTreeLeaf (toV 'a')
+      leafB = BinTreeLeaf (toV 'b')
+  in [ EgCase "simple" [leafA, leafB] [[leafA, leafB]] [[leafA, leafB]]
+     ]
+
+testEgCase :: EgCase -> TestTree
+testEgCase (EgCase name start act end) = kase where
+  findTerm t = fmap (fromJust . egFindTerm t) get
+  findTerms ts = fmap ILS.fromList (for ts findTerm)
+  kase = testCase name $ runUnit $ runS egNew $ do
+    applyS (for_ start (egAddTerm maxVAnalysis))
+    testS $ \eg -> do
+      assertEgInvariants eg
+      -- TODO assert that all mentioned terms are in the egraph
+    applyS $ do
+      sets <- for act findTerms
+      for_ sets egMergeMany
+      void (egRebuild maxVAnalysis)
+    testS assertEgInvariants
+    for_ end $ \ts -> do
+      set <- applyS (findTerms ts)
+      ILS.size set @?= 1
+
+testEgCases :: TestTree
+testEgCases = testGroup "Eg case" (fmap testEgCase allEgCases)
+
 genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
 genNodePairs nOpsRange eg = genListOfDistinctPairs nOpsRange (ILM.keys (egClassMap eg))
 
@@ -538,7 +569,7 @@ genSomeList xs = go where
   go = Gen.recursive Gen.choice [Gen.constant [], fmap pure (Gen.element xs)] [Gen.subterm2 go go (++)]
 
 testEgProp :: TestTree
-testEgProp = after AllSucceed "EG unit" $ testProperty "EG prop" $
+testEgProp = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testProperty "EG prop" $
   let maxElems = 50
       eg0 = force egNew :: EGV
   in property $ do
@@ -651,8 +682,9 @@ main = do
     [ testILM
     , testUfUnit
     , testEgUnit
-    , testAssocCases
+    , testEgCases
     , testAssocUnit
+    , testAssocCases
     , testUfProp
     , testEgProp
     ]

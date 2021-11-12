@@ -14,6 +14,8 @@ import GHC.Stack (HasCallStack)
 import Hedgehog (PropertyT)
 import qualified Hedgehog as HG
 import qualified Test.Tasty.HUnit as HU
+import Control.Monad.State.Strict (StateT)
+import Control.Monad.Trans (lift)
 
 assertUnaryPredicate :: (MonadFail m, Show a) => (a -> Bool) -> String -> a -> m ()
 assertUnaryPredicate predicate preface value = unless (predicate value) (fail msg) where
@@ -46,6 +48,11 @@ instance Monad m => MonadAssert (PropertyT m) where
   assertTrue x p = HG.footnote p *> HG.assert x
   assertEqual = (HG.===)
   assertNotEqual = (HG./==)
+
+instance MonadAssert m => MonadAssert (StateT s m) where
+  assertTrue x p = lift (assertTrue x p)
+  assertEqual x y = lift (assertEqual x y)
+  assertNotEqual x y = lift (assertNotEqual x y)
 
 newtype Unit a = Unit { runUnit :: IO a }
   deriving newtype (Functor, Applicative, Monad, MonadIO)

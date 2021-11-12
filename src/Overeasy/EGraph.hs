@@ -30,6 +30,7 @@ module Overeasy.EGraph
   , egCanonicalize
   , egAddTerm
   , egMerge
+  , egMergeMany
   , egNeedsRebuild
   , egRebuild
   , egCanCompact
@@ -404,6 +405,8 @@ egRebuildNodeRound wl parents = do
   let finalWl = parentWl <> canonWl
   -- Track parent classes for next round
   -- TODO figure out why we need the closure here... this is a straight up HACK
+  -- I think we need to keep the original HC around just to look up node parents.
+  -- Otherwise we need closure of merged classes to get the original classes back.
   let finalParents = efClosure (filter (not . (`ILS.member` touchedClasses)) (ILS.toList candParents)) ef
   -- traceM (unwords ["END ROUND", "nodeMap=", show nodeMap, "canonWl=", show canonWl, "finalParents=", show finalParents])
   pure (touchedClasses, finalWl, finalParents)
