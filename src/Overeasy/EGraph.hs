@@ -43,7 +43,6 @@ import Data.Functor.Foldable (project)
 import Data.Hashable (Hashable)
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Maybe (fromMaybe)
 import Data.Semigroup (sconcat)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
@@ -51,12 +50,10 @@ import Debug.Trace (traceM)
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocEnsure, assocLookupByValue, assocNew,
-                       assocPartialLookupByKey, assocUpdate, assocUpdateInc)
+                       assocPartialLookupByKey, assocUpdateInc)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EquivFind (EquivFind, EquivMergeManyRes (..), EquivMergeRes (..), efAdd, efBwd, efClosure, efFind,
-                           efFwd, efMergeMany, efMergeManyInc, efNew, efPartialFind, efRoots, efSize, efTotalSize)
-import Overeasy.IntLike.Equiv (IntLikeEquiv)
-import qualified Overeasy.IntLike.Equiv as ILE
+                           efFwd, efMergeManyInc, efNew, efPartialFind, efRoots, efSize, efTotalSize)
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
@@ -317,9 +314,8 @@ egRebuildMerge wl = finalRes where
         closure = efClosure (ILS.toList roots) ef'
     in ((remap, closure), eg { egEquivFind = ef' })
   goMerge trip@(remap, roots, ef) item =
-    let (res, ef') = efMergeManyInc item ef
-    in case res of
-      EquivMergeManyResEmbed (EquivMergeResChanged root changed) -> (foldr (`ILM.insert` root) remap (ILS.toList changed), ILS.insert root roots, ef')
+    case efMergeManyInc item ef of
+      EquivMergeManyResEmbed (EquivMergeResChanged root changed ef') -> (foldr (`ILM.insert` root) remap (ILS.toList changed), ILS.insert root roots, ef')
       _ -> trip
 
 -- private

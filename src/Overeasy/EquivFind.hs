@@ -26,6 +26,9 @@ module Overeasy.EquivFind
   , EquivMergeManyRes (..)
   , efMergeManyInc
   , efMergeMany
+  , EquivMergeSetsRes (..)
+  , efMergeSetsInc
+  , efMergeSets
   ) where
 
 import Control.DeepSeq (NFData)
@@ -111,30 +114,33 @@ efElems = ILM.keys . efBwd
 data EquivMergeRes x =
     EquivMergeResMissing !x
   | EquivMergeResUnchanged !x
-  | EquivMergeResChanged !x !(IntLikeSet x)
+  | EquivMergeResChanged !x !(IntLikeSet x) !(EquivFind x)
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
-efMergeInc :: (Coercible x Int, Ord x) => x -> x -> EquivFind x -> (EquivMergeRes x, EquivFind x)
-efMergeInc i j u@(EquivFind fwd bwd) =
+efMergeInc :: (Coercible x Int, Ord x) => x -> x -> EquivFind x -> EquivMergeRes x
+efMergeInc i j (EquivFind fwd bwd) =
   case ILM.lookup i bwd of
-    Nothing -> (EquivMergeResMissing i, u)
+    Nothing -> EquivMergeResMissing i
     Just ix ->
       case ILM.lookup j bwd of
-        Nothing -> (EquivMergeResMissing j, u)
+        Nothing -> EquivMergeResMissing j
         Just jx ->
           if ix == jx
-            then (EquivMergeResUnchanged ix, u)
+            then EquivMergeResUnchanged ix
             else
               let loKey = min ix jx
                   hiKey = max ix jx
                   hiSet = ILM.partialLookup hiKey fwd
                   finalFwd = ILM.adjust (hiSet <>) loKey (ILM.delete hiKey fwd)
                   finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList hiSet)
-              in (EquivMergeResChanged loKey hiSet, EquivFind finalFwd finalBwd)
+              in EquivMergeResChanged loKey hiSet (EquivFind finalFwd finalBwd)
 
-efMerge :: (Coercible x Int, Ord x) => x -> x -> State (EquivFind x) (EquivMergeRes x)
-efMerge i j = state (efMergeInc i j)
+efMerge :: (Coercible x Int, Ord x) => x -> x -> State (EquivFind x) (Maybe (x, IntLikeSet x))
+efMerge i j = state $ \ef ->
+  case efMergeInc i j ef of
+    EquivMergeResChanged loKey hiSet ef' -> (Just (loKey, hiSet), ef')
+    _ -> (Nothing, ef)
 
 -- | The result of trying to merge multiple elements of the 'EquivFind'
 data EquivMergeManyRes x =
@@ -143,24 +149,67 @@ data EquivMergeManyRes x =
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
-efMergeManyInc :: Coercible x Int => IntLikeSet x -> EquivFind x -> (EquivMergeManyRes x, EquivFind x)
+efMergeManyInc :: Coercible x Int => IntLikeSet x -> EquivFind x -> EquivMergeManyRes x
 efMergeManyInc cs u@(EquivFind fwd bwd) =
   case ILS.toList cs of
-    [] -> (EquivMergeManyResEmpty, u)
-    [h] -> (EquivMergeManyResEmbed (EquivMergeResUnchanged h), u)
+    [] -> EquivMergeManyResEmpty
+    [h] -> EquivMergeManyResEmbed (EquivMergeResUnchanged h)
     hs ->
       case efFindAll hs u of
-        Left x -> (EquivMergeManyResEmbed (EquivMergeResMissing x), u)
+        Left x -> EquivMergeManyResEmbed (EquivMergeResMissing x)
         Right xs ->
           let (loKey, ys) = fromJust (ILS.minView xs)
           in if ILS.null ys && ILS.member loKey cs
-            then (EquivMergeManyResEmbed (EquivMergeResUnchanged loKey), u)
+            then EquivMergeManyResEmbed (EquivMergeResUnchanged loKey)
             else
               let hiSet = foldr (\k s -> ILM.partialLookup k fwd <> s) ILS.empty (ILS.toList ys)
                   finalFwd = ILM.adjust (hiSet <>) loKey (foldr ILM.delete fwd (ILS.toList ys))
                   finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList hiSet)
                   finalU = EquivFind finalFwd finalBwd
-              in (EquivMergeManyResEmbed (EquivMergeResChanged loKey hiSet), finalU)
+              in EquivMergeManyResEmbed (EquivMergeResChanged loKey hiSet finalU)
 
-efMergeMany :: Coercible x Int => IntLikeSet x -> State (EquivFind x) (EquivMergeManyRes x)
-efMergeMany = state . efMergeManyInc
+efMergeMany :: Coercible x Int => IntLikeSet x -> State (EquivFind x) (Maybe (x, IntLikeSet x))
+efMergeMany cs = state $ \ef ->
+  case efMergeManyInc cs ef of
+    EquivMergeManyResEmbed (EquivMergeResChanged loKey hiSet ef') -> (Just (loKey, hiSet), ef')
+    _ -> (Nothing, ef)
+
+data EquivMergeSetsRes x =
+    EquivMergeSetsResEmptySet
+  | EquivMergeSetsResMissing !x
+  | EquivMergeSetsResUnchanged !(IntLikeSet x)
+  | EquivMergeSetsResChanged !(IntLikeSet x) !(IntLikeMap x x) !(EquivFind x)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (NFData)
+
+efMergeSetsInc :: Coercible x Int => [IntLikeSet x] -> EquivFind x -> EquivMergeSetsRes x
+efMergeSetsInc = error "TODO"
+-- efMergeSetsInc css u0 = res where
+--   res =
+--     case css of
+--       [] -> (EquivMergeSetsResUnchanged ILS.empty, u0)
+--       hs -> go ILS.empty ILM.empty u0 css
+--   go !roots !classMap !u cs =
+--     case cs of
+--       [] -> (EquivMergeSetsResEmptySet, u)
+--       [h] ->
+--         case efFind h u of
+--           Nothing -> ()
+--       case efFindAll hs u of
+--         Left x -> (EquivMergeManyResEmbed (EquivMergeResMissing x), u)
+--         Right xs ->
+--           let (loKey, ys) = fromJust (ILS.minView xs)
+--           in if ILS.null ys && ILS.member loKey cs
+--             then (EquivMergeManyResEmbed (EquivMergeResUnchanged loKey), u)
+--             else
+--               let hiSet = foldr (\k s -> ILM.partialLookup k fwd <> s) ILS.empty (ILS.toList ys)
+--                   finalFwd = ILM.adjust (hiSet <>) loKey (foldr ILM.delete fwd (ILS.toList ys))
+--                   finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList hiSet)
+--                   finalU = EquivFind finalFwd finalBwd
+--               in (EquivMergeManyResEmbed (EquivMergeResChanged loKey hiSet), finalU)
+
+efMergeSets :: Coercible x Int => [IntLikeSet x] -> State (EquivFind x) (Maybe (IntLikeSet x, IntLikeMap x x))
+efMergeSets css = state $ \ef ->
+  case efMergeSetsInc css ef of
+    EquivMergeSetsResChanged roots classRemap ef' -> (Just (roots, classRemap), ef')
+    _ -> (Nothing, ef)
