@@ -444,7 +444,7 @@ testEgUnit = after AllSucceed "Assoc unit" $ testCase "EG unit" $ runEGA $ do
   -- Now rebuild
   applyTestS (egRebuild noA) $ \newRoots eg -> do
     cidMerged <-
-      case ILS.toList newRoots of
+      case ILM.keys newRoots of
         [x] -> pure x
         _ -> fail "Expected singleton root list"
     egFindTerm termFour eg @?= Just cidMerged
@@ -556,11 +556,10 @@ allEgCases =
      , EgCase "transitive one round"
         [ EgRound leaves [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
         ]
-    -- TODO fix this!
-    --  , EgCase "transitive two round"
-    --     [ EgRound leaves [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
-    --     , EgRound [] [[leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
-    --     ]
+     , EgCase "transitive two round"
+        [ EgRound leaves [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
+        , EgRound [] [[leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
+        ]
      ]
 
 testEgCase :: EgCase -> TestTree

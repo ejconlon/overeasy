@@ -9,6 +9,7 @@ module Overeasy.IntLike.Set
   , toList
   , insert
   , delete
+  , deleteAll
   , findMin
   , minView
   , disjoint
@@ -64,6 +65,12 @@ insert x = IntLikeSet . IntSet.insert (coerce x) . unIntLikeSet
 delete :: Coercible x Int => x -> IntLikeSet x -> IntLikeSet x
 delete x = IntLikeSet . IntSet.delete (coerce x) . unIntLikeSet
 {-# INLINE delete #-}
+
+-- deleteAll bad candidates means remove all bad from candidates
+-- one sided deletion, n log n
+deleteAll :: IntLikeSet x -> IntLikeSet x -> IntLikeSet x
+deleteAll (IntLikeSet bad) (IntLikeSet candidates) = IntLikeSet (IntSet.filter (not . (`IntSet.member` bad)) candidates)
+{-# INLINE deleteAll #-}
 
 findMin :: Coercible x Int => IntLikeSet x -> x
 findMin = coerce . IntSet.findMin . unIntLikeSet
