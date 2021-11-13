@@ -10,6 +10,8 @@ module Overeasy.IntLike.Set
   , insert
   , delete
   , difference
+  , union
+  , unions
   , findMin
   , minView
   , disjoint
@@ -22,6 +24,7 @@ module Overeasy.IntLike.Set
 
 import Control.DeepSeq (NFData)
 import Data.Coerce (Coercible, coerce)
+import Data.Foldable (foldl')
 import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 import Prelude hiding (filter, map, null)
@@ -69,6 +72,15 @@ delete x = IntLikeSet . IntSet.delete (coerce x) . unIntLikeSet
 difference :: IntLikeSet x -> IntLikeSet x -> IntLikeSet x
 difference xs ys = IntLikeSet (IntSet.difference (unIntLikeSet xs) (unIntLikeSet ys))
 {-# INLINE difference #-}
+
+union :: IntLikeSet x -> IntLikeSet x -> IntLikeSet x
+union xs ys = IntLikeSet (IntSet.union (unIntLikeSet xs) (unIntLikeSet ys))
+{-# INLINE union #-}
+
+-- Copied here because coercion through f is difficult
+unions :: Foldable f => f (IntLikeSet x) -> IntLikeSet x
+unions = foldl' union empty
+{-# INLINE unions #-}
 
 findMin :: Coercible x Int => IntLikeSet x -> x
 findMin = coerce . IntSet.findMin . unIntLikeSet

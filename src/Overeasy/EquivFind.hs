@@ -81,7 +81,7 @@ efEquivs x (EquivFind fwd bwd) =
     Just y -> ILM.partialLookup y fwd
 
 efClosure :: Coercible x Int => [x] -> EquivFind x -> IntLikeSet x
-efClosure xs ef = foldl' (\c x -> if ILS.member x c then c else efEquivs x ef <> c) ILS.empty xs
+efClosure xs ef = foldl' (\c x -> if ILS.member x c then c else ILS.union (efEquivs x ef) c) ILS.empty xs
 
 efFind :: Coercible x Int => x -> EquivFind x -> Maybe x
 efFind x = ILM.lookup x . efBwd
@@ -130,7 +130,7 @@ efMergeInc i j (EquivFind fwd bwd) =
                   hiKey = max ix jx
                   hiSet = ILM.partialLookup hiKey fwd
                   finalFwd = ILM.adjust (hiSet <>) loKey (ILM.delete hiKey fwd)
-                  finalBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList hiSet)
+                  finalBwd = foldl' (flip (`ILM.insert` loKey)) bwd (ILS.toList hiSet)
               in EquivMergeResChanged loKey hiSet (EquivFind finalFwd finalBwd)
 
 efMerge :: (Coercible x Int, Ord x) => x -> x -> State (EquivFind x) (Maybe (x, IntLikeSet x))
@@ -175,10 +175,10 @@ efMergeSetsInc css0 u0 = res where
             Right xs ->
               let (loKey, ys) = fromJust (ILS.minView xs)
                   newRoots = ILS.insert loKey roots
-                  hiSet = foldr (\k s -> ILM.partialLookup k fwd <> s) ILS.empty (ILS.toList ys)
-                  newClassRemapSet = hiSet <> classRemapSet
-                  newFwd = ILM.adjust (hiSet <>) loKey (foldr ILM.delete fwd (ILS.toList ys))
-                  newBwd = foldr (`ILM.insert` loKey) bwd (ILS.toList hiSet)
+                  hiSet = ILS.unions (fmap (`ILM.partialLookup` fwd) (ILS.toList ys))
+                  newClassRemapSet = ILS.union hiSet classRemapSet
+                  newFwd = ILM.adjust (ILS.union hiSet) loKey (foldl' (flip ILM.delete) fwd (ILS.toList ys))
+                  newBwd = foldl' (flip (`ILM.insert` loKey)) bwd (ILS.toList hiSet)
                   newU = EquivFind newFwd newBwd
               in go newRoots newClassRemapSet newU dss
 

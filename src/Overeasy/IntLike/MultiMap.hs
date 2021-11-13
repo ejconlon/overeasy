@@ -11,6 +11,7 @@ module Overeasy.IntLike.MultiMap
 
 import Control.Monad (foldM)
 import Data.Coerce (Coercible)
+import Data.Foldable (foldl')
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
@@ -31,13 +32,12 @@ toList = ILM.toList
 {-# INLINE toList #-}
 
 insert :: (Coercible k Int, Coercible v Int) => k -> v -> IntLikeMultiMap k v -> IntLikeMultiMap k v
-insert k v = ILM.insertWith (<>) k (ILS.singleton v)
+insert k v = ILM.insertWith ILS.union k (ILS.singleton v)
+{-# INLINE insert #-}
 
 member :: (Coercible k Int, Coercible v Int) => k -> v -> IntLikeMultiMap k v -> Bool
-member k v m =
-  case ILM.lookup k m of
-    Nothing -> False
-    Just s -> ILS.member v s
+member k v = maybe False (ILS.member v) . ILM.lookup k
+{-# INLINE member #-}
 
 invertDisjoint :: (Coercible k Int, Coercible v Int) => IntLikeMultiMap k v -> Either (k, k, v) (IntLikeMap v k)
 invertDisjoint = foldM go1 ILM.empty . ILM.toList where
@@ -48,4 +48,5 @@ invertDisjoint = foldM go1 ILM.empty . ILM.toList where
       Just k' -> Left (k, k', v)
 
 fromInvertedMap :: (Coercible k Int, Coercible v Int) => IntLikeMap k v -> IntLikeMultiMap v k
-fromInvertedMap = foldr (\(k, v) -> insert v k) empty . ILM.toList
+fromInvertedMap = foldl' (\m (k, v) -> insert v k m) empty . ILM.toList
+{-# INLINE fromInvertedMap #-}

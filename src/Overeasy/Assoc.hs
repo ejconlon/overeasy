@@ -29,6 +29,7 @@ module Overeasy.Assoc
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (MonadState (..), State, modify')
 import Data.Coerce (Coercible)
+import Data.Foldable (foldl')
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
@@ -72,7 +73,7 @@ assocFromPairs :: (Coercible x Int, Eq a, Hashable a) => x -> [(x, a)] -> Maybe 
 assocFromPairs start pairs =
   let fwd = ILM.fromList pairs
       bwd = HashMap.fromList (fmap swap pairs)
-      n = foldr sourceSkipInc (sourceNew start) (fmap fst pairs)
+      n = foldl' (flip sourceSkipInc) (sourceNew start) (fmap fst pairs)
       nElems = length pairs
       nFwd = ILM.size fwd
       nBwd = HashMap.size bwd
@@ -200,8 +201,8 @@ assocCompactInc :: (Coercible x Int, Eq a, Hashable a) => Assoc x a -> Assoc x a
 assocCompactInc assoc@(Assoc fwd bwd deadFwd deadBwd n) =
   if assocCanCompact assoc
     then
-      let fwd' = foldr ILM.delete fwd (ILS.toList deadFwd)
-          bwd' = foldr HashMap.delete bwd deadBwd
+      let fwd' = foldl' (flip ILM.delete) fwd (ILS.toList deadFwd)
+          bwd' = foldl' (flip HashMap.delete) bwd deadBwd
       in Assoc fwd' bwd' ILS.empty HashSet.empty n
     else assoc
 

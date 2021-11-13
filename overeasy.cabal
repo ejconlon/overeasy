@@ -45,7 +45,6 @@ library
       Overeasy.Test.Arith
       Overeasy.Test.Assertions
       Overeasy.Test.Spec
-      Overeasy.UnionFind
   other-modules:
       Paths_overeasy
   hs-source-dirs:

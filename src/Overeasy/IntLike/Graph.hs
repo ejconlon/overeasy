@@ -15,6 +15,7 @@ import qualified Algebra.Graph.AdjacencyIntMap.Algorithm as AIMA
 import Algebra.Graph.Class (Graph (..))
 import Control.DeepSeq (NFData)
 import Data.Coerce (Coercible, coerce)
+import Data.Foldable (foldl')
 import Data.Hashable (Hashable)
 import Data.Tuple (swap)
 import Overeasy.IntLike.Equiv (IntLikeEquiv)
@@ -68,6 +69,6 @@ undirectedComponents es = go 0 startVs ILE.empty where
       Just (v, vs') ->
         let rs = reachable v g
             -- partial: ok by construction of graph and defn of reachable
-            eqv' = foldr (ILE.partialInsert (Component i)) eqv rs
-            vs'' = foldr ILS.delete vs' rs
+            eqv' = foldl' (flip (ILE.partialInsert (Component i))) eqv rs
+            vs'' = foldl' (flip ILS.delete) vs' rs
         in go (i + 1) vs'' eqv'

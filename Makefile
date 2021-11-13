@@ -10,4 +10,4 @@ docker-test:
 
 .PHONY: debug-test
 debug-test:
-	DEBUG=1 stack test --trace
+	DEBUG=1 stack test --trace --profile

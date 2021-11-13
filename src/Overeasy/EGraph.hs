@@ -291,21 +291,6 @@ egTakeWorklist = state $ \eg ->
   in (wl, eg')
 
 -- private
--- egRebuildMerge :: WorkList -> IntLikeSet EClassId -> State (EGraph d f) (IntLikeEquiv EClassId EClassId, IntLikeSet EClassId)
--- egRebuildMerge wl parents = stateLens egUnionFindL (go ILS.empty wl) where
---   go !mems = \case
---     Empty -> do
---       fwd <- gets efFwd
---       mergeEquiv <- ILM.restrictKeys d) (parents <> mems)
---       let roundOnly = ILS.map (`ILM.partialLookup` ILE.bwdView mergeEquiv) mems
---       pure (mergeEquiv, roundOnly)
---     cs :<| rest -> do
---       mr <- ufMergeMany cs
---       case mr of
---         EquivMergeManyResEmbed (EquivMergeResChanged _) -> go (cs <> mems) rest
---         _ -> go mems rest
-
--- private
 -- Folds over items in worklist to merge, returning:
 -- 1. map of old class -> new class for changed classes only
 -- 2. closure of remapped classes (includes roots)
@@ -325,11 +310,12 @@ egRebuildMerge wl = finalRes where
 -- private
 -- Loop through nodes of all changed classes and update the hashcons to point to new classes
 egRebuildHashCons :: IntLikeMap EClassId EClassId -> State (EGraph d f) ()
-egRebuildHashCons classRemap = modify' (\eg -> let hc' = foldr (uncurry (go (egClassMap eg))) (egHashCons eg) (ILM.toList classRemap) in eg { egHashCons = hc' }) where
-  go cm oldClassId newClassId hc =
+egRebuildHashCons classRemap =
+  modify' (\eg -> let hc' = foldl' (go (egClassMap eg)) (egHashCons eg) (ILM.toList classRemap) in eg { egHashCons = hc' }) where
+  go cm hc (oldClassId, newClassId) =
     let eci = ILM.partialLookup oldClassId cm
         nodes = eciNodes eci
-    in foldr (`ILM.insert` newClassId) hc (ILS.toList nodes)
+    in foldl' (flip (`ILM.insert` newClassId)) hc (ILS.toList nodes)
 
 -- private
 egRebuildAssoc :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => IntLikeMap ENodeId EClassId -> IntLikeMap EClassId EClassId -> IntLikeSet EClassId -> State (EGraph d f) (IntLikeSet EClassId, IntLikeMap ENodeId ENodeId, WorkList)
@@ -358,7 +344,7 @@ egRebuildAssoc origHc classRemap touchedClasses = do
     -- Note that we look up parents in the ORIGINAL hashcons because those are the ones that have the nodes pointing to this
     let emitParents = finalChanged || ILM.member c classRemap
         addlParents = ILS.map (`ILM.partialLookup` origHc) (eciParents eci)
-        ps' = if emitParents then addlParents <> ps else ps
+        ps' = if emitParents then ILS.union addlParents ps else ps
     -- traceM (unwords ["REBUILD ASSOC CLASS END", "c=", show c, "emitParents=", show emitParents, "addlParents=", show addlParents])
     pure (ps', finalM, finalParentWl)
 
@@ -368,8 +354,8 @@ egRebuildCanonWl nodeMultiMap = goRoot where
   goRoot = do
     hc <- gets egHashCons
     -- For each node in the new -> old multimap
-    pure (foldr (goEach hc) Empty (ILMM.toList nodeMultiMap))
-  goEach hc (_, oldNodes) ms =
+    pure (foldl' (goEach hc) Empty (ILMM.toList nodeMultiMap))
+  goEach hc ms (_, oldNodes) =
     -- See what classes the nodes map to
     if ILS.size oldNodes > 1
       then
@@ -387,14 +373,14 @@ egRebuildNodeRound origHc wl parents = do
   -- First merge all classes together and get merged class sets
   (classRemap, classClosure) <- egRebuildMerge wl
   -- traceM (unwords ["POST MERGE", "classRemap=", show classRemap, "classClosure=", show classClosure])
-  ef <- gets egEquivFind
+  -- ef <- gets egEquivFind
   -- traceM (unwords ["POST EF", "ef=", show ef])
   -- Now update the hashcons so node ids point to merged classes
   egRebuildHashCons classRemap
   -- hc <- gets egHashCons
   -- -- traceM (unwords ["POST HASHCONS", "hc=", show hc])
   -- Track all classes touched here
-  let touchedClasses = parents <> classClosure
+  let touchedClasses = ILS.union parents classClosure
   -- Traverse all classes and canonicalize their nodes,
   -- recording the mapping from old -> new
   -- Also track all possible parent classes
@@ -419,12 +405,13 @@ egRebuildClassSingle :: EAnalysis d f q => q -> EClassId -> IntLikeSet EClassId 
 egRebuildClassSingle q newClass oldClasses initCm =
   let EClassInfo rootData rootNodes rootParents = ILM.partialLookup newClass initCm
       finalData = eaJoin q rootData (fmap (\c -> eciData (ILM.partialLookup c initCm)) (ILS.toList oldClasses))
-      finalNodes = foldr (\c s -> eciNodes (ILM.partialLookup c initCm) <> s) rootNodes (ILS.toList oldClasses)
-      finalParents = foldr (\c s -> eciParents (ILM.partialLookup c initCm) <> s) rootParents (ILS.toList oldClasses)
-      -- XXX can drop self-parents?
-      -- finalParents = ILS.fromList $ ILS.toList allClassParents >>= \pn -> [pn | not (ILS.member pn finalNodes)]
+      finalNodes = foldl' (\s c -> ILS.union s (eciNodes (ILM.partialLookup c initCm))) rootNodes (ILS.toList oldClasses)
+      finalParents = foldl' (\s c -> ILS.union s (eciParents (ILM.partialLookup c initCm))) rootParents (ILS.toList oldClasses)
+      -- self-parents will be dropped in compact
       finalInfo = EClassInfo finalData finalNodes finalParents
-      finalCm = ILM.insert newClass finalInfo (foldr ILM.delete initCm (ILS.toList oldClasses))
+      -- TODO delete classes in compact
+      -- finalCm = ILM.insert newClass finalInfo initCm
+      finalCm = ILM.insert newClass finalInfo (foldl' (flip ILM.delete) initCm (ILS.toList oldClasses))
   in finalCm
 
 -- private
@@ -439,7 +426,7 @@ egRebuildClassMap q touchedClasses = state $ \eg ->
       roots = ILS.map (`ILM.partialLookup` bwd) touchedClasses
       rootMap = ILM.fromList (fmap (\r -> (r, ILS.filter (/= r) (ILS.difference (ILM.partialLookup r fwd) dc))) (ILS.toList roots))
       cm' = foldl' (\cm (r, vs) -> egRebuildClassSingle q r vs cm) (egClassMap eg) (ILM.toList rootMap)
-      dc' = foldr (<>) (egDeadClasses eg) (ILM.elems rootMap)
+      dc' = foldl' ILS.union (egDeadClasses eg) (ILM.elems rootMap)
   in (rootMap, eg { egClassMap = cm', egDeadClasses = dc' })
 
 -- | Rebuilds the 'EGraph' after merging to allow adding more terms. (Always safe to call.)
@@ -459,7 +446,7 @@ egRebuild q = goRec where
       then pure tc
       else do
         (newTc, newWl, newParents) <- egRebuildNodeRound origHc wl parents
-        let mergedTc = newTc <> tc
+        let mergedTc = ILS.union newTc tc
         goNodeRounds origHc mergedTc newWl newParents
 
 egCanCompact :: EGraph d f -> Bool
