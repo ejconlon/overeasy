@@ -18,7 +18,7 @@ import Data.Maybe (fromJust, isJust)
 import Data.Semigroup (Max (..))
 import qualified Data.Sequence as Seq
 import Data.Traversable (for)
-import Hedgehog (Gen, Range, forAll, property)
+import Hedgehog (Gen, Range, forAll)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocCanCompact, assocCompact, assocDeadBwd, assocDeadFwd,
@@ -37,12 +37,10 @@ import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
-import Overeasy.Test.Assertions (MonadAssert (..), Unit (..), (@/=), (@?), (@?=))
+import Overeasy.Test.Assertions (MonadTest, assert, testGen, testUnit, (/==), (===))
 import System.Environment (lookupEnv, setEnv)
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
-import Test.Tasty.HUnit (testCase)
-import Test.Tasty.Hedgehog (testProperty)
 -- import Text.Pretty.Simple (pPrint)
 
 applyS :: Monad m => State s a -> StateT s m a
@@ -83,86 +81,83 @@ setV = ILS.fromList . fmap toV
 
 type UF = EquivFind V
 
-runUF :: StateT UF Unit () -> IO ()
-runUF = runUnit . runS efNew
-
 testUfSimple :: TestTree
-testUfSimple = testCase "UF simple" $ runUF $ do
+testUfSimple = testUnit "UF simple" $ runS efNew $ do
   testS $ \ef -> do
-    efSize ef @?= 0
-    efTotalSize ef @?= 0
-    efRoots ef @?= []
+    efSize ef === 0
+    efTotalSize ef === 0
+    efRoots ef === []
   applyS (efAdd (toV 'a'))
   testS $ \ef -> do
-    efSize ef @?= 1
-    efTotalSize ef @?= 1
-    ILS.fromList (efRoots ef) @?= setV "a"
+    efSize ef === 1
+    efTotalSize ef === 1
+    ILS.fromList (efRoots ef) === setV "a"
   applyS (efAdd (toV 'b'))
   applyS (efAdd (toV 'c'))
   testS $ \ef -> do
-    efSize ef @?= 3
-    efTotalSize ef @?= 3
-    ILS.fromList (efRoots ef) @?= setV "abc"
+    efSize ef === 3
+    efTotalSize ef === 3
+    ILS.fromList (efRoots ef) === setV "abc"
   applyTestS (efMerge (toV 'a') (toV 'c')) $ \res ef -> do
-    res @?= Just (toV 'a', setV "c")
-    efSize ef @?= 2
-    efTotalSize ef @?= 3
-    ILS.fromList (efRoots ef) @?= setV "ab"
-    efFwd ef @?= ILM.fromList [(toV 'a', setV "ac"), (toV 'b', setV "b")]
-  applyTestS (efMerge (toV 'c') (toV 'a')) $ \res _ -> res @?= Nothing
-  applyTestS (efMerge (toV 'b') (toV 'z')) $ \res _ -> res @?= Nothing
+    res === Just (toV 'a', setV "c")
+    efSize ef === 2
+    efTotalSize ef === 3
+    ILS.fromList (efRoots ef) === setV "ab"
+    efFwd ef === ILM.fromList [(toV 'a', setV "ac"), (toV 'b', setV "b")]
+  applyTestS (efMerge (toV 'c') (toV 'a')) $ \res _ -> res === Nothing
+  applyTestS (efMerge (toV 'b') (toV 'z')) $ \res _ -> res === Nothing
 
 testUfRec :: TestTree
-testUfRec = testCase "UF rec" $ runUF $ do
+testUfRec = testUnit "UF rec" $ runS efNew $ do
   applyS (efAdd (toV 'a'))
   applyS (efAdd (toV 'b'))
   applyS (efAdd (toV 'c'))
   applyTestS (efMerge (toV 'b') (toV 'c')) $ \res ef -> do
-    res @?= Just (toV 'b', setV "c")
-    efSize ef @?= 2
-    efTotalSize ef @?= 3
-    ILS.fromList (efRoots ef) @?= setV "ab"
-    efFwd ef @?= ILM.fromList [(toV 'a', setV "a"), (toV 'b', setV "bc")]
+    res === Just (toV 'b', setV "c")
+    efSize ef === 2
+    efTotalSize ef === 3
+    ILS.fromList (efRoots ef) === setV "ab"
+    efFwd ef === ILM.fromList [(toV 'a', setV "a"), (toV 'b', setV "bc")]
   applyTestS (efMerge (toV 'a') (toV 'c')) $ \res ef -> do
-    res @?= Just (toV 'a', setV "bc")
-    efSize ef @?= 1
-    efTotalSize ef @?= 3
-    ILS.fromList (efRoots ef) @?= setV "a"
-    efFwd ef @?= ILM.fromList [(toV 'a', setV "abc")]
+    res === Just (toV 'a', setV "bc")
+    efSize ef === 1
+    efTotalSize ef === 3
+    ILS.fromList (efRoots ef) === setV "a"
+    efFwd ef === ILM.fromList [(toV 'a', setV "abc")]
 
 testUfMany :: TestTree
-testUfMany = testCase "UF many" $ runUF $ do
+testUfMany = testUnit "UF many" $ runS efNew $ do
   applyS (efAdd (toV 'a'))
   applyS (efAdd (toV 'b'))
   applyS (efAdd (toV 'c'))
   applyS (efAdd (toV 'd'))
   applyS (efAdd (toV 'e'))
   applyTestS (efMergeSets [setV "cde"]) $ \res ef -> do
-    res @?= Just (setV "c", setV "de")
-    efSize ef @?= 3
-    efTotalSize ef @?= 5
-    ILS.fromList (efRoots ef) @?= setV "abc"
-    efFwd ef @?= ILM.fromList [(toV 'a', setV "a"), (toV 'b', setV "b"), (toV 'c', setV "cde")]
+    res === Just (setV "c", setV "de")
+    efSize ef === 3
+    efTotalSize ef === 5
+    ILS.fromList (efRoots ef) === setV "abc"
+    efFwd ef === ILM.fromList [(toV 'a', setV "a"), (toV 'b', setV "b"), (toV 'c', setV "cde")]
   applyTestS (efMergeSets [setV "abd"]) $ \res ef -> do
-    res @?= Just (setV "a", setV "bcde")
-    efSize ef @?= 1
-    efTotalSize ef @?= 5
-    ILS.fromList (efRoots ef) @?= setV "a"
-    efFwd ef @?= ILM.fromList [(toV 'a', setV "abcde")]
+    res === Just (setV "a", setV "bcde")
+    efSize ef === 1
+    efTotalSize ef === 5
+    ILS.fromList (efRoots ef) === setV "a"
+    efFwd ef === ILM.fromList [(toV 'a', setV "abcde")]
 
 testUfSets :: TestTree
-testUfSets = testCase "UF sets" $ runUF $ do
+testUfSets = testUnit "UF sets" $ runS efNew $ do
   applyS (efAdd (toV 'a'))
   applyS (efAdd (toV 'b'))
   applyS (efAdd (toV 'c'))
   applyS (efAdd (toV 'd'))
   applyS (efAdd (toV 'e'))
   applyTestS (efMergeSets [setV "cde", setV "abc"]) $ \res ef -> do
-    res @?= Just (setV "a", setV "bcde")
-    efSize ef @?= 1
-    efTotalSize ef @?= 5
-    ILS.fromList (efRoots ef) @?= setV "a"
-    efFwd ef @?= ILM.fromList [(toV 'a', setV "abcde")]
+    res === Just (setV "a", setV "bcde")
+    efSize ef === 1
+    efTotalSize ef === 5
+    ILS.fromList (efRoots ef) === setV "a"
+    efFwd ef === ILM.fromList [(toV 'a', setV "abcde")]
 
 testUfUnit :: TestTree
 testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec, testUfMany, testUfSets]
@@ -213,50 +208,46 @@ genMergeStrat :: Gen MergeStrat
 genMergeStrat = Gen.enumBounded
 
 testUfProp :: TestTree
-testUfProp = after AllSucceed "UF unit" $ testProperty "UF prop" $
+testUfProp = after AllSucceed "UF unit" $ testGen "UF prop" $ do
   let maxElems = 50
-  in property $ do
-    -- generate elements
-    memberList <- forAll (genMembers maxElems)
-    let memberSet = ILS.fromList memberList
-        nMembers = ILS.size memberSet
-        allPairs = ILS.unorderedPairs memberSet
-        nOpsRange = Range.linear 0 (nMembers * nMembers)
-    let initUf = mkInitUf memberList
-    -- assert that sizes indicate nothing is merged
-    efSize initUf @?= nMembers
-    efTotalSize initUf @?= nMembers
-    -- assert that find indicates nothing is merged
-    for_ allPairs $ \(a, b) -> flip evalStateT initUf $ do
-      x <- applyS (gets (efFind a))
-      y <- applyS (gets (efFind b))
-      x @/= y
-    -- generate some pairs and merge them
-    mergePairs <- forAll (genListOfDistinctPairs nOpsRange memberList)
-    mergeStrat <- forAll genMergeStrat
-    let mergedUf =
-          case mergeStrat of
-            MergeStratPairs -> mkPairsMergedUf mergePairs initUf
-            MergeStratSets -> mkSetsMergedUf mergePairs initUf
-            MergeStratSingle -> mkSingleMergedUf mergePairs initUf
-    -- assert that total size is unchanged
-    efTotalSize mergedUf @?= nMembers
-    -- calculate components by graph reachability
-    let components = ILG.undirectedComponents mergePairs
-    -- assert that elements are equal or not according to component
-    void $ foldS_ mergedUf allPairs $ \(a, b) -> do
-      x <- applyS (gets (efFind a))
-      y <- applyS (gets (efFind b))
-      let aComponent = ILE.lookupClass a components
-          bComponent = ILE.lookupClass b components
-      if isJust aComponent && aComponent == bComponent
-        then x @?= y
-        else x @/= y
+  -- generate elements
+  memberList <- forAll (genMembers maxElems)
+  let memberSet = ILS.fromList memberList
+      nMembers = ILS.size memberSet
+      allPairs = ILS.unorderedPairs memberSet
+      nOpsRange = Range.linear 0 (nMembers * nMembers)
+  let initUf = mkInitUf memberList
+  -- assert that sizes indicate nothing is merged
+  efSize initUf === nMembers
+  efTotalSize initUf === nMembers
+  -- assert that find indicates nothing is merged
+  for_ allPairs $ \(a, b) -> flip evalStateT initUf $ do
+    x <- applyS (gets (efFind a))
+    y <- applyS (gets (efFind b))
+    x /== y
+  -- generate some pairs and merge them
+  mergePairs <- forAll (genListOfDistinctPairs nOpsRange memberList)
+  mergeStrat <- forAll genMergeStrat
+  let mergedUf =
+        case mergeStrat of
+          MergeStratPairs -> mkPairsMergedUf mergePairs initUf
+          MergeStratSets -> mkSetsMergedUf mergePairs initUf
+          MergeStratSingle -> mkSingleMergedUf mergePairs initUf
+  -- assert that total size is unchanged
+  efTotalSize mergedUf === nMembers
+  -- calculate components by graph reachability
+  let components = ILG.undirectedComponents mergePairs
+  -- assert that elements are equal or not according to component
+  void $ foldS_ mergedUf allPairs $ \(a, b) -> do
+    x <- applyS (gets (efFind a))
+    y <- applyS (gets (efFind b))
+    let aComponent = ILE.lookupClass a components
+        bComponent = ILE.lookupClass b components
+    if isJust aComponent && aComponent == bComponent
+      then x === y
+      else x /== y
 
 type EGA = EGraph () ArithF
-
-runEGA :: StateT EGA Unit () -> IO ()
-runEGA = runUnit . runS egNew
 
 noA :: EAnalysisOff ArithF
 noA = EAnalysisOff
@@ -264,27 +255,27 @@ noA = EAnalysisOff
 type AV = Assoc ENodeId V
 
 -- | Asserts assoc is compact - should also check 'assertAssocInvariants'
-assertAssocCompact :: (MonadAssert m, Eq a, Hashable a, Show a) => Assoc ENodeId a -> m ()
+assertAssocCompact :: (MonadTest m, Eq a, Hashable a, Show a) => Assoc ENodeId a -> m ()
 assertAssocCompact av = do
   let fwd = assocFwd av
       bwd = assocBwd av
   -- Assert that the assoc has been rebuilt
-  not (assocCanCompact av) @? "assoc must be rebuilt"
-  assocDeadFwd av @?= ILS.empty
-  assocDeadBwd av @?= HashSet.empty
+  assert $ not (assocCanCompact av)
+  assocDeadFwd av === ILS.empty
+  assocDeadBwd av === HashSet.empty
   -- Look at sizes to confirm that assoc could map 1-1
-  ILM.size fwd @?= HashMap.size bwd
+  ILM.size fwd === HashMap.size bwd
   -- Go through keys forward
   for_ (ILM.toList fwd) $ \(x, fc) -> do
     -- Assert is found in backward map AND maps back
-    HashMap.lookup fc bwd @?= Just x
+    HashMap.lookup fc bwd === Just x
   -- Go through keys backward
   for_ (HashMap.toList bwd) $ \(fc, x) ->
     -- Assert is present in forward map AND maps back
-    ILM.lookup x fwd @?= Just fc
+    ILM.lookup x fwd === Just fc
 
 -- | Asserts assoc is correctly structured (compact or not)
-assertAssocInvariants :: (MonadAssert m, Eq a, Hashable a) => Assoc ENodeId a -> m ()
+assertAssocInvariants :: (MonadTest m, Eq a, Hashable a) => Assoc ENodeId a -> m ()
 assertAssocInvariants av = do
   let fwd = assocFwd av
       bwd = assocBwd av
@@ -292,13 +283,13 @@ assertAssocInvariants av = do
   -- Go through keys forward
   for_ (ILM.toList fwd) $ \(x, fc) -> do
     -- Assert is found in backward map
-    HashMap.member fc bwd @? "fc should be in bwd map"
+    assert $ HashMap.member fc bwd
     -- Assert is less than next fresh id
-    nextId > unENodeId x @? "next id is stale"
+    assert $ nextId > unENodeId x
   -- Go through keys backward
   for_ (HashMap.toList bwd) $ \(_, x) ->
     -- Assert is present in forward map
-    ILM.member x fwd @? "x should be in fwd map"
+    assert $ ILM.member x fwd
 
 data AssocCase = AssocCase !String ![(Int, Char)] ![(Int, Char, Int)] ![(Int, Char)]
 
@@ -323,61 +314,61 @@ mkAssoc rawPairs = do
     Just assoc -> pure assoc
     Nothing -> fail "Bad pairs"
 
-runAV :: [(Int, Char)] -> StateT AV Unit () -> IO ()
+runAV :: MonadFail m => [(Int, Char)] -> StateT AV m () -> m ()
 runAV start act = do
   aStart <- mkAssoc start
-  runUnit (runS aStart act)
+  runS aStart act
 
 testAssocCase :: AssocCase -> TestTree
-testAssocCase (AssocCase name start act end) = testCase name $ runAV start $ do
+testAssocCase (AssocCase name start act end) = testUnit name $ runAV start $ do
   testS $ \av -> do
     assertAssocInvariants av
     assertAssocCompact av
-    assocSize av @?= length start
+    assocSize av === length start
   for_ act $ \(x, a, y) -> do
     z <- applyS (assocUpdate (ENodeId x) (toV a))
     testS assertAssocInvariants
-    z @?= ENodeId y
+    z === ENodeId y
   applyS assocCompact
   testS $ \av -> do
     assertAssocInvariants av
     assertAssocCompact av
-    assocSize av @?= length end
+    assocSize av === length end
     endAv <- liftIO (mkAssoc end)
-    assocFwd av @?= assocFwd endAv
-    assocBwd av @?= assocBwd endAv
+    assocFwd av === assocFwd endAv
+    assocBwd av === assocBwd endAv
 
 testAssocCases :: TestTree
 testAssocCases = testGroup "Assoc case" (fmap testAssocCase allAssocCases)
 
 testAssocUnit :: TestTree
-testAssocUnit = testCase "Assoc unit" $ runUnit $ do
+testAssocUnit = testUnit "Assoc unit" $ do
   let a0 = assocNew (ENodeId 0) :: AV
   assertAssocInvariants a0
   assertAssocCompact a0
-  assocSize a0 @?= 0
+  assocSize a0 === 0
   let members = [toV 'a', toV 'b', toV 'c'] :: [V]
   let a1 = execState (for_ members assocAdd) a0
   assertAssocInvariants a1
   assertAssocCompact a0
-  assocSize a1 @?= 3
+  assocSize a1 === 3
   let aVal = toV 'a'
       aKey = fromJust (HashMap.lookup aVal (assocBwd a1))
       bVal = toV 'b'
       bKey = fromJust (HashMap.lookup bVal (assocBwd a1))
   let (newAKey, a2) = runState (assocUpdate aKey bVal) a1
-  newAKey @?= bKey
+  newAKey === bKey
   assertAssocInvariants a2
-  assocCanCompact a2 @? "should be compactable"
-  assocDeadFwd a2 @?= ILS.fromList [aKey]
-  assocDeadBwd a2 @?= HashSet.fromList [aVal]
+  assert $ assocCanCompact a2
+  assocDeadFwd a2 === ILS.fromList [aKey]
+  assocDeadBwd a2 === HashSet.fromList [aVal]
   let a3 = execState assocCompact a2
   assertAssocInvariants a3
   assertAssocCompact a3
-  assocSize a3 @?= 2
+  assocSize a3 === 2
 
 testEgUnit :: TestTree
-testEgUnit = after AllSucceed "Assoc unit" $ testCase "EG unit" $ runEGA $ do
+testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ do
   -- We're going to have our egraph track the equality `2 + 2 = 4`.
   -- Some simple terms:
   let termFour = ArithConst 4
@@ -385,72 +376,72 @@ testEgUnit = after AllSucceed "Assoc unit" $ testCase "EG unit" $ runEGA $ do
       termPlus = ArithPlus termTwo termTwo
   -- Test that the empty egraph is sane
   testS $ \eg -> do
-    egClassSize eg @?= 0
-    egTotalClassSize eg @?= 0
-    egNodeSize eg @?= 0
-    egNeedsRebuild eg @?= False
+    egClassSize eg === 0
+    egTotalClassSize eg === 0
+    egNodeSize eg === 0
+    egNeedsRebuild eg === False
   -- Add the term `4`
   cidFour <- applyTestS (egAddTerm noA termFour) $ \(c, x) eg -> do
-    c @?= ChangedYes
-    egFindTerm termFour eg @?= Just x
-    egClassSize eg @?= 1
-    egTotalClassSize eg @?= 1
-    egNodeSize eg @?= 1
-    egNeedsRebuild eg @?= False
+    c === ChangedYes
+    egFindTerm termFour eg === Just x
+    egClassSize eg === 1
+    egTotalClassSize eg === 1
+    egNodeSize eg === 1
+    egNeedsRebuild eg === False
     pure x
   -- Add the term `2`
   cidTwo <- applyTestS (egAddTerm noA termTwo) $ \(c, x) eg -> do
-    c @?= ChangedYes
-    x @/= cidFour
-    egFindTerm termTwo eg @?= Just x
-    egClassSize eg @?= 2
-    egTotalClassSize eg @?= 2
-    egNodeSize eg @?= 2
-    egNeedsRebuild eg @?= False
+    c === ChangedYes
+    x /== cidFour
+    egFindTerm termTwo eg === Just x
+    egClassSize eg === 2
+    egTotalClassSize eg === 2
+    egNodeSize eg === 2
+    egNeedsRebuild eg === False
     pure x
   -- Add the term `4` again and assert things haven't changed
   applyTestS (egAddTerm noA termFour) $ \(c, x) eg -> do
-    c @?= ChangedNo
-    x @?= cidFour
-    egFindTerm termFour eg @?= Just x
-    egClassSize eg @?= 2
-    egTotalClassSize eg @?= 2
-    egNodeSize eg @?= 2
-    egNeedsRebuild eg @?= False
+    c === ChangedNo
+    x === cidFour
+    egFindTerm termFour eg === Just x
+    egClassSize eg === 2
+    egTotalClassSize eg === 2
+    egNodeSize eg === 2
+    egNeedsRebuild eg === False
   -- Add the term `2 + 2`
   cidPlus <- applyTestS (egAddTerm noA termPlus) $ \(c, x) eg -> do
-    c @?= ChangedYes
-    x @/= cidFour
-    x @/= cidTwo
-    egFindTerm termPlus eg @?= Just x
-    egClassSize eg @?= 3
-    egTotalClassSize eg @?= 3
-    egNodeSize eg @?= 3
-    egNeedsRebuild eg @?= False
+    c === ChangedYes
+    x /== cidFour
+    x /== cidTwo
+    egFindTerm termPlus eg === Just x
+    egClassSize eg === 3
+    egTotalClassSize eg === 3
+    egNodeSize eg === 3
+    egNeedsRebuild eg === False
     pure x
   -- Merge `4` and `4` and assert things haven't changed
   applyTestS (egMerge cidFour cidFour) $ \m eg -> do
-    egNeedsRebuild eg @?= False
+    egNeedsRebuild eg === False
     case m of
       Nothing -> fail "Could not resolve cidFour"
-      Just c -> c @?= ChangedNo
+      Just c -> c === ChangedNo
   -- Merge `2 + 2` and `4`
   applyTestS (egMerge cidPlus cidFour) $ \m eg -> do
-    egNeedsRebuild eg @?= True
-    egWorkList eg @?= Seq.singleton (ILS.fromList [cidPlus, cidFour])
+    egNeedsRebuild eg === True
+    egWorkList eg === Seq.singleton (ILS.fromList [cidPlus, cidFour])
     case m of
       Nothing -> fail "Could not resolve one of cidFour or cidPlus"
-      Just c -> c @?= ChangedYes
+      Just c -> c === ChangedYes
   -- Now rebuild
   applyTestS (egRebuild noA) $ \newRoots eg -> do
     cidMerged <-
       case ILM.keys newRoots of
         [x] -> pure x
         _ -> fail "Expected singleton root list"
-    egFindTerm termFour eg @?= Just cidMerged
-    egFindTerm termPlus eg @?= Just cidMerged
-    egFindTerm termTwo eg @?= Just cidTwo
-    egNeedsRebuild eg @?= False
+    egFindTerm termFour eg === Just cidMerged
+    egFindTerm termPlus eg === Just cidMerged
+    egFindTerm termTwo eg === Just cidTwo
+    egNeedsRebuild eg === False
 
 genBinTree :: Gen a -> Gen (BinTree a)
 genBinTree genA = genEither where
@@ -480,10 +471,10 @@ analyzeBinTree f = cata go where
 maxBinTreeLeaf :: Ord a => BinTree a -> a
 maxBinTreeLeaf = getMax . analyzeBinTree Max
 
-assertEgInvariants :: (MonadAssert m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
+assertEgInvariants :: (MonadTest m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
 assertEgInvariants eg = do
   -- Invariants require that no rebuild is needed (empty worklist)
-  not (egNeedsRebuild eg) @? "must be rebuilt"
+  assert $ not (egNeedsRebuild eg)
   let assoc = egNodeAssoc eg
       hc = egHashCons eg
       fwd = assocFwd assoc
@@ -496,23 +487,23 @@ assertEgInvariants eg = do
       cm = egClassMap eg
       cmClasses = ILS.fromList (ILM.keys cm)
   -- Assert that dead classes and root classes are disjoint
-  ILS.intersection deadClasses efRootClasses @?= ILS.empty
+  ILS.intersection deadClasses efRootClasses === ILS.empty
   -- Assert that dead classes and root classes partition all classes
-  ILS.union deadClasses efRootClasses @?= allClasses
+  ILS.union deadClasses efRootClasses === allClasses
   -- Assert that the assoc is 1-1 etc
   assertAssocInvariants assoc
   -- Assert that the hashcons and assoc have equal key sets
-  ILM.keys hc @?= ILM.keys fwd
+  ILM.keys hc === ILM.keys fwd
   -- Assert that hashcons has exactly the same values as unionfind roots for all nodes
-  for_ (ILM.elems hc) $ \c -> do
-    ILS.member c efRootClasses @? show c ++ " must be member of classes"
+  for_ (ILM.elems hc) $ \c ->
+    assert $ ILS.member c efRootClasses
   -- Assert that classmap contains all unionfind roots
   for_ (ILS.toList efRootClasses) $ \r ->
-    ILS.member r cmClasses @? "class map should contain root" ++ show r
+    assert $ ILS.member r cmClasses
   -- Assert that those non-root classes are marked dead
   for_ (ILS.toList cmClasses) $ \c ->
     unless (ILS.member c efRootClasses) $
-      ILS.member c deadClasses @? "class map contains non-dead non-root " ++ show c
+      assert $ ILS.member c deadClasses
   -- For every non-dead class
   cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) ->
     if ILS.member c deadClasses
@@ -521,35 +512,35 @@ assertEgInvariants eg = do
       else do
         let nodes = eciNodes eci
         -- Assert that classmap node values are non-empty
-        nodes @/= ILS.empty
+        nodes /== ILS.empty
         -- Assert that classmap class has node values that are hashconsed to class
         for_ (ILS.toList nodes) $ \n ->
-          ILM.lookup n hc @?= Just c
-        ILS.disjoint nodes accNodes @? "class nodes should be disjoint"
+          ILM.lookup n hc === Just c
+        assert $ ILS.disjoint nodes accNodes
         pure (ILS.union accNodes nodes)
   -- Assert that all node values in all classmap classes equal hc keys
-  cmNodes @?= ILS.fromList (ILM.keys hc)
+  cmNodes === ILS.fromList (ILM.keys hc)
   -- Now test recanonicalization
   for_ (HashMap.toList bwd) $ \(fc, _) ->
     let recanon = evalState (egCanonicalize fc) eg
     in if HashSet.member fc deadBwd
       -- If it's dead, best you can say is that it's something
-      then isJust recanon @? "recanon missing for " ++ show fc
+      then assert $ isJust recanon
       -- otherwise it should already be canonical
-      else recanon @?= Just fc
+      else recanon === Just fc
 
 -- assert this after the usual eg invariants
-assertEgCompactInvariants :: (MonadAssert m, Eq (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
+assertEgCompactInvariants :: (MonadTest m, Eq (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
 assertEgCompactInvariants eg = do
   let assoc = egNodeAssoc eg
       deadFwd = assocDeadFwd assoc
       deadBwd = assocDeadBwd assoc
       deadClasses = egDeadClasses eg
   -- dead classes should be empty
-  deadClasses @?= ILS.empty
+  deadClasses === ILS.empty
   -- dead nodes should be empty
-  deadFwd @?= ILS.empty
-  deadBwd @?= HashSet.empty
+  deadFwd === ILS.empty
+  deadBwd === HashSet.empty
 
 data EgRound = EgRound
   { egRoundTerms :: ![EGT]
@@ -615,9 +606,9 @@ testEgCase compact (EgCase name rounds) = kase where
   findMayTerm t = fmap (egFindTerm t) get
   findTerm t = fmap fromJust (findMayTerm t)
   findTerms ts = fmap ILS.fromList (for ts findTerm)
-  assertTermFound t = findMayTerm t >>= \mi -> isJust mi @? "term not found: " ++ show t
+  assertTermFound t = findMayTerm t >>= \mi -> assert (isJust mi)
   assertTermsFound ts = for_ ts assertTermFound
-  kase = testCase (name ++ " (" ++ (if compact then "compact" else "non-compact") ++ ")") $ runUnit $ runS egNew $ do
+  kase = testUnit (name ++ " (" ++ (if compact then "compact" else "non-compact") ++ ")") $ runS egNew $ do
     -- for each round
     for_ rounds $ \(EgRound start act endEq endNeq) -> do
       -- add initial terms and assert invariants hold
@@ -629,7 +620,7 @@ testEgCase compact (EgCase name rounds) = kase where
       for_ endEq assertTermsFound
       for_ endNeq $ \(x, y) -> do
         -- also assert that neq terms are not themselves equal
-        x @/= y
+        x /== y
         assertTermFound x
         assertTermFound y
       -- merge sets of terms and rebuild
@@ -642,12 +633,12 @@ testEgCase compact (EgCase name rounds) = kase where
       -- find final eq terms and assert they are in same classes
       for_ endEq $ \ts -> do
         set <- applyS (findTerms ts)
-        ILS.size set @?= 1
+        ILS.size set === 1
       -- find final neq terms and assert they are not in same class
       for_ endNeq $ \(x, y) -> do
         i <- applyS (findTerm x)
         j <- applyS (findTerm y)
-        i @/= j
+        i /== j
       -- compact if configured to do so
       when compact $ do
         applyS egCompact
@@ -668,46 +659,45 @@ genSomeList xs = go where
   go = Gen.recursive Gen.choice [Gen.constant [], fmap pure (Gen.element xs)] [Gen.subterm2 go go (++)]
 
 testEgProp :: TestTree
-testEgProp = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testProperty "EG prop" $
+testEgProp = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testGen "EG prop" $ do
   let maxElems = 50
       eg0 = force egNew :: EGV
-  in property $ do
-    egNodeSize eg0 @?= 0
-    egClassSize eg0 @?= 0
-    assertEgInvariants eg0
-    members <- forAll (genBinTreeMembers maxElems)
-    let nMembers = length members
-        nOpsRange = Range.linear 0 (nMembers * nMembers)
-    let eg1 = force (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
-    assertEgInvariants eg1
-    egClassSize eg1 @?= egNodeSize eg1
-    execState (egRebuild maxVAnalysis) eg1 @?= eg1
-    pairs <- forAll (genNodePairs nOpsRange eg1)
-    mergeStrat <- forAll genMergeStrat
-    let merge =
-          case mergeStrat of
-            MergeStratPairs -> for_ pairs (uncurry egMerge)
-            MergeStratSets -> for_ pairs (\(x, y) -> egMergeMany (ILS.fromList [x, y]))
-            MergeStratSingle -> void (egMergeMany (ILS.fromList (pairs >>= \(x, y) -> [x, y])))
-    let eg2 = force (execState merge eg1)
-    -- liftIO (putStrLn "===== eg2 =====")
-    -- liftIO (pPrint eg2)
-    egNodeSize eg2 @?= egNodeSize eg1
-    egNeedsRebuild eg2 @?= not (null pairs)
-    let eg3 = force (execState (egRebuild maxVAnalysis) eg2)
-    -- liftIO (putStrLn "===== eg3 =====")
-    -- liftIO (pPrint eg3)
-    egNodeSize eg3 @?= egNodeSize eg2
-    assertEgInvariants eg3
+  egNodeSize eg0 === 0
+  egClassSize eg0 === 0
+  assertEgInvariants eg0
+  members <- forAll (genBinTreeMembers maxElems)
+  let nMembers = length members
+      nOpsRange = Range.linear 0 (nMembers * nMembers)
+  let eg1 = force (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
+  assertEgInvariants eg1
+  egClassSize eg1 === egNodeSize eg1
+  execState (egRebuild maxVAnalysis) eg1 === eg1
+  pairs <- forAll (genNodePairs nOpsRange eg1)
+  mergeStrat <- forAll genMergeStrat
+  let merge =
+        case mergeStrat of
+          MergeStratPairs -> for_ pairs (uncurry egMerge)
+          MergeStratSets -> for_ pairs (\(x, y) -> egMergeMany (ILS.fromList [x, y]))
+          MergeStratSingle -> void (egMergeMany (ILS.fromList (pairs >>= \(x, y) -> [x, y])))
+  let eg2 = force (execState merge eg1)
+  -- liftIO (putStrLn "===== eg2 =====")
+  -- liftIO (pPrint eg2)
+  egNodeSize eg2 === egNodeSize eg1
+  egNeedsRebuild eg2 === not (null pairs)
+  let eg3 = force (execState (egRebuild maxVAnalysis) eg2)
+  -- liftIO (putStrLn "===== eg3 =====")
+  -- liftIO (pPrint eg3)
+  egNodeSize eg3 === egNodeSize eg2
+  assertEgInvariants eg3
 
 type M = IntLikeMap ENodeId Char
 
 testILM :: TestTree
-testILM = testCase "ILM unit" $ runUnit $ do
+testILM = testUnit "ILM unit" $ do
   let mLeft = ILM.fromList [(ENodeId 0, 'a'), (ENodeId 1, 'b')] :: M
       mRight = ILM.fromList [(ENodeId 1, 'x'), (ENodeId 2, 'c')] :: M
       mMerged = ILM.fromList [(ENodeId 0, 'a'), (ENodeId 1, 'b'), (ENodeId 2, 'c')] :: M
-  mLeft <> mRight @?= mMerged
+  mLeft <> mRight === mMerged
 
 main :: IO ()
 main = do

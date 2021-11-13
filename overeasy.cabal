@@ -91,7 +91,6 @@ library
     , recursion-schemes
     , tasty
     , tasty-hedgehog
-    , tasty-hunit
     , text
     , transformers
     , unordered-containers
@@ -147,7 +146,6 @@ test-suite overeasy-test
     , recursion-schemes
     , tasty
     , tasty-hedgehog
-    , tasty-hunit
     , text
     , transformers
     , unordered-containers

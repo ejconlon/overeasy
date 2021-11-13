@@ -32,7 +32,6 @@ dependencies:
 - hedgehog
 - tasty
 - tasty-hedgehog
-- tasty-hunit
 
 default-extensions:
 - BangPatterns

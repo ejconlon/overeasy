@@ -1,65 +1,27 @@
 module Overeasy.Test.Assertions
-  ( MonadAssert (..)
-  , Unit (..)
-  , (@?)
-  , (@?=)
-  , (@/=)
-  , assertUnaryPredicate
-  , assertBinaryPredicate
+  ( (===)
+  , (/==)
+  , assert
+  , testGen
+  , testUnit
+  , MonadTest
   ) where
 
-import Control.Monad (unless)
-import Control.Monad.IO.Class (MonadIO)
-import Control.Monad.State.Strict (StateT)
-import Control.Monad.Trans (lift)
-import GHC.Stack (HasCallStack)
-import Hedgehog (PropertyT)
-import qualified Hedgehog as HG
-import qualified Test.Tasty.HUnit as HU
+import Hedgehog (DiscardLimit, MonadTest, Property, PropertyT, ShrinkLimit, ShrinkRetries, TestLimit, assert, property,
+                 withDiscards, withRetries, withShrinks, withTests, (/==), (===))
+import Test.Tasty (TestName, TestTree)
+import Test.Tasty.Hedgehog (testProperty)
 
-assertUnaryPredicate :: (MonadFail m, Show a) => (a -> Bool) -> String -> a -> m ()
-assertUnaryPredicate predicate preface value = unless (predicate value) (fail msg) where
-  msg = (if null preface then "" else preface ++ "\n") ++ "value: " ++ show value
+unitProperty :: PropertyT IO () -> Property
+unitProperty =
+  withTests (1 :: TestLimit) .
+  withDiscards (1 :: DiscardLimit) .
+  withShrinks (0 :: ShrinkLimit) .
+  withRetries (0 :: ShrinkRetries) .
+  property
 
-assertBinaryPredicate :: (MonadFail m, Show a) => (a -> a -> Bool) -> String -> a -> a -> m ()
-assertBinaryPredicate predicate preface left right = unless (predicate left right) (fail msg) where
-  msg = (if null preface then "" else preface ++ "\n") ++ "left: " ++ show left ++ "\n right: " ++ show right
+testUnit :: TestName -> PropertyT IO () -> TestTree
+testUnit name = testProperty name . unitProperty
 
-class MonadFail m => MonadAssert m where
-  assertTrue :: HasCallStack => Bool -> String -> m ()
-  assertTrue a p = assertUnaryPredicate id p a
-  assertEqual :: (HasCallStack, Eq a, Show a) => a -> a -> m ()
-  assertEqual = assertBinaryPredicate (==) "Expected equal"
-  assertNotEqual :: (HasCallStack, Eq a, Show a) => a -> a -> m ()
-  assertNotEqual = assertBinaryPredicate (/=) "Expected not equal"
-
-infix 1 @?, @?=, @/=
-
-(@?) :: (MonadAssert m, HasCallStack) => Bool -> String -> m ()
-(@?) = assertTrue
-
-(@?=) :: (MonadAssert m, HasCallStack, Eq a, Show a) => a -> a -> m ()
-(@?=) = assertEqual
-
-(@/=) :: (MonadAssert m, HasCallStack, Eq a, Show a) => a -> a -> m ()
-(@/=) = assertNotEqual
-
-instance Monad m => MonadAssert (PropertyT m) where
-  assertTrue x _ = HG.assert x
-  assertEqual = (HG.===)
-  assertNotEqual = (HG./==)
-
-instance MonadAssert m => MonadAssert (StateT s m) where
-  assertTrue x p = lift (assertTrue x p)
-  assertEqual x y = lift (assertEqual x y)
-  assertNotEqual x y = lift (assertNotEqual x y)
-
-newtype Unit a = Unit { runUnit :: IO a }
-  deriving newtype (Functor, Applicative, Monad, MonadIO)
-
-instance MonadFail Unit where
-  fail = Unit . HU.assertFailure
-
-instance MonadAssert Unit where
-  assertTrue x p = Unit (x HU.@? p)
-  assertEqual x y = Unit (x HU.@?= y)
+testGen :: TestName -> PropertyT IO () -> TestTree
+testGen name = testProperty name . property
