@@ -538,6 +538,19 @@ assertEgInvariants eg = do
       -- otherwise it should already be canonical
       else recanon @?= Just fc
 
+-- assert this after the usual eg invariants
+assertEgCompactInvariants :: (MonadAssert m, Eq (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
+assertEgCompactInvariants eg = do
+  let assoc = egNodeAssoc eg
+      deadFwd = assocDeadFwd assoc
+      deadBwd = assocDeadBwd assoc
+      deadClasses = egDeadClasses eg
+  -- dead classes should be empty
+  deadClasses @?= ILS.empty
+  -- dead nodes should be empty
+  deadFwd @?= ILS.empty
+  deadBwd @?= HashSet.empty
+
 data EgRound = EgRound
   { egRoundTerms :: ![EGT]
   , egRoundSets :: ![[EGT]]
@@ -639,6 +652,7 @@ testEgCase compact (EgCase name rounds) = kase where
       when compact $ do
         applyS egCompact
         testS assertEgInvariants
+        testS assertEgCompactInvariants
 
 testEgCases :: TestTree
 testEgCases = testGroup "Eg case" $ do
@@ -669,7 +683,13 @@ testEgProp = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testProp
     egClassSize eg1 @?= egNodeSize eg1
     execState (egRebuild maxVAnalysis) eg1 @?= eg1
     pairs <- forAll (genNodePairs nOpsRange eg1)
-    let eg2 = force (execState (for_ pairs (uncurry egMerge)) eg1)
+    mergeStrat <- forAll genMergeStrat
+    let merge =
+          case mergeStrat of
+            MergeStratPairs -> for_ pairs (uncurry egMerge)
+            MergeStratSets -> for_ pairs (\(x, y) -> egMergeMany (ILS.fromList [x, y]))
+            MergeStratSingle -> void (egMergeMany (ILS.fromList (pairs >>= \(x, y) -> [x, y])))
+    let eg2 = force (execState merge eg1)
     -- liftIO (putStrLn "===== eg2 =====")
     -- liftIO (pPrint eg2)
     egNodeSize eg2 @?= egNodeSize eg1
