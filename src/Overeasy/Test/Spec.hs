@@ -25,8 +25,8 @@ import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocCanCompact, assocCompact,
                        assocFromPairs, assocFwd, assocNew, assocSize, assocSrc, assocUpdate)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
-                        ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egMergeMany,
-                        egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
+                        ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
+                        egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efFind, efMerge, efMergeSets, efNew, efRoots, efSize, efTotalSize)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
@@ -597,14 +597,15 @@ allEgCases =
         ]
      ]
 
-testEgCase :: EgCase -> TestTree
-testEgCase (EgCase name rounds) = kase where
+testEgCase :: Bool -> EgCase -> TestTree
+testEgCase compact (EgCase name rounds) = kase where
   findMayTerm t = fmap (egFindTerm t) get
   findTerm t = fmap fromJust (findMayTerm t)
   findTerms ts = fmap ILS.fromList (for ts findTerm)
   assertTermFound t = findMayTerm t >>= \mi -> isJust mi @? "term not found: " ++ show t
   assertTermsFound ts = for_ ts assertTermFound
-  kase = testCase name $ runUnit $ runS egNew $ do
+  kase = testCase (name ++ " (" ++ (if compact then "compact" else "non-compact") ++ ")") $ runUnit $ runS egNew $ do
+    -- for each round
     for_ rounds $ \(EgRound start act endEq endNeq) -> do
       -- add initial terms and assert invariants hold
       applyS (for_ start (egAddTerm maxVAnalysis))
@@ -618,11 +619,12 @@ testEgCase (EgCase name rounds) = kase where
         x @/= y
         assertTermFound x
         assertTermFound y
-      -- merge sets of terms, rebuild, and assert invariants hold
+      -- merge sets of terms and rebuild
       applyS $ do
         sets <- for act findTerms
         for_ sets egMergeMany
         void (egRebuild maxVAnalysis)
+      -- assert invariants hold
       testS assertEgInvariants
       -- find final eq terms and assert they are in same classes
       for_ endEq $ \ts -> do
@@ -633,9 +635,16 @@ testEgCase (EgCase name rounds) = kase where
         i <- applyS (findTerm x)
         j <- applyS (findTerm y)
         i @/= j
+      -- compact if configured to do so
+      when compact $ do
+        applyS egCompact
+        testS assertEgInvariants
 
 testEgCases :: TestTree
-testEgCases = testGroup "Eg case" (fmap testEgCase allEgCases)
+testEgCases = testGroup "Eg case" $ do
+  kase <- allEgCases
+  compact <- [False, True]
+  pure (testEgCase compact kase)
 
 genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
 genNodePairs nOpsRange eg = genListOfDistinctPairs nOpsRange (ILM.keys (egClassMap eg))
