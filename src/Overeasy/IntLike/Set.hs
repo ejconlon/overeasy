@@ -9,6 +9,8 @@ module Overeasy.IntLike.Set
   , toList
   , insert
   , delete
+  , isSubsetOf
+  , intersection
   , difference
   , union
   , unions
@@ -68,6 +70,14 @@ insert x = IntLikeSet . IntSet.insert (coerce x) . unIntLikeSet
 delete :: Coercible x Int => x -> IntLikeSet x -> IntLikeSet x
 delete x = IntLikeSet . IntSet.delete (coerce x) . unIntLikeSet
 {-# INLINE delete #-}
+
+isSubsetOf :: IntLikeSet x -> IntLikeSet x -> Bool
+isSubsetOf xs ys = IntSet.isSubsetOf (unIntLikeSet xs) (unIntLikeSet ys)
+{-# INLINE isSubsetOf #-}
+
+intersection :: IntLikeSet x -> IntLikeSet x -> IntLikeSet x
+intersection xs ys = IntLikeSet (IntSet.intersection (unIntLikeSet xs) (unIntLikeSet ys))
+{-# INLINE intersection #-}
 
 difference :: IntLikeSet x -> IntLikeSet x -> IntLikeSet x
 difference xs ys = IntLikeSet (IntSet.difference (unIntLikeSet xs) (unIntLikeSet ys))

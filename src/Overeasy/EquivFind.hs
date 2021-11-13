@@ -26,6 +26,8 @@ module Overeasy.EquivFind
   , EquivMergeSetsRes (..)
   , efMergeSetsInc
   , efMergeSets
+  , efCompactInc
+  , efCompact
   ) where
 
 import Control.DeepSeq (NFData)
@@ -82,6 +84,17 @@ efEquivs x (EquivFind fwd bwd) =
 
 efClosure :: Coercible x Int => [x] -> EquivFind x -> IntLikeSet x
 efClosure xs ef = foldl' (\c x -> if ILS.member x c then c else ILS.union (efEquivs x ef) c) ILS.empty xs
+
+-- -- | For all given classes, construct a map of class root to all class elems (not including the root)
+-- efRootMap :: Coercible x Int => [x] -> EquivFind x -> IntLikeMultiMap x x
+-- efRootMap xs (EquivFind fwd bwd) = foldl' go ILM.empty xs where
+--   go m x =
+--     case ILM.lookup x bwd of
+--       Nothing -> m
+--       Just r ->
+--         case ILM.lookup r m of
+--           Nothing -> ILM.insert r (ILM.partialLookup r fwd) m
+--           _ -> m
 
 efFind :: Coercible x Int => x -> EquivFind x -> Maybe x
 efFind x = ILM.lookup x . efBwd
@@ -187,3 +200,13 @@ efMergeSets css = state $ \ef ->
   case efMergeSetsInc css ef of
     EquivMergeSetsResChanged roots classRemapSet ef' -> (Just (roots, classRemapSet), ef')
     _ -> (Nothing, ef)
+
+efCompactInc :: Coercible x Int => IntLikeSet x -> EquivFind x -> (IntLikeSet x, EquivFind x)
+efCompactInc dc (EquivFind fwd bwd) =
+  let roots = ILS.map (`ILM.partialLookup` bwd) dc
+      fwd' = foldl' (flip (ILM.adjust (`ILS.difference` dc))) fwd (ILS.toList roots)
+      bwd' = foldl' (flip ILM.delete) bwd (ILS.toList dc)
+  in (roots, EquivFind fwd' bwd')
+
+efCompact :: Coercible x Int => IntLikeSet x -> State (EquivFind x) (IntLikeSet x)
+efCompact = state . efCompactInc

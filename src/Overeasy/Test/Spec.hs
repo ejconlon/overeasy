@@ -484,52 +484,59 @@ assertEgInvariants :: (MonadAssert m, Traversable f, Eq (f EClassId), Hashable (
 assertEgInvariants eg = do
   -- Invariants require that no rebuild is needed (empty worklist)
   not (egNeedsRebuild eg) @? "must be rebuilt"
-  -- First look at the assoc (NodeId <-> f ClassId)
   let assoc = egNodeAssoc eg
+      hc = egHashCons eg
       fwd = assocFwd assoc
       bwd = assocBwd assoc
-      deadFwd = assocDeadFwd assoc
       deadBwd = assocDeadBwd assoc
+      ef = egEquivFind eg
+      efRootClasses = ILS.fromList (efRoots ef)
+      allClasses = ILS.fromList (ILM.keys (efBwd ef))
+      deadClasses = egDeadClasses eg
+      cm = egClassMap eg
+      cmClasses = ILS.fromList (ILM.keys cm)
+  -- Assert that dead classes and root classes are disjoint
+  ILS.intersection deadClasses efRootClasses @?= ILS.empty
+  -- Assert that dead classes and root classes partition all classes
+  ILS.union deadClasses efRootClasses @?= allClasses
   -- Assert that the assoc is 1-1 etc
   assertAssocInvariants assoc
-  -- Now look at hashcons (NodeId -> ClassId)
-  let hc = egHashCons eg
   -- Assert that the hashcons and assoc have equal key sets
   ILM.keys hc @?= ILM.keys fwd
-  -- Assert that hashcons has exactly the same values as unionfind roots for non-dead nodes
-  let ef = egEquivFind eg
-      efRootClasses = ILS.fromList (efRoots ef)
-  for_ (ILM.toList hc) $ \(n, c) ->
-    unless (ILS.member n deadFwd) $ do
-      ILS.member c efRootClasses @? "must be member of classes"
-  -- Assert that classmap has exactly the same keys as unionfind roots
-  let cm = egClassMap eg
-      cmClasses = ILS.fromList (ILM.keys cm)
-  cmClasses @?= efRootClasses
-  cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) -> do
-    let nodes = eciNodes eci
-    -- Assert that classmap node values are non-empty
-    nodes @/= ILS.empty
-    -- Assert that classmap class has node values that are hashconsed to class
-    for_ (ILS.toList nodes) $ \n ->
-      ILM.lookup n hc @?= Just c
-    ILS.disjoint nodes accNodes @? "should be disjoint"
-    pure (accNodes <> nodes)
+  -- Assert that hashcons has exactly the same values as unionfind roots for all nodes
+  for_ (ILM.elems hc) $ \c -> do
+    ILS.member c efRootClasses @? show c ++ " must be member of classes"
+  -- Assert that classmap contains all unionfind roots
+  for_ (ILS.toList efRootClasses) $ \r ->
+    ILS.member r cmClasses @? "class map should contain root" ++ show r
+  -- Assert that those non-root classes are marked dead
+  for_ (ILS.toList cmClasses) $ \c ->
+    unless (ILS.member c efRootClasses) $
+      ILS.member c deadClasses @? "class map contains non-dead non-root " ++ show c
+  -- For every non-dead class
+  cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) ->
+    if ILS.member c deadClasses
+      -- skip dead classes
+      then pure accNodes
+      else do
+        let nodes = eciNodes eci
+        -- Assert that classmap node values are non-empty
+        nodes @/= ILS.empty
+        -- Assert that classmap class has node values that are hashconsed to class
+        for_ (ILS.toList nodes) $ \n ->
+          ILM.lookup n hc @?= Just c
+        ILS.disjoint nodes accNodes @? "class nodes should be disjoint"
+        pure (ILS.union accNodes nodes)
   -- Assert that all node values in all classmap classes equal hc keys
   cmNodes @?= ILS.fromList (ILM.keys hc)
-  -- Now test recanonicalization for non-dead nodes
+  -- Now test recanonicalization
   for_ (HashMap.toList bwd) $ \(fc, _) ->
-    unless (HashSet.member fc deadBwd) $
-      let recanon = evalState (egCanonicalize fc) eg
-      in do
-        -- liftIO (putStrLn "~~~~~~~~~~~~~~~~~~~")
-        -- liftIO (putStrLn "----- node id -----")
-        -- liftIO (pPrint n)
-        -- liftIO (putStrLn "----- fc (expected) -----")
-        -- liftIO (pPrint (Just fc))
-        -- liftIO (putStrLn "----- recanon (actual) -----")
-        -- liftIO (pPrint recanon)
-        recanon @?= Just fc
+    let recanon = evalState (egCanonicalize fc) eg
+    in if HashSet.member fc deadBwd
+      -- If it's dead, best you can say is that it's something
+      then isJust recanon @? "recanon missing for " ++ show fc
+      -- otherwise it should already be canonical
+      else recanon @?= Just fc
 
 data EgRound = EgRound
   { egRoundTerms :: ![EGT]
@@ -642,83 +649,17 @@ testEgProp = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testProp
   let maxElems = 50
       eg0 = force egNew :: EGV
   in property $ do
-    -- liftIO (putStrLn "===== eg0 =====")
-    -- liftIO (pPrint eg0)
     egNodeSize eg0 @?= 0
     egClassSize eg0 @?= 0
     assertEgInvariants eg0
-    -- -- Case 1: Recursive parents and so on
-    -- let members = [ BinTreeBranch
-    --                     (BinTreeBranch
-    --                        (BinTreeBranch (BinTreeLeaf (toV 'l')) (BinTreeLeaf (toV 'j')))
-    --                        (BinTreeLeaf (toV 'b')))
-    --                     (BinTreeLeaf (toV 'j'))
-    --                 , BinTreeLeaf (toV 'a')
-    --                 , BinTreeBranch
-    --                     (BinTreeLeaf (toV 'a'))
-    --                     (BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'a')))
-    --               ]
-    -- let pairs = [(EClassId 4, EClassId 0), (EClassId 5, EClassId 6), (EClassId 0, EClassId 1)]
-    -- -- Case 2:
-    -- let members = [BinTreeLeaf (toV 'a') , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b'))]
-    -- let pairs = [(EClassId 0, EClassId 1)]
-    -- -- Case 3:
-    -- let members = [BinTreeLeaf (toV 'a') , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')) , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b')) ]
-    -- -- Case 4:
-    -- let leafA = BinTreeLeaf (toV 'a')
-    --     doubleA = BinTreeBranch leafA leafA
-    --     members = [leafA , doubleA , BinTreeBranch doubleA leafA]
-    --     pairs = [(EClassId 0, EClassId 2)]
-    -- -- Case 5:
-    -- let members = [BinTreeLeaf (toV 'a') , BinTreeLeaf (toV 'b') , BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'c'))]
-    -- let pairs = [(EClassId 0, EClassId 2)]
-    -- -- Case 6:
-    -- let leafA = BinTreeLeaf (toV 'a')
-    --     leafB = BinTreeLeaf (toV 'b')
-    --     members =
-    --       [ BinTreeBranch
-    --           (BinTreeBranch leafA leafA)
-    --           leafB
-    --       , BinTreeBranch
-    --           (BinTreeBranch leafA leafB)
-    --           leafA
-    --       , BinTreeBranch
-    --           (BinTreeBranch leafB leafA)
-    --           leafA
-    --       ]
-    --     pairs = [(EClassId 7, EClassId 2), (EClassId 0, EClassId 6)]
-    -- XXX add forAlls back
     members <- forAll (genBinTreeMembers maxElems)
-    -- let members = [BinTreeLeaf (toV 'a'), BinTreeLeaf (toV 'b'), BinTreeLeaf (toV 'c')] :: [EGT]
-    -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
-    -- let members = [BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'b'))]
-    -- let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'b')) (BinTreeLeaf (toV 'c'))]
-    -- let members = [BinTreeLeaf (toV 'a'), BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeBranch (BinTreeLeaf (toV 'a')) (BinTreeLeaf (toV 'a')))]
-    -- let zerolevel = fmap (BinTreeLeaf . toV) "ab"
-    --     onelevel = BinTreeBranch <$> zerolevel <*> zerolevel
-    --     twolevel = (BinTreeBranch <$> onelevel <*> zerolevel) ++ (BinTreeBranch <$> zerolevel <*> onelevel) ++ (BinTreeBranch <$> onelevel <*> onelevel)
-    --     anylevel = zerolevel ++ onelevel ++ twolevel
-    -- members <- forAll (genSomeList anylevel)
-    -- members <- forAll (Gen.subsequence anylevel)
     let nMembers = length members
         nOpsRange = Range.linear 0 (nMembers * nMembers)
     let eg1 = force (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
-    -- liftIO (putStrLn "===== eg1 =====")
-    -- liftIO (pPrint eg1)
     assertEgInvariants eg1
     egClassSize eg1 @?= egNodeSize eg1
     execState (egRebuild maxVAnalysis) eg1 @?= eg1
     pairs <- forAll (genNodePairs nOpsRange eg1)
-    -- let pairs = [(EClassId 0, EClassId 1)]
-    -- let pairs = [(EClassId 1, EClassId 2), (EClassId 0, EClassId 1)]
-    -- let pairs = [(EClassId 0, EClassId 2), (EClassId 0, EClassId 1)]
-    -- let pairs = [(EClassId 0, EClassId 1), (EClassId 0, EClassId 2)]
-    -- let pairs = [(EClassId 0, EClassId 1), (EClassId 0, EClassId 3)]
-    -- let pairs = [(EClassId 0, EClassId 3), (EClassId 0, EClassId 1)]
-    -- liftIO (putStrLn "===== members =====")
-    -- liftIO (pPrint members)
-    -- liftIO (putStrLn "===== pairs =====")
-    -- liftIO (pPrint pairs)
     let eg2 = force (execState (for_ pairs (uncurry egMerge)) eg1)
     -- liftIO (putStrLn "===== eg2 =====")
     -- liftIO (pPrint eg2)
