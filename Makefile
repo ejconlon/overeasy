@@ -11,3 +11,7 @@ docker-test:
 .PHONY: debug-test
 debug-test:
 	DEBUG=1 stack test --trace --profile
+
+.PHONY: deep-test
+deep-test:
+	GENLIMIT=1000 make test

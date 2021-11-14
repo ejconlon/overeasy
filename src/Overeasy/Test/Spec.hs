@@ -2,7 +2,7 @@ module Overeasy.Test.Spec (main) where
 
 import Control.DeepSeq (NFData, force)
 import Control.Monad (foldM, unless, void, when)
-import Control.Monad.IO.Class (liftIO, MonadIO)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT, gets,
                                    runState)
 import Control.Monad.Trans (MonadTrans (lift))
@@ -37,9 +37,7 @@ import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
-import Overeasy.Test.Assertions (MonadTest, assert, testGen, testUnit, (/==), (===))
-import System.Environment (lookupEnv, setEnv)
-import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
+import Overeasy.Test.Assertions (MonadTest, TestLimit, assert, setupTests, testGen, testUnit, (/==), (===))
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 import Text.Pretty.Simple (pPrint)
 
@@ -207,8 +205,8 @@ data MergeStrat = MergeStratPairs | MergeStratSets | MergeStratSingle
 genMergeStrat :: Gen MergeStrat
 genMergeStrat = Gen.enumBounded
 
-testUfProp :: TestTree
-testUfProp = after AllSucceed "UF unit" $ testGen "UF prop" $ do
+testUfProp :: TestLimit -> TestTree
+testUfProp lim = after AllSucceed "UF unit" $ testGen "UF prop" lim $ do
   let maxElems = 50
   -- generate elements
   memberList <- forAll (genMembers maxElems)
@@ -480,11 +478,13 @@ assertEgInvariants eg = do
       hc = egHashCons eg
       fwd = assocFwd assoc
       bwd = assocBwd assoc
+      deadFwd = assocDeadFwd assoc
       deadBwd = assocDeadBwd assoc
       ef = egEquivFind eg
       efRootClasses = ILS.fromList (efRoots ef)
       allClasses = ILS.fromList (ILM.keys (efBwd ef))
       deadClasses = egDeadClasses eg
+      deadNodes = ILS.fromList (ILM.keys deadFwd)
       cm = egClassMap eg
       cmClasses = ILS.fromList (ILM.keys cm)
   -- Assert that dead classes and root classes are disjoint
@@ -519,8 +519,10 @@ assertEgInvariants eg = do
           ILM.lookup n hc === Just c
         assert $ ILS.disjoint nodes accNodes
         pure (ILS.union accNodes nodes)
-  -- Assert that all node values in all classmap classes equal hc keys
-  cmNodes === ILS.fromList (ILM.keys hc)
+  -- Assert hc keys contain class nodes and dead nodes
+  ILS.union cmNodes deadNodes === ILS.fromList (ILM.keys hc)
+  -- Assert class nodes and dead nodes disjoint
+  ILS.intersection deadNodes cmNodes === ILS.empty
   -- Now test recanonicalization
   for_ (HashMap.toList bwd) $ \(fc, _) ->
     let recanon = evalState (egCanonicalize fc) eg
@@ -576,9 +578,9 @@ allEgCases =
       simpleGrandparentTerms = [grandparentAAC, grandparentAAD]
       complexGrandparentTerms = [grandparentBAC, grandparentEAD]
   in [ EgCase "simple"
-        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC)]
-        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafB, leafC)]
-        ]
+          [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC)]
+          , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafB, leafC)]
+          ]
      , EgCase "transitive one round"
         [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
         , EgRound [] [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
@@ -626,6 +628,10 @@ allEgCases =
         , EgRound [] [[parentAC, parentAD]] [[parentAC, parentAD], [grandparentAAC, grandparentAAD]] [(leafC, leafD)]
         , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
         ]
+     , EgCase "repro"
+        [ EgRound [leafB, grandparentAAC] [] [] []
+        , EgRound [] [[leafA, leafC]] [] []
+        ]
      ]
 
 testEgCase :: Bool -> EgCase -> TestTree
@@ -672,7 +678,11 @@ testEgCase compact (EgCase name rounds) = kase where
         i /== j
       -- compact if configured to do so
       when compact $ do
+        -- liftIO (putStrLn "===== before compact =====")
+        -- testS $ liftIO . pPrint
         applyS egCompact
+        -- liftIO (putStrLn "===== after compact =====")
+        -- testS $ liftIO . pPrint
         testS assertEgInvariants
         testS assertEgCompactInvariants
 
@@ -696,8 +706,8 @@ testEgNew = testUnit "EG new" $ do
   egClassSize eg0 === 0
   assertEgInvariants eg0
 
-testEgProp :: TestTree
-testEgProp = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testGen "EG prop" $ do
+testEgProp :: TestLimit -> TestTree
+testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testGen "EG prop" lim $ do
   let maxElems = 10
       eg0 = force egNew :: EGV
   members <- forAll (genBinTreeMembers maxElems)
@@ -740,20 +750,15 @@ testILM = testUnit "ILM unit" $ do
 
 main :: IO ()
 main = do
-  mayDebugStr <- lookupEnv "DEBUG"
-  let debug = Just "1" == mayDebugStr
-  when debug $ do
-    setEnv "TASTY_NUM_THREADS" "1"
-    hSetBuffering stdout NoBuffering
-    hSetBuffering stderr NoBuffering
+  lim <- setupTests
   defaultMain $ testGroup "Overeasy"
     [ testILM
     , testUfUnit
+    , testAssocUnit
+    , testAssocCases
     , testEgUnit
     , testEgNew
     , testEgCases
-    , testAssocUnit
-    , testAssocCases
-    , testUfProp
-    , testEgProp
+    , testUfProp lim
+    , testEgProp lim
     ]

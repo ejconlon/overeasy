@@ -25,7 +25,7 @@ module Overeasy.Assoc
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (MonadState (..), State, modify')
+import Control.Monad.State.Strict (MonadState (..), State)
 import Data.Coerce (Coercible)
 import Data.Foldable (foldl')
 import Data.HashMap.Strict (HashMap)
@@ -177,15 +177,25 @@ assocUpdate x a = state (\assoc -> fromMaybe (x, assoc) (assocUpdateInc x a asso
 assocCanCompact :: Assoc x a -> Bool
 assocCanCompact assoc = not (ILM.null (assocDeadFwd assoc) && HashSet.null (assocDeadBwd assoc))
 
-assocCompactInc :: (Coercible x Int, Eq a, Hashable a) => Assoc x a -> Assoc x a
+-- private
+pathCompactMap :: Coercible x Int => IntLikeMap x x -> IntLikeMap x x
+pathCompactMap m = foldl' (\n (x, y) -> go [] n x y) m (ILM.toList m) where
+  go acc n x y =
+    case ILM.lookup y n of
+      Nothing -> foldl' (\o w -> ILM.insert w y o) n acc
+      Just z -> go (x:acc) n y z
+
+assocCompactInc :: (Coercible x Int, Eq a, Hashable a) => Assoc x a -> (IntLikeMap x x, Assoc x a)
 assocCompactInc assoc@(Assoc fwd bwd deadFwd deadBwd n) =
   if assocCanCompact assoc
     then
       let fwd' = foldl' (flip ILM.delete) fwd (ILM.keys deadFwd)
           bwd' = foldl' (flip HashMap.delete) bwd deadBwd
-      in Assoc fwd' bwd' ILM.empty HashSet.empty n
-    else assoc
+          assoc' = Assoc fwd' bwd' ILM.empty HashSet.empty n
+          mapping = pathCompactMap deadFwd
+      in (mapping, assoc')
+    else (ILM.empty, assoc)
 
 -- | Removes all dead elements from the forward map
-assocCompact :: (Coercible x Int, Eq a, Hashable a) => State (Assoc x a) ()
-assocCompact = modify' assocCompactInc
+assocCompact :: (Coercible x Int, Eq a, Hashable a) => State (Assoc x a) (IntLikeMap x x)
+assocCompact = state assocCompactInc
