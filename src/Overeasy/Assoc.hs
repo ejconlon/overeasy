@@ -17,8 +17,6 @@ module Overeasy.Assoc
   , assocPartialLookupByKey
   , assocLookupByValue
   , assocPartialLookupByValue
-  , assocDeleteByKey
-  , assocDeleteByValue
   , assocUpdateInc
   , assocUpdate
   , assocCanCompact
@@ -41,16 +39,14 @@ import GHC.Generics (Generic)
 import Overeasy.Classes (Changed (..))
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
-import Overeasy.IntLike.Set (IntLikeSet)
-import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize, sourceSkipInc)
-import Overeasy.StateUtil (stateFail, stateFailChanged)
+import Overeasy.StateUtil (stateFail)
 
 -- private ctor
 data Assoc x a = Assoc
   { assocFwd :: !(IntLikeMap x a)
   , assocBwd :: !(HashMap a x)
-  , assocDeadFwd :: !(IntLikeSet x)
+  , assocDeadFwd :: !(IntLikeMap x x)
   , assocDeadBwd :: !(HashSet a)
   , assocSrc :: !(Source x)
   } deriving stock (Eq, Show, Generic)
@@ -66,7 +62,7 @@ assocTotalSize = sourceSize . assocSrc
 
 -- | Creates a new 'Assoc' from a starting element
 assocNew :: Coercible x Int => x -> Assoc x a
-assocNew = Assoc ILM.empty HashMap.empty ILS.empty HashSet.empty . sourceNew
+assocNew = Assoc ILM.empty HashMap.empty ILM.empty HashSet.empty . sourceNew
 
 -- | Creates a new 'Assoc' from pairs of elements.
 assocFromPairs :: (Coercible x Int, Eq a, Hashable a) => x -> [(x, a)] -> Maybe (Assoc x a)
@@ -78,7 +74,7 @@ assocFromPairs start pairs =
       nFwd = ILM.size fwd
       nBwd = HashMap.size bwd
   in if nFwd == nElems && nBwd == nElems
-    then Just (Assoc fwd bwd ILS.empty HashSet.empty n)
+    then Just (Assoc fwd bwd ILM.empty HashSet.empty n)
     else Nothing
 
 -- private
@@ -123,22 +119,6 @@ assocLookupByValue a = HashMap.lookup a . assocBwd
 assocPartialLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> x
 assocPartialLookupByValue a assoc = assocBwd assoc HashMap.! a
 
--- private
-assocDeleteByKeyInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> Maybe (Assoc x a)
-assocDeleteByKeyInc a (Assoc fwd bwd deadFwd deadBwd n) = fmap (\x -> Assoc (ILM.delete x fwd) (HashMap.delete a bwd) (ILS.delete x deadFwd) (HashSet.delete a deadBwd) n) (HashMap.lookup a bwd)
-
--- | Deletes an element by key
-assocDeleteByKey :: (Coercible x Int, Eq a, Hashable a) => a -> State (Assoc x a) Changed
-assocDeleteByKey = stateFailChanged . assocDeleteByKeyInc
-
--- private
-assocDeleteByValueInc :: (Coercible x Int, Eq a, Hashable a) => x -> Assoc x a -> Maybe (Assoc x a)
-assocDeleteByValueInc x (Assoc fwd bwd deadFwd deadBwd n) = fmap (\a -> Assoc (ILM.delete x fwd) (HashMap.delete a bwd) (ILS.delete x deadFwd) (HashSet.delete a deadBwd) n) (ILM.lookup x fwd)
-
--- | Deletes an element by value
-assocDeleteByValue :: (Coercible x Int, Eq a, Hashable a) => x -> State (Assoc x a) Changed
-assocDeleteByValue = stateFailChanged . assocDeleteByValueInc
-
 -- | Updates the assoc. You may need to clean the 'Assoc' with 'assocClean' when you have finished updating.
 -- If (x, a0) is in the assoc fwd and you update with (x, a1) where a0 /= a1, you should not call with a0 again.
 -- May break the 1-1 fwd and bwd mappings until you clean.
@@ -157,7 +137,7 @@ assocUpdateInc x a1 (Assoc fwd bwd deadFwd deadBwd n) =
       -- Update fwd x a1, mark x for deletion, return y
       -- This makes fwd many-to-one until clean. No elem in bwd will point to x.
       let fwd' = ILM.insert x a1 fwd
-          deadFwd' = ILS.insert x deadFwd
+          deadFwd' = ILM.insert x y deadFwd
           n' = sourceSkipInc x n
       in Just (y, Assoc fwd' bwd deadFwd' deadBwd n')
     (Just a0, Nothing) ->
@@ -186,7 +166,7 @@ assocUpdateInc x a1 (Assoc fwd bwd deadFwd deadBwd n) =
           else
             let fwd' = ILM.insert x a1 fwd
                 bwd' = HashMap.insert a0 y bwd
-                deadFwd' = ILS.insert x deadFwd
+                deadFwd' = ILM.insert x y deadFwd
                 deadBwd' = HashSet.insert a0 deadBwd
             in Just (y, Assoc fwd' bwd' deadFwd' deadBwd' n)
 
@@ -195,15 +175,15 @@ assocUpdate x a = state (\assoc -> fromMaybe (x, assoc) (assocUpdateInc x a asso
 
 -- | Are there dead elements in the forward map from 'assocUpdate'?
 assocCanCompact :: Assoc x a -> Bool
-assocCanCompact assoc = not (ILS.null (assocDeadFwd assoc) && HashSet.null (assocDeadBwd assoc))
+assocCanCompact assoc = not (ILM.null (assocDeadFwd assoc) && HashSet.null (assocDeadBwd assoc))
 
 assocCompactInc :: (Coercible x Int, Eq a, Hashable a) => Assoc x a -> Assoc x a
 assocCompactInc assoc@(Assoc fwd bwd deadFwd deadBwd n) =
   if assocCanCompact assoc
     then
-      let fwd' = foldl' (flip ILM.delete) fwd (ILS.toList deadFwd)
+      let fwd' = foldl' (flip ILM.delete) fwd (ILM.keys deadFwd)
           bwd' = foldl' (flip HashMap.delete) bwd deadBwd
-      in Assoc fwd' bwd' ILS.empty HashSet.empty n
+      in Assoc fwd' bwd' ILM.empty HashSet.empty n
     else assoc
 
 -- | Removes all dead elements from the forward map

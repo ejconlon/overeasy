@@ -52,7 +52,7 @@ import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
 import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocDeadFwd, assocEnsure, assocLookupByValue, assocNew,
-                       assocPartialLookupByKey, assocUpdateInc)
+                       assocPartialLookupByKey, assocUpdateInc, assocFwd)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EquivFind (EquivFind, EquivMergeSetsRes (..), efAdd, efBwd, efClosure, efCompactInc, efFind, efFwd,
                            efMergeSetsInc, efNew, efPartialFind, efRoots, efSize, efTotalSize)
@@ -65,6 +65,7 @@ import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAdd, sourceNew)
 import Overeasy.StateUtil (stateFold, stateLens)
+import Data.Coerce (Coercible)
 
 -- | An opaque class id
 newtype EClassId = EClassId { unEClassId :: Int }
@@ -385,6 +386,7 @@ egRebuildNodeRound origHc wl parents = do
   -- Traverse all classes and canonicalize their nodes,
   -- recording the mapping from old -> new
   -- Also track all possible parent classes
+  -- TODO can probably just rebuild node-by-node: go through self-parent nodes of newly merged classes plus usual parents
   (candParents, nodeMap, parentWl) <- egRebuildAssoc origHc classRemap touchedClasses
   -- traceM (unwords ["POST ASSOC", "candParents=", show candParents, "nodeMap=", show nodeMap, "parentWl=", show parentWl])
   -- Invert the node map to find new equivalences
@@ -395,9 +397,6 @@ egRebuildNodeRound origHc wl parents = do
   -- Track next worklist
   let finalWl = parentWl <> canonWl
   -- Track parent classes for next round
-  -- TODO figure out why we need the closure here... this is a straight up HACK
-  -- I think we need to keep the original HC around just to look up node parents.
-  -- Otherwise we need closure of merged classes to get the original classes back.
   let finalParents = ILS.difference candParents touchedClasses
   -- traceM (unwords ["END ROUND", "nodeMap=", show nodeMap, "canonWl=", show canonWl, "finalParents=", show finalParents])
   pure (touchedClasses, finalWl, finalParents)
@@ -454,23 +453,44 @@ egCanCompact :: EGraph d f -> Bool
 egCanCompact eg = assocCanCompact (egNodeAssoc eg) || not (ILS.null (egDeadClasses eg))
 
 egCompactClass :: IntLikeSet ENodeId -> EClassInfo d -> EClassInfo d
-egCompactClass deadNodes (EClassInfo dat nodes parents) = EClassInfo dat (ILS.difference nodes deadNodes) (ILS.difference parents deadNodes)
+egCompactClass deadNodes (EClassInfo dat nodes parents) =
+  EClassInfo
+    dat
+    (ILS.difference nodes deadNodes)  -- TODO filter on construction so only need to filter parents
+    (ILS.difference parents deadNodes)
+    -- (ILS.map (\x -> ILM.findWithDefault x x deadNodeMap) nodes)
+    -- (ILS.map (\x -> ILM.findWithDefault x x deadNodeMap) parents)
 
-egCompactInc :: (Eq (f EClassId), Hashable (f EClassId)) => EGraph d f -> EGraph d f
+pathCompactLookup :: Coercible x Int => IntLikeMap x x -> IntLikeMap x x
+pathCompactLookup m = foldl' (\n (x, y) -> go [] n x y) m (ILM.toList m) where
+  go acc n x y =
+    case ILM.lookup y n of
+      Nothing -> foldl' (\o w -> ILM.insert w y o) n acc
+      Just z -> go (x:acc) n y z
+
+findDeadNodeParentClasses :: Foldable f => IntLikeMap ENodeId (f EClassId) -> IntLikeSet ENodeId -> IntLikeSet EClassId
+findDeadNodeParentClasses fwd = foldl' go ILS.empty . ILS.toList where
+  go s n = foldl' (flip ILS.insert) s (ILM.partialLookup n fwd)
+
+egCompactInc :: (Foldable f, Eq (f EClassId), Hashable (f EClassId)) => EGraph d f -> EGraph d f
 egCompactInc eg =
   let ef = egEquivFind eg
       assoc = egNodeAssoc eg
       hc = egHashCons eg
       cm = egClassMap eg
       deadClasses = egDeadClasses eg
-      deadNodes = assocDeadFwd assoc
+      deadNodeMap = pathCompactLookup (assocDeadFwd assoc)
+      deadNodes = ILS.fromList (ILM.keys deadNodeMap)
       bwd = efBwd ef
       -- select all live classes containing dead nodes
-      classes = ILS.difference (ILS.map ((`ILM.partialLookup` bwd) . (`ILM.partialLookup` hc)) deadNodes) deadClasses
+      -- TODO filter dead nodes in self classes on construction
+      deadNodeSelfClasses = ILS.difference (ILS.map ((`ILM.partialLookup` bwd) . (`ILM.partialLookup` hc)) deadNodes) deadClasses
+      deadNodeParentClasses = findDeadNodeParentClasses (assocFwd assoc) deadNodes
+      classes = ILS.union deadNodeParentClasses deadNodeSelfClasses
       -- remove dead nodes from assoc
       assoc' = assocCompactInc assoc
       -- remove dead classes from hashcons
-      hc' = foldl' (flip ILM.delete) hc (ILS.toList deadNodes)
+      hc' = foldl' (flip ILM.delete) hc (ILM.keys deadNodeMap)
       -- remove dead classes from unionfind
       (_, ef') = efCompactInc deadClasses ef
       -- remove dead classes from classmap
@@ -479,5 +499,5 @@ egCompactInc eg =
       cm'' = foldl' (flip (ILM.adjust (egCompactClass deadNodes))) cm' (ILS.toList classes)
   in eg { egEquivFind = ef', egNodeAssoc = assoc', egClassMap = cm'', egHashCons = hc', egDeadClasses = ILS.empty }
 
-egCompact :: (Eq (f EClassId), Hashable (f EClassId)) => State (EGraph d f) ()
+egCompact :: (Foldable f, Eq (f EClassId), Hashable (f EClassId)) => State (EGraph d f) ()
 egCompact = modify' egCompactInc

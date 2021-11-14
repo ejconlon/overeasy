@@ -41,7 +41,7 @@ import Overeasy.Test.Assertions (MonadTest, assert, testGen, testUnit, (/==), (=
 import System.Environment (lookupEnv, setEnv)
 import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
--- import Text.Pretty.Simple (pPrint)
+import Text.Pretty.Simple (pPrint)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -261,7 +261,7 @@ assertAssocCompact av = do
       bwd = assocBwd av
   -- Assert that the assoc has been rebuilt
   assert $ not (assocCanCompact av)
-  assocDeadFwd av === ILS.empty
+  assocDeadFwd av === ILM.empty
   assocDeadBwd av === HashSet.empty
   -- Look at sizes to confirm that assoc could map 1-1
   ILM.size fwd === HashMap.size bwd
@@ -360,7 +360,7 @@ testAssocUnit = testUnit "Assoc unit" $ do
   newAKey === bKey
   assertAssocInvariants a2
   assert $ assocCanCompact a2
-  assocDeadFwd a2 === ILS.fromList [aKey]
+  assocDeadFwd a2 === ILM.fromList [(aKey, bKey)]
   assocDeadBwd a2 === HashSet.fromList [aVal]
   let a3 = execState assocCompact a2
   assertAssocInvariants a3
@@ -541,7 +541,7 @@ assertEgCompactInvariants eg = do
   -- dead classes should be empty
   deadClasses === ILS.empty
   -- dead nodes should be empty
-  deadFwd === ILS.empty
+  deadFwd === ILM.empty
   deadBwd === HashSet.empty
 
 data EgRound = EgRound
@@ -575,53 +575,53 @@ allEgCases =
       grandparentEAD = BinTreeBranch leafE parentAD
       simpleGrandparentTerms = [grandparentAAC, grandparentAAD]
       complexGrandparentTerms = [grandparentBAC, grandparentEAD]
-  -- in [ EgCase "simple"
-  --       [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC)]
-  --       , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafB, leafC)]
-  --       ]
-  --    , EgCase "transitive one round"
-  --       [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
-  --       , EgRound [] [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
-  --       ]
-  --    , EgCase "transitive two round"
-  --       [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
-  --       , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
-  --       , EgRound [] [[leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
-  --       ]
-  --    , EgCase "simple parents"
-  --       [ EgRound simpleParentTerms [] [] [(leafC, leafD), (parentAC, parentAD)]
-  --       , EgRound [] [[leafC, leafD]] [[parentAC, parentAD]] []
-  --       ]
-  --    , EgCase "complex parents one round"
-  --       [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
-  --       , EgRound [] [[leafA, leafB], [leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
-  --       ]
-  --    , EgCase "complex parents two round"
-  --       [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
-  --       , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafC, leafD), (parentAC, parentBD)]
-  --       , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
-  --       ]
-  --    , EgCase "simple grandparents"
-  --       [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
-  --       , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
-  --       ]
-  --    , EgCase "complex grandparents bottom up"
-  --       [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
-  --       , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD]] [(leafB, leafE), (grandparentBAC, grandparentEAD)]
-  --       , EgRound [] [[leafB, leafE]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
-  --       ]
-  --    , EgCase "complex grandparents top down"
-  --       [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
-  --       , EgRound [] [[leafB, leafE]] [[leafB, leafE]] [(leafC, leafD), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
-  --       , EgRound [] [[leafC, leafD]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
-  --       ]
-  --    , EgCase "connect"
-  --       [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
-  --       , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
-  --       , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD]] [(leafA, leafD)]
-  --       , EgRound [] [[leafB, leafD]] [[leafA, leafB, leafC, leafD]] []
-  --       ]
-  in [ EgCase "mid grandparents"
+  in [ EgCase "simple"
+        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC)]
+        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafB, leafC)]
+        ]
+     , EgCase "transitive one round"
+        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+        , EgRound [] [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
+        ]
+     , EgCase "transitive two round"
+        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
+        , EgRound [] [[leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
+        ]
+     , EgCase "simple parents"
+        [ EgRound simpleParentTerms [] [] [(leafC, leafD), (parentAC, parentAD)]
+        , EgRound [] [[leafC, leafD]] [[parentAC, parentAD]] []
+        ]
+     , EgCase "complex parents one round"
+        [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
+        , EgRound [] [[leafA, leafB], [leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
+        ]
+     , EgCase "complex parents two round"
+        [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
+        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafC, leafD), (parentAC, parentBD)]
+        , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
+        ]
+     , EgCase "simple grandparents"
+        [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
+        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
+        ]
+     , EgCase "complex grandparents bottom up"
+        [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD]] [(leafB, leafE), (grandparentBAC, grandparentEAD)]
+        , EgRound [] [[leafB, leafE]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
+        ]
+     , EgCase "complex grandparents top down"
+        [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+        , EgRound [] [[leafB, leafE]] [[leafB, leafE]] [(leafC, leafD), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
+        ]
+     , EgCase "connect"
+        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
+        , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD]] [(leafA, leafD)]
+        , EgRound [] [[leafB, leafD]] [[leafA, leafB, leafC, leafD]] []
+        ]
+     , EgCase "mid grandparents"
         [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
         , EgRound [] [[parentAC, parentAD]] [[parentAC, parentAD], [grandparentAAC, grandparentAAD]] [(leafC, leafD)]
         , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
@@ -654,7 +654,11 @@ testEgCase compact (EgCase name rounds) = kase where
       applyS $ do
         sets <- for act findTerms
         for_ sets egMergeMany
-        void (egRebuild maxVAnalysis)
+      -- liftIO (putStrLn "===== before rebuild =====")
+      -- testS $ liftIO . pPrint
+      applyS $ void (egRebuild maxVAnalysis)
+      -- liftIO (putStrLn "===== after rebuild =====")
+      -- testS $ liftIO . pPrint
       -- assert invariants hold
       testS assertEgInvariants
       -- find final eq terms and assert they are in same classes
@@ -694,7 +698,7 @@ testEgNew = testUnit "EG new" $ do
 
 testEgProp :: TestTree
 testEgProp = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testGen "EG prop" $ do
-  let maxElems = 4
+  let maxElems = 10
       eg0 = force egNew :: EGV
   members <- forAll (genBinTreeMembers maxElems)
   let nMembers = length members
@@ -743,13 +747,13 @@ main = do
     hSetBuffering stdout NoBuffering
     hSetBuffering stderr NoBuffering
   defaultMain $ testGroup "Overeasy"
-    -- [ testILM
-    -- , testUfUnit
-    -- , testEgUnit
-    -- , testEgNew
-    [ testEgCases
-    -- , testAssocUnit
-    -- , testAssocCases
-    -- , testUfProp
-    -- , testEgProp
+    [ testILM
+    , testUfUnit
+    , testEgUnit
+    , testEgNew
+    , testEgCases
+    , testAssocUnit
+    , testAssocCases
+    , testUfProp
+    , testEgProp
     ]
