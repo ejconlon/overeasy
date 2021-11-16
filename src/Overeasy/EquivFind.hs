@@ -17,7 +17,7 @@ module Overeasy.EquivFind
   , efEnsureInc
   , efEnsure
   , efEquivs
-  , efClosure
+  -- , efClosure
   , efFind
   , efPartialFind
   , EquivMergeRes (..)
@@ -82,8 +82,8 @@ efEquivs x (EquivFind fwd bwd) =
     Nothing -> ILS.empty
     Just y -> ILM.partialLookup y fwd
 
-efClosure :: Coercible x Int => [x] -> EquivFind x -> IntLikeSet x
-efClosure xs ef = foldl' (\c x -> if ILS.member x c then c else ILS.union (efEquivs x ef) c) ILS.empty xs
+-- efClosure :: Coercible x Int => [x] -> EquivFind x -> IntLikeSet x
+-- efClosure xs ef = foldl' (\c x -> if ILS.member x c then c else ILS.union (efEquivs x ef) c) ILS.empty xs
 
 -- -- | For all given classes, construct a map of class root to all class elems (not including the root)
 -- efRootMap :: Coercible x Int => [x] -> EquivFind x -> IntLikeMultiMap x x
@@ -146,6 +146,7 @@ efMergeInc i j (EquivFind fwd bwd) =
                   finalBwd = foldl' (flip (`ILM.insert` loKey)) bwd (ILS.toList hiSet)
               in EquivMergeResChanged loKey hiSet (EquivFind finalFwd finalBwd)
 
+-- | Merge two classes together. If both exist, returns pair of new root and merged classes (not including root).
 efMerge :: (Coercible x Int, Ord x) => x -> x -> State (EquivFind x) (Maybe (x, IntLikeSet x))
 efMerge i j = state $ \ef ->
   case efMergeInc i j ef of
@@ -162,8 +163,9 @@ data EquivMergeManyRes x =
 data EquivMergeSetsRes x =
     EquivMergeSetsResEmptySet
   | EquivMergeSetsResMissing !x
-  | EquivMergeSetsResUnchanged !(IntLikeSet x)
-  | EquivMergeSetsResChanged !(IntLikeSet x) !(IntLikeSet x) !(EquivFind x)
+  | EquivMergeSetsResUnchanged
+  | EquivMergeSetsResChanged !(IntLikeSet x) !(IntLikeMap x x) !(EquivFind x)
+  -- ^ (merged roots) (class -> root) (this)
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
@@ -171,15 +173,16 @@ efMergeSetsInc :: Coercible x Int => [IntLikeSet x] -> EquivFind x -> EquivMerge
 efMergeSetsInc css0 u0 = res where
   res =
     case css0 of
-      [] -> EquivMergeSetsResUnchanged ILS.empty
+      [] -> EquivMergeSetsResUnchanged
       _ -> go ILS.empty ILS.empty u0 css0
   go !roots !classRemapSet u@(EquivFind fwd bwd) css =
     case css of
       [] ->
         let finalRoots = ILS.map (`ILM.partialLookup` bwd) roots
+            finalClassRemap = ILM.fromList (fmap (\x -> (x, ILM.partialLookup x bwd)) (ILS.toList classRemapSet))
         in if ILS.null classRemapSet
-          then EquivMergeSetsResUnchanged finalRoots
-          else EquivMergeSetsResChanged finalRoots classRemapSet u
+          then EquivMergeSetsResUnchanged
+          else EquivMergeSetsResChanged finalRoots finalClassRemap u
       ds:dss ->
         case ILS.toList ds of
           [] -> go roots classRemapSet u dss
@@ -195,10 +198,11 @@ efMergeSetsInc css0 u0 = res where
                   newU = EquivFind newFwd newBwd
               in go newRoots newClassRemapSet newU dss
 
-efMergeSets :: Coercible x Int => [IntLikeSet x] -> State (EquivFind x) (Maybe (IntLikeSet x, IntLikeSet x))
+-- | Merge many classes together. If all exit, returns pair of set of new roots and map from merged class to root
+efMergeSets :: Coercible x Int => [IntLikeSet x] -> State (EquivFind x) (Maybe (IntLikeSet x, IntLikeMap x x))
 efMergeSets css = state $ \ef ->
   case efMergeSetsInc css ef of
-    EquivMergeSetsResChanged roots classRemapSet ef' -> (Just (roots, classRemapSet), ef')
+    EquivMergeSetsResChanged roots classRemap ef' -> (Just (roots, classRemap), ef')
     _ -> (Nothing, ef)
 
 efCompactInc :: Coercible x Int => IntLikeSet x -> EquivFind x -> (IntLikeSet x, EquivFind x)

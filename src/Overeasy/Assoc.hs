@@ -24,6 +24,7 @@ module Overeasy.Assoc
   , assocCompact
   ) where
 
+import Debug.Trace (traceIO)
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (MonadState (..), State)
 import Data.Coerce (Coercible)
@@ -41,6 +42,9 @@ import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize, sourceSkipInc)
 import Overeasy.StateUtil (stateFail)
+import System.IO.Unsafe (unsafePerformIO)
+import Control.Monad.IO.Class (liftIO)
+import Text.Pretty.Simple (pPrint)
 
 -- private ctor
 data Assoc x a = Assoc
@@ -108,7 +112,7 @@ assocLookupByKey :: (Coercible x Int) => x -> Assoc x a -> Maybe a
 assocLookupByKey x = ILM.lookup x . assocFwd
 
 -- | PARTIAL forward lookup
-assocPartialLookupByKey :: (Coercible x Int) => x -> Assoc x a ->  a
+assocPartialLookupByKey :: (Coercible x Int) => x -> Assoc x a -> a
 assocPartialLookupByKey x = ILM.partialLookup x . assocFwd
 
 -- | Backward lookup
@@ -123,15 +127,17 @@ assocPartialLookupByValue a assoc = assocBwd assoc HashMap.! a
 -- If (x, a0) is in the assoc fwd and you update with (x, a1) where a0 /= a1, you should not call with a0 again.
 -- May break the 1-1 fwd and bwd mappings until you clean.
 -- If returns nothing, the assoc was not updated.
-assocUpdateInc :: (Coercible x Int, Eq x, Eq a, Hashable a) => x -> a -> Assoc x a -> Maybe (x, Assoc x a)
-assocUpdateInc x a1 (Assoc fwd bwd deadFwd deadBwd n) =
-  case (ILM.lookup x fwd, HashMap.lookup a1 bwd) of
+assocUpdateInc :: (Show x, Show a, Coercible x Int, Eq x, Eq a, Hashable a) => x -> a -> Assoc x a -> Maybe (x, Assoc x a)
+assocUpdateInc x a1 assoc@(Assoc fwd bwd deadFwd deadBwd n) = unsafePerformIO $ do
+  let p = (ILM.lookup x fwd, HashMap.lookup a1 bwd)
+  traceIO (show ["ASSOC UPDATE", show (x, a1), show p])
+  case p of
     (Nothing, Nothing) ->
       -- Neither x nor a1 were ever in the map - simply insert
       let fwd' = ILM.insert x a1 fwd
           bwd' = HashMap.insert a1 x bwd
           n' = sourceSkipInc x n
-      in Just (x, Assoc fwd' bwd' deadFwd deadBwd n')
+      in pure $ Just (x, Assoc fwd' bwd' deadFwd deadBwd n')
     (Nothing, Just y) ->
       -- x was not in the map but a1 was
       -- Update fwd x a1, mark x for deletion, return y
@@ -139,7 +145,7 @@ assocUpdateInc x a1 (Assoc fwd bwd deadFwd deadBwd n) =
       let fwd' = ILM.insert x a1 fwd
           deadFwd' = ILM.insert x y deadFwd
           n' = sourceSkipInc x n
-      in Just (y, Assoc fwd' bwd deadFwd' deadBwd n')
+      in pure $ Just (y, Assoc fwd' bwd deadFwd' deadBwd n')
     (Just a0, Nothing) ->
       -- x was in the map but a1 was not
       -- Update fwd bwd for x a1, mark original a for deletion, then return x
@@ -147,20 +153,28 @@ assocUpdateInc x a1 (Assoc fwd bwd deadFwd deadBwd n) =
         let fwd' = ILM.insert x a1 fwd
             bwd' = HashMap.insert a1 x bwd
             deadBwd' = HashSet.insert a0 deadBwd
-        in Just (x, Assoc fwd' bwd' deadFwd deadBwd' n)
+        in pure $ Just (x, Assoc fwd' bwd' deadFwd deadBwd' n)
     (Just a0, Just y) ->
       -- x and a1 are in the map already
       if a0 == a1
         -- duplicate insert, no change
-        then Nothing
+        then pure $ Nothing
         else if x == y
           -- (a1 -> x) in bwd but (x -> a0) in fwd
           -- Update fwd for x a1, mark a0 for deletion, then return x.
           -- No elem in fwd will point to a0.
           then
-            let fwd' = ILM.insert x a1 fwd
-                deadBwd' = HashSet.insert a0 deadBwd
-            in Just (x, Assoc fwd' bwd deadFwd deadBwd' n)
+            if HashSet.member a1 deadBwd
+              then
+                -- Already deleted element, undelete
+                let fwd' = ILM.insert x a1 fwd
+                    bwd' = HashMap.insert a1 x bwd
+                    deadBwd' = HashSet.insert a0 (HashSet.delete a1 deadBwd)
+                in pure $ Just (x, Assoc fwd' bwd' deadFwd deadBwd' n)
+              else
+                let fwd' = ILM.insert x a1 fwd
+                    deadBwd' = HashSet.insert a0 deadBwd
+                in pure $ Just (x, Assoc fwd' bwd deadFwd deadBwd' n)
           -- Update fwd for x a1, update bwd for a0 y, mark original x and a for deletion, then return y.
           -- This makes fwd and bwd many-to-one. No elem in fwd will point to a0, no elem in bwd will point to x.
           else
@@ -168,9 +182,9 @@ assocUpdateInc x a1 (Assoc fwd bwd deadFwd deadBwd n) =
                 bwd' = HashMap.insert a0 y bwd
                 deadFwd' = ILM.insert x y deadFwd
                 deadBwd' = HashSet.insert a0 deadBwd
-            in Just (y, Assoc fwd' bwd' deadFwd' deadBwd' n)
+            in pure $ Just (y, Assoc fwd' bwd' deadFwd' deadBwd' n)
 
-assocUpdate :: (Coercible x Int, Eq x, Eq a, Hashable a) => x -> a -> State (Assoc x a) x
+assocUpdate :: (Show x, Show a, Coercible x Int, Eq x, Eq a, Hashable a) => x -> a -> State (Assoc x a) x
 assocUpdate x a = state (\assoc -> fromMaybe (x, assoc) (assocUpdateInc x a assoc))
 
 -- | Are there dead elements in the forward map from 'assocUpdate'?
@@ -185,17 +199,19 @@ pathCompactMap m = foldl' (\n (x, y) -> go [] n x y) m (ILM.toList m) where
       Nothing -> foldl' (\o w -> ILM.insert w y o) n acc
       Just z -> go (x:acc) n y z
 
-assocCompactInc :: (Coercible x Int, Eq a, Hashable a) => Assoc x a -> (IntLikeMap x x, Assoc x a)
-assocCompactInc assoc@(Assoc fwd bwd deadFwd deadBwd n) =
+assocCompactInc :: (Show x, Show a, Coercible x Int, Eq a, Hashable a) => Assoc x a -> (IntLikeMap x x, Assoc x a)
+assocCompactInc assoc@(Assoc fwd bwd deadFwd deadBwd n) = unsafePerformIO $ do
   if assocCanCompact assoc
-    then
+    then do
       let fwd' = foldl' (flip ILM.delete) fwd (ILM.keys deadFwd)
           bwd' = foldl' (flip HashMap.delete) bwd deadBwd
           assoc' = Assoc fwd' bwd' ILM.empty HashSet.empty n
-          mapping = pathCompactMap deadFwd
-      in (mapping, assoc')
-    else (ILM.empty, assoc)
+      -- traceIO (show ["ASSOC COMPACT"])
+      -- liftIO (pPrint assoc)
+      let mapping = pathCompactMap deadFwd
+      pure (mapping, assoc')
+    else pure (ILM.empty, assoc)
 
 -- | Removes all dead elements from the forward map
-assocCompact :: (Coercible x Int, Eq a, Hashable a) => State (Assoc x a) (IntLikeMap x x)
+assocCompact :: (Show x, Show a, Coercible x Int, Eq a, Hashable a) => State (Assoc x a) (IntLikeMap x x)
 assocCompact = state assocCompactInc

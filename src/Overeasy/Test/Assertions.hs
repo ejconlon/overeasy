@@ -17,13 +17,16 @@ import System.IO (BufferMode (..), hSetBuffering, stderr, stdout)
 import Test.Tasty (TestName, TestTree)
 import Test.Tasty.Hedgehog (testProperty)
 
-unitProperty :: PropertyT IO () -> Property
-unitProperty =
-  withTests (1 :: TestLimit) .
+limProperty :: TestLimit -> PropertyT IO () -> Property
+limProperty lim =
+  withTests lim .
   withDiscards (1 :: DiscardLimit) .
   withShrinks (0 :: ShrinkLimit) .
   withRetries (0 :: ShrinkRetries) .
   property
+
+unitProperty :: PropertyT IO () -> Property
+unitProperty = limProperty (1 :: TestLimit)
 
 testUnit :: TestName -> PropertyT IO () -> TestTree
 testUnit name = testProperty name . unitProperty

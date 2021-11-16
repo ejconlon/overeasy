@@ -40,6 +40,12 @@ import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions (MonadTest, TestLimit, assert, setupTests, testGen, testUnit, (/==), (===))
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 import Text.Pretty.Simple (pPrint)
+import Control.Exception (evaluate)
+-- import Text.Pretty.Simple (pPrint)
+
+-- Fully evaluate the argument - useful for catching runaway ops
+eval :: (MonadIO m, NFData a) => a -> m a
+eval = liftIO . evaluate . force
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -76,6 +82,9 @@ fromV = chr . unV
 
 setV :: String -> IntLikeSet V
 setV = ILS.fromList . fmap toV
+
+mapV :: [Char] -> Char -> IntLikeMap V V
+mapV xs d = ILM.fromList (fmap (\x -> (toV x, toV d)) xs)
 
 type UF = EquivFind V
 
@@ -131,13 +140,13 @@ testUfMany = testUnit "UF many" $ runS efNew $ do
   applyS (efAdd (toV 'd'))
   applyS (efAdd (toV 'e'))
   applyTestS (efMergeSets [setV "cde"]) $ \res ef -> do
-    res === Just (setV "c", setV "de")
+    res === Just (setV "c", mapV "de" 'c')
     efSize ef === 3
     efTotalSize ef === 5
     ILS.fromList (efRoots ef) === setV "abc"
     efFwd ef === ILM.fromList [(toV 'a', setV "a"), (toV 'b', setV "b"), (toV 'c', setV "cde")]
   applyTestS (efMergeSets [setV "abd"]) $ \res ef -> do
-    res === Just (setV "a", setV "bcde")
+    res === Just (setV "a", mapV "bcde" 'a')
     efSize ef === 1
     efTotalSize ef === 5
     ILS.fromList (efRoots ef) === setV "a"
@@ -151,7 +160,7 @@ testUfSets = testUnit "UF sets" $ runS efNew $ do
   applyS (efAdd (toV 'd'))
   applyS (efAdd (toV 'e'))
   applyTestS (efMergeSets [setV "cde", setV "abc"]) $ \res ef -> do
-    res === Just (setV "a", setV "bcde")
+    res === Just (setV "a", mapV "bcde" 'a')
     efSize ef === 1
     efTotalSize ef === 5
     ILS.fromList (efRoots ef) === setV "a"
@@ -294,14 +303,20 @@ data AssocCase = AssocCase !String ![(Int, Char)] ![(Int, Char, Int)] ![(Int, Ch
 allAssocCases :: [AssocCase]
 allAssocCases =
   let start = [(0, 'a'), (1, 'b'), (2, 'c')]
-  in [ AssocCase "base" start [] start
-     , AssocCase "ident" start [(0, 'a', 0)] start
-     , AssocCase "superfluous" start [(4, 'a', 0)] start
-     , AssocCase "internal" start [(0, 'b', 1)] [(1, 'b'), (2, 'c')]
-     , AssocCase "external" start [(0, 'd', 0)] [(0, 'd'), (1, 'b'), (2, 'c')]
-     , AssocCase "additional" start [(4, 'd', 4)] [(0, 'a'), (1, 'b'), (2, 'c'), (4, 'd')]
-     , AssocCase "chain fwd" start [(0, 'b', 1), (1, 'c', 2)] [(2, 'c')]
-     , AssocCase "chain bwd" start [(1, 'c', 2), (0, 'b', 2)] [(2, 'c')]
+  -- in [ AssocCase "base" start [] start
+  --    , AssocCase "ident" start [(0, 'a', 0)] start
+  --    , AssocCase "superfluous" start [(4, 'a', 0)] start
+  --    , AssocCase "internal" start [(0, 'b', 1)] [(1, 'b'), (2, 'c')]
+  --    , AssocCase "external" start [(0, 'd', 0)] [(0, 'd'), (1, 'b'), (2, 'c')]
+  --    , AssocCase "additional" start [(4, 'd', 4)] [(0, 'a'), (1, 'b'), (2, 'c'), (4, 'd')]
+  --    , AssocCase "chain fwd" start [(0, 'b', 1), (1, 'c', 2)] [(2, 'c')]
+  --    , AssocCase "chain bwd" start [(1, 'c', 2), (0, 'b', 2)] [(2, 'c')]
+  --    , AssocCase "chain self" start [(1, 'c', 2), (2, 'c', 2)] [(0, 'a'), (2, 'c')]
+  --    , AssocCase "chain change" start [(1, 'c', 2), (2, 'd', 2)] [(0, 'a'), (2, 'd')]
+  -- in [ AssocCase "chain back id" start [(1, 'c', 2), (1, 'b', 1)] [(0, 'a'), (1, 'b'), (2, 'c')]
+  in [ AssocCase "chain back del" start [(1, 'c', 2), (2, 'b', 2)] [(0, 'a'), (2, 'b')]
+    --  , AssocCase "chain change rev" start [(2, 'd', 2), (1, 'c', 1)] [(0, 'a'), (1, 'c'), (2, 'd')]
+    --  , AssocCase "chain back val" start [(1, 'c', 2), (2, 'b', 2)] [(0, 'a'), (2, 'b')]
      ]
 
 mkAssoc :: MonadFail m => [(Int, Char)] -> m AV
@@ -327,7 +342,7 @@ testAssocCase (AssocCase name start act end) = testUnit name $ runAV start $ do
     z <- applyS (assocUpdate (ENodeId x) (toV a))
     testS assertAssocInvariants
     z === ENodeId y
-  applyS assocCompact
+  void (applyS assocCompact)
   testS $ \av -> do
     assertAssocInvariants av
     assertAssocCompact av
@@ -469,10 +484,11 @@ analyzeBinTree f = cata go where
 maxBinTreeLeaf :: Ord a => BinTree a -> a
 maxBinTreeLeaf = getMax . analyzeBinTree Max
 
-assertEgInvariants :: (MonadTest m, MonadIO m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
+assertEgInvariants :: (MonadTest m, MonadIO m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId), Show d) => EGraph d f -> m ()
 assertEgInvariants eg = do
   -- liftIO (putStrLn "*** start")
   -- Invariants require that no rebuild is needed (empty worklist)
+  liftIO (putStrLn "START EG INVARIANTS")
   assert $ not (egNeedsRebuild eg)
   let assoc = egNodeAssoc eg
       hc = egHashCons eg
@@ -492,7 +508,9 @@ assertEgInvariants eg = do
   -- Assert that dead classes and root classes partition all classes
   ILS.union deadClasses efRootClasses === allClasses
   -- Assert that the assoc is 1-1 etc
+  liftIO (putStrLn "START ASSOC INVARIANTS")
   assertAssocInvariants assoc
+  liftIO (putStrLn "END ASSOC INVARIANTS")
   -- Assert that the hashcons and assoc have equal key sets
   ILM.keys hc === ILM.keys fwd
   -- Assert that hashcons has exactly the same values as unionfind roots for all nodes
@@ -524,6 +542,7 @@ assertEgInvariants eg = do
   -- Assert class nodes and dead nodes disjoint
   ILS.intersection deadNodes cmNodes === ILS.empty
   -- Now test recanonicalization
+  liftIO (putStrLn "START RECANON")
   for_ (HashMap.toList bwd) $ \(fc, _) ->
     let recanon = evalState (egCanonicalize fc) eg
     in if HashSet.member fc deadBwd
@@ -531,7 +550,9 @@ assertEgInvariants eg = do
       then assert $ isJust recanon
       -- otherwise it should already be canonical
       else recanon === Just fc
+  liftIO (putStrLn "END RECANON")
   -- liftIO (putStrLn "*** done")
+  liftIO (putStrLn "END EG INVARIANTS")
 
 -- assert this after the usual eg invariants
 assertEgCompactInvariants :: (MonadTest m, Eq (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
@@ -628,10 +649,6 @@ allEgCases =
         , EgRound [] [[parentAC, parentAD]] [[parentAC, parentAD], [grandparentAAC, grandparentAAD]] [(leafC, leafD)]
         , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
         ]
-     , EgCase "repro"
-        [ EgRound [leafB, grandparentAAC] [] [] []
-        , EgRound [] [[leafA, leafC]] [] []
-        ]
      ]
 
 testEgCase :: Bool -> EgCase -> TestTree
@@ -689,7 +706,7 @@ testEgCase compact (EgCase name rounds) = kase where
 testEgCases :: TestTree
 testEgCases = testGroup "Eg case" $ do
   kase <- allEgCases
-  compact <- [True] -- [False, True]
+  compact <- [False, True]
   pure (testEgCase compact kase)
 
 genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
@@ -701,43 +718,52 @@ genSomeList xs = go where
 
 testEgNew :: TestTree
 testEgNew = testUnit "EG new" $ do
-  let eg0 = force egNew :: EGV
+  eg0 <- eval (egNew :: EGV)
   egNodeSize eg0 === 0
   egClassSize eg0 === 0
   assertEgInvariants eg0
 
 testEgProp :: TestLimit -> TestTree
 testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testGen "EG prop" lim $ do
-  let maxElems = 10
-      eg0 = force egNew :: EGV
+  liftIO (putStrLn "TEST STARTING")
+  let maxElems = 5
+  eg0 <- eval (egNew :: EGV)
   members <- forAll (genBinTreeMembers maxElems)
   let nMembers = length members
       nOpsRange = Range.linear 0 (nMembers * nMembers)
-  let eg1 = force (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
+  eg1 <- eval (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
   assertEgInvariants eg1
   egClassSize eg1 === egNodeSize eg1
   execState (egRebuild maxVAnalysis) eg1 === eg1
   pairs <- forAll (genNodePairs nOpsRange eg1)
+  -- mergeStrat <- pure MergeStratPairs
   mergeStrat <- forAll genMergeStrat
   let merge =
         case mergeStrat of
           MergeStratPairs -> for_ pairs (uncurry egMerge)
           MergeStratSets -> for_ pairs (\(x, y) -> egMergeMany (ILS.fromList [x, y]))
           MergeStratSingle -> void (egMergeMany (ILS.fromList (pairs >>= \(x, y) -> [x, y])))
-  let eg2 = force (execState merge eg1)
+  eg2 <- eval (execState merge eg1)
   -- liftIO (putStrLn "===== eg2 =====")
   -- liftIO (pPrint eg2)
   egNodeSize eg2 === egNodeSize eg1
   egNeedsRebuild eg2 === not (null pairs)
-  let eg3 = force (execState (egRebuild maxVAnalysis) eg2)
+  liftIO (putStrLn "TEST START REBUILD")
+  eg3 <- eval (execState (egRebuild maxVAnalysis) eg2)
+  liftIO (putStrLn "TEST DONE REBUILD")
   -- liftIO (putStrLn "===== eg3 =====")
   -- liftIO (pPrint eg3)
   egNodeSize eg3 === egNodeSize eg2
   assertEgInvariants eg3
   -- TODO test compaction
-  -- let eg4 = force (execState egCompact eg3)
-  -- assertEgInvariants eg4
-  -- assertEgCompactInvariants eg4
+  liftIO (putStrLn "TEST START COMPACT")
+  eg4 <- eval (execState egCompact eg3)
+  liftIO (putStrLn "TEST DONE COMPACT")
+  -- liftIO (putStrLn "===== eg4 =====")
+  -- liftIO (pPrint eg4)
+  assertEgInvariants eg4
+  assertEgCompactInvariants eg4
+  liftIO (putStrLn "TEST FINISHED")
 
 type M = IntLikeMap ENodeId Char
 
@@ -752,13 +778,13 @@ main :: IO ()
 main = do
   lim <- setupTests
   defaultMain $ testGroup "Overeasy"
-    [ testILM
-    , testUfUnit
-    , testAssocUnit
-    , testAssocCases
-    , testEgUnit
-    , testEgNew
-    , testEgCases
-    , testUfProp lim
-    , testEgProp lim
+    -- [ testILM
+    -- , testUfUnit
+    -- , testAssocUnit
+    [ testAssocCases
+    -- , testEgUnit
+    -- , testEgNew
+    -- , testEgCases
+    -- , testUfProp lim
+    -- , testEgProp lim
     ]
