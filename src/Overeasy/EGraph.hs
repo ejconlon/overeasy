@@ -54,7 +54,7 @@ import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocDeadFwd, as
                        assocNew, assocPartialLookupByKey, assocUpdateInc)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EquivFind (EquivFind, EquivMergeSetsRes (..), efAdd, efClosure, efCompactInc, efFindRoot,
-                           efMergeSetsInc, efNew, efRoots, efRootsSize, efLookupRoot, efLookupLeaves)
+                           efLookupLeaves, efLookupRoot, efMergeSetsInc, efNew, efRoots, efRootsSize)
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.MultiMap (IntLikeMultiMap)

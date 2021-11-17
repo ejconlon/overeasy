@@ -2,7 +2,7 @@ module Overeasy.Test.Spec (main) where
 
 import Control.DeepSeq (NFData, force)
 import Control.Monad (foldM, unless, void, when)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT, gets,
                                    runState)
 import Control.Monad.Trans (MonadTrans (lift))
@@ -27,7 +27,8 @@ import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
                         egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
-import Overeasy.EquivFind (EquivFind (..), efAdd, efFindRoot, efMerge, efMergeSets, efNew, efRoots, efRootsSize, efLeavesSize, efTotalSize, efLeaves, efCompact)
+import Overeasy.EquivFind (EquivFind (..), efAdd, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge, efMergeSets,
+                           efNew, efRoots, efRootsSize, efTotalSize)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -39,7 +40,7 @@ import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions (MonadTest, TestLimit, assert, setupTests, testGen, testUnit, (/==), (===))
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
-import Text.Pretty.Simple (pPrint)
+-- import Text.Pretty.Simple (pPrint)
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -512,9 +513,8 @@ analyzeBinTree f = cata go where
 maxBinTreeLeaf :: Ord a => BinTree a -> a
 maxBinTreeLeaf = getMax . analyzeBinTree Max
 
-assertEgInvariants :: (MonadTest m, MonadIO m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
+assertEgInvariants :: (MonadTest m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
 assertEgInvariants eg = do
-  -- liftIO (putStrLn "*** start")
   -- Invariants require that no rebuild is needed (empty worklist)
   assert $ not (egNeedsRebuild eg)
   let assoc = egNodeAssoc eg
@@ -525,7 +525,8 @@ assertEgInvariants eg = do
       deadBwd = assocDeadBwd assoc
       ef = egEquivFind eg
       efRootClasses = ILS.fromList (efRoots ef)
-      allClasses = ILS.fromList (ILM.keys (efBwd ef))
+      efLeafClasses = ILS.fromList (efLeaves ef)
+      allClasses = ILS.union efRootClasses efLeafClasses
       deadClasses = egDeadClasses eg
       deadNodes = ILS.fromList (ILM.keys deadFwd)
       cm = egClassMap eg
@@ -574,7 +575,6 @@ assertEgInvariants eg = do
       then assert $ isJust recanon
       -- otherwise it should already be canonical
       else recanon === Just fc
-  -- liftIO (putStrLn "*** done")
 
 -- assert this after the usual eg invariants
 assertEgCompactInvariants :: (MonadTest m, Eq (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
@@ -799,9 +799,9 @@ main = do
     , testUfUnit
     , testAssocUnit
     , testAssocCases
-    -- , testEgUnit
-    -- , testEgNew
-    -- , testEgCases
+    , testEgUnit
+    , testEgNew
+    , testEgCases
     , testUfProp lim
-    -- , testEgProp lim
+    , testEgProp lim
     ]

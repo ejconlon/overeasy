@@ -32,6 +32,7 @@ module Overeasy.EquivFind
   , efCompact
   ) where
 
+import Control.Applicative ((<|>))
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (State, state)
 import Data.Coerce (Coercible)
@@ -42,7 +43,6 @@ import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
-import Control.Applicative ((<|>))
 
 -- private ctor
 data EquivFind x = EquivFind
@@ -84,10 +84,7 @@ efAdd :: Coercible x Int => x -> State (EquivFind x) x
 efAdd = state . efAddInc
 
 efEquivs :: Coercible x Int => x -> EquivFind x -> IntLikeSet x
-efEquivs x (EquivFind fwd bwd) =
-  case ILM.lookup x bwd of
-    Nothing -> ILS.empty
-    Just y -> ILM.partialLookup y fwd
+efEquivs x ef = let r = efLookupRoot x ef in ILS.insert r (efLookupLeaves r ef)
 
 efClosure :: Coercible x Int => [x] -> EquivFind x -> IntLikeSet x
 efClosure xs ef = foldl' (\c x -> if ILS.member x c then c else ILS.union (efEquivs x ef) c) ILS.empty xs
