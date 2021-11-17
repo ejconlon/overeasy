@@ -26,8 +26,8 @@ import Overeasy.Assoc (Assoc, assocAdd, assocBwd, assocCanCompact, assocCompact,
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
-                        egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egTotalClassSize, egWorkList)
-import Overeasy.EquivFind (EquivFind (..), efAdd, efFind, efMerge, efMergeSets, efNew, efRoots, efSize, efTotalSize)
+                        egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
+import Overeasy.EquivFind (EquivFind (..), efAdd, efFindRoot, efMerge, efMergeSets, efNew, efRoots, efRootsSize, efLeavesSize, efTotalSize, efLeaves, efCompact)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -82,83 +82,127 @@ type UF = EquivFind V
 testUfSimple :: TestTree
 testUfSimple = testUnit "UF simple" $ runS efNew $ do
   testS $ \ef -> do
-    efSize ef === 0
+    efRootsSize ef === 0
+    efLeavesSize ef === 0
     efTotalSize ef === 0
     efRoots ef === []
-  applyS (efAdd (toV 'a'))
+    efLeaves ef === []
+    efFwd ef === ILM.empty
+    efBwd ef === ILM.empty
+  _ <- applyS (efAdd (toV 'a'))
   testS $ \ef -> do
-    efSize ef === 1
+    efRootsSize ef === 1
+    efLeavesSize ef === 0
     efTotalSize ef === 1
     ILS.fromList (efRoots ef) === setV "a"
-  applyS (efAdd (toV 'b'))
-  applyS (efAdd (toV 'c'))
+    ILS.fromList (efLeaves ef) === ILS.empty
+    efFwd ef === ILM.fromList [(toV 'a', ILS.empty)]
+    efBwd ef === ILM.empty
+  _ <- applyS (efAdd (toV 'b'))
+  _ <- applyS (efAdd (toV 'c'))
   testS $ \ef -> do
-    efSize ef === 3
+    efRootsSize ef === 3
+    efLeavesSize ef === 0
     efTotalSize ef === 3
     ILS.fromList (efRoots ef) === setV "abc"
+    ILS.fromList (efLeaves ef) === ILS.empty
+    efFwd ef === ILM.fromList [(toV 'a', ILS.empty), (toV 'b', ILS.empty), (toV 'c', ILS.empty)]
+    efBwd ef === ILM.empty
   applyTestS (efMerge (toV 'a') (toV 'c')) $ \res ef -> do
     res === Just (toV 'a', setV "c")
-    efSize ef === 2
+    efRootsSize ef === 2
+    efLeavesSize ef === 1
     efTotalSize ef === 3
     ILS.fromList (efRoots ef) === setV "ab"
-    efFwd ef === ILM.fromList [(toV 'a', setV "ac"), (toV 'b', setV "b")]
+    ILS.fromList (efLeaves ef) === setV "c"
+    efFwd ef === ILM.fromList [(toV 'a', setV "c"), (toV 'b', ILS.empty)]
+    efBwd ef === ILM.fromList [(toV 'c', toV 'a')]
   applyTestS (efMerge (toV 'c') (toV 'a')) $ \res _ -> res === Nothing
   applyTestS (efMerge (toV 'b') (toV 'z')) $ \res _ -> res === Nothing
 
 testUfRec :: TestTree
 testUfRec = testUnit "UF rec" $ runS efNew $ do
-  applyS (efAdd (toV 'a'))
-  applyS (efAdd (toV 'b'))
-  applyS (efAdd (toV 'c'))
+  _ <- applyS (efAdd (toV 'a'))
+  _ <- applyS (efAdd (toV 'b'))
+  _ <- applyS (efAdd (toV 'c'))
   applyTestS (efMerge (toV 'b') (toV 'c')) $ \res ef -> do
     res === Just (toV 'b', setV "c")
-    efSize ef === 2
+    efRootsSize ef === 2
+    efLeavesSize ef === 1
     efTotalSize ef === 3
     ILS.fromList (efRoots ef) === setV "ab"
-    efFwd ef === ILM.fromList [(toV 'a', setV "a"), (toV 'b', setV "bc")]
+    ILS.fromList (efLeaves ef) === setV "c"
+    efFwd ef === ILM.fromList [(toV 'a', ILS.empty), (toV 'b', setV "c")]
+    efBwd ef === ILM.fromList [(toV 'c', toV 'b')]
   applyTestS (efMerge (toV 'a') (toV 'c')) $ \res ef -> do
     res === Just (toV 'a', setV "bc")
-    efSize ef === 1
+    efRootsSize ef === 1
+    efLeavesSize ef === 2
     efTotalSize ef === 3
     ILS.fromList (efRoots ef) === setV "a"
-    efFwd ef === ILM.fromList [(toV 'a', setV "abc")]
+    ILS.fromList (efLeaves ef) === setV "bc"
+    efFwd ef === ILM.fromList [(toV 'a', setV "bc")]
+    efBwd ef === ILM.fromList [(toV 'b', toV 'a'), (toV 'c', toV 'a')]
 
 testUfMany :: TestTree
 testUfMany = testUnit "UF many" $ runS efNew $ do
-  applyS (efAdd (toV 'a'))
-  applyS (efAdd (toV 'b'))
-  applyS (efAdd (toV 'c'))
-  applyS (efAdd (toV 'd'))
-  applyS (efAdd (toV 'e'))
+  _ <- applyS (efAdd (toV 'a'))
+  _ <- applyS (efAdd (toV 'b'))
+  _ <- applyS (efAdd (toV 'c'))
+  _ <- applyS (efAdd (toV 'd'))
+  _ <- applyS (efAdd (toV 'e'))
   applyTestS (efMergeSets [setV "cde"]) $ \res ef -> do
     res === Just (setV "c", setV "de")
-    efSize ef === 3
+    efRootsSize ef === 3
+    efLeavesSize ef === 2
     efTotalSize ef === 5
     ILS.fromList (efRoots ef) === setV "abc"
-    efFwd ef === ILM.fromList [(toV 'a', setV "a"), (toV 'b', setV "b"), (toV 'c', setV "cde")]
+    ILS.fromList (efLeaves ef) === setV "de"
+    efFwd ef === ILM.fromList [(toV 'a', ILS.empty), (toV 'b', ILS.empty), (toV 'c', setV "de")]
+    efBwd ef === ILM.fromList [(toV 'd', toV 'c'), (toV 'e', toV 'c')]
   applyTestS (efMergeSets [setV "abd"]) $ \res ef -> do
     res === Just (setV "a", setV "bcde")
-    efSize ef === 1
+    efRootsSize ef === 1
+    efLeavesSize ef === 4
     efTotalSize ef === 5
     ILS.fromList (efRoots ef) === setV "a"
-    efFwd ef === ILM.fromList [(toV 'a', setV "abcde")]
+    ILS.fromList (efLeaves ef) === setV "bcde"
+    efFwd ef === ILM.fromList [(toV 'a', setV "bcde")]
+    efBwd ef === ILM.fromList [(toV 'b', toV 'a'), (toV 'c', toV 'a'), (toV 'd', toV 'a'), (toV 'e', toV 'a')]
 
 testUfSets :: TestTree
 testUfSets = testUnit "UF sets" $ runS efNew $ do
-  applyS (efAdd (toV 'a'))
-  applyS (efAdd (toV 'b'))
-  applyS (efAdd (toV 'c'))
-  applyS (efAdd (toV 'd'))
-  applyS (efAdd (toV 'e'))
+  _ <- applyS (efAdd (toV 'a'))
+  _ <- applyS (efAdd (toV 'b'))
+  _ <- applyS (efAdd (toV 'c'))
+  _ <- applyS (efAdd (toV 'd'))
+  _ <- applyS (efAdd (toV 'e'))
   applyTestS (efMergeSets [setV "cde", setV "abc"]) $ \res ef -> do
     res === Just (setV "a", setV "bcde")
-    efSize ef === 1
+    efRootsSize ef === 1
+    efLeavesSize ef === 4
     efTotalSize ef === 5
     ILS.fromList (efRoots ef) === setV "a"
-    efFwd ef === ILM.fromList [(toV 'a', setV "abcde")]
+    efFwd ef === ILM.fromList [(toV 'a', setV "bcde")]
+
+testUfCompact :: TestTree
+testUfCompact = testUnit "UF compact" $ runS efNew $ do
+  _ <- applyS (efAdd (toV 'a'))
+  _ <- applyS (efAdd (toV 'b'))
+  _ <- applyS (efAdd (toV 'c'))
+  _ <- applyS (efAdd (toV 'd'))
+  _ <- applyS (efAdd (toV 'e'))
+  applyTestS (efMergeSets [setV "cde"]) $ \res ef -> do
+    res === Just (setV "c", setV "de")
+    efFwd ef === ILM.fromList [(toV 'a', ILS.empty), (toV 'b', ILS.empty), (toV 'c', setV "de")]
+    efBwd ef === ILM.fromList [(toV 'd', toV 'c'), (toV 'e', toV 'c')]
+  applyTestS (gets (ILS.fromList . efLeaves) >>= efCompact) $ \res ef -> do
+    res === setV "c"
+    efFwd ef === ILM.fromList [(toV 'a', ILS.empty), (toV 'b', ILS.empty), (toV 'c', ILS.empty)]
+    efBwd ef === ILM.empty
 
 testUfUnit :: TestTree
-testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec, testUfMany, testUfSets]
+testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec, testUfMany, testUfSets, testUfCompact]
 
 genDistinctPairFromList :: Eq a => [a] -> Gen (a, a)
 genDistinctPairFromList = \case
@@ -216,12 +260,15 @@ testUfProp lim = after AllSucceed "UF unit" $ testGen "UF prop" lim $ do
       nOpsRange = Range.linear 0 (nMembers * nMembers)
   let initUf = mkInitUf memberList
   -- assert that sizes indicate nothing is merged
-  efSize initUf === nMembers
+  efRootsSize initUf === nMembers
+  efLeavesSize initUf === 0
   efTotalSize initUf === nMembers
   -- assert that find indicates nothing is merged
   for_ allPairs $ \(a, b) -> flip evalStateT initUf $ do
-    x <- applyS (gets (efFind a))
-    y <- applyS (gets (efFind b))
+    x <- applyS (gets (efFindRoot a))
+    y <- applyS (gets (efFindRoot b))
+    assert (isJust x)
+    assert (isJust y)
     x /== y
   -- generate some pairs and merge them
   mergePairs <- forAll (genListOfDistinctPairs nOpsRange memberList)
@@ -236,14 +283,15 @@ testUfProp lim = after AllSucceed "UF unit" $ testGen "UF prop" lim $ do
   -- calculate components by graph reachability
   let components = ILG.undirectedComponents mergePairs
   -- assert that elements are equal or not according to component
-  void $ foldS_ mergedUf allPairs $ \(a, b) -> do
-    x <- applyS (gets (efFind a))
-    y <- applyS (gets (efFind b))
+  _ <- foldS_ mergedUf allPairs $ \(a, b) -> do
+    x <- applyS (gets (efFindRoot a))
+    y <- applyS (gets (efFindRoot b))
     let aComponent = ILE.lookupClass a components
         bComponent = ILE.lookupClass b components
     if isJust aComponent && aComponent == bComponent
       then x === y
       else x /== y
+  pure ()
 
 type EGA = EGraph () ArithF
 
@@ -327,7 +375,7 @@ testAssocCase (AssocCase name start act end) = testUnit name $ runAV start $ do
     z <- applyS (assocUpdate (ENodeId x) (toV a))
     testS assertAssocInvariants
     z === ENodeId y
-  applyS assocCompact
+  _ <- applyS assocCompact
   testS $ \av -> do
     assertAssocInvariants av
     assertAssocCompact av
@@ -375,7 +423,6 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
   -- Test that the empty egraph is sane
   testS $ \eg -> do
     egClassSize eg === 0
-    egTotalClassSize eg === 0
     egNodeSize eg === 0
     egNeedsRebuild eg === False
   -- Add the term `4`
@@ -383,7 +430,6 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     c === ChangedYes
     egFindTerm termFour eg === Just x
     egClassSize eg === 1
-    egTotalClassSize eg === 1
     egNodeSize eg === 1
     egNeedsRebuild eg === False
     pure x
@@ -393,7 +439,6 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     x /== cidFour
     egFindTerm termTwo eg === Just x
     egClassSize eg === 2
-    egTotalClassSize eg === 2
     egNodeSize eg === 2
     egNeedsRebuild eg === False
     pure x
@@ -403,7 +448,6 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     x === cidFour
     egFindTerm termFour eg === Just x
     egClassSize eg === 2
-    egTotalClassSize eg === 2
     egNodeSize eg === 2
     egNeedsRebuild eg === False
   -- Add the term `2 + 2`
@@ -413,7 +457,6 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     x /== cidTwo
     egFindTerm termPlus eg === Just x
     egClassSize eg === 3
-    egTotalClassSize eg === 3
     egNodeSize eg === 3
     egNeedsRebuild eg === False
     pure x
@@ -662,7 +705,7 @@ testEgCase compact (EgCase name rounds) = kase where
         for_ sets egMergeMany
       -- liftIO (putStrLn "===== before rebuild =====")
       -- testS $ liftIO . pPrint
-      applyS $ void (egRebuild maxVAnalysis)
+      _ <- applyS (egRebuild maxVAnalysis)
       -- liftIO (putStrLn "===== after rebuild =====")
       -- testS $ liftIO . pPrint
       -- assert invariants hold
@@ -756,9 +799,9 @@ main = do
     , testUfUnit
     , testAssocUnit
     , testAssocCases
-    , testEgUnit
-    , testEgNew
-    , testEgCases
+    -- , testEgUnit
+    -- , testEgNew
+    -- , testEgCases
     , testUfProp lim
-    , testEgProp lim
+    -- , testEgProp lim
     ]

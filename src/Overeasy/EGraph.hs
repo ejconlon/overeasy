@@ -21,7 +21,6 @@ module Overeasy.EGraph
   , egHashCons
   , egWorkList
   , egClassSize
-  , egTotalClassSize
   , egNodeSize
   , egFindNode
   , egFindTerm
@@ -54,8 +53,8 @@ import Lens.Micro.TH (makeLensesFor)
 import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocDeadFwd, assocEnsure, assocFwd, assocLookupByValue,
                        assocNew, assocPartialLookupByKey, assocUpdateInc)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EquivFind (EquivFind, EquivMergeSetsRes (..), efAdd, efBwd, efClosure, efCompactInc, efFind, efFwd,
-                           efMergeSetsInc, efNew, efPartialFind, efRoots, efSize, efTotalSize)
+import Overeasy.EquivFind (EquivFind, EquivMergeSetsRes (..), efAdd, efClosure, efCompactInc, efFindRoot,
+                           efMergeSetsInc, efNew, efRoots, efRootsSize, efLookupRoot, efLookupLeaves)
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
@@ -142,11 +141,7 @@ makeLensesFor
 
 -- | Number of equivalent classes in the 'EGraph' (see 'ufSize')
 egClassSize :: EGraph d f -> Int
-egClassSize = efSize . egEquivFind
-
--- | Number of total classes in the 'EGraph' (see 'ufTotalSize')
-egTotalClassSize :: EGraph d f -> Int
-egTotalClassSize = efTotalSize . egEquivFind
+egClassSize = efRootsSize . egEquivFind
 
 -- | Number of nodes in the 'EGraph'
 egNodeSize :: EGraph d f -> Int
@@ -177,7 +172,7 @@ egClasses = gets (efRoots . egEquivFind)
 
 -- | Find the canonical form of a node
 egCanonicalize :: Traversable f => f EClassId -> State (EGraph d f) (Maybe (f EClassId))
-egCanonicalize fc = fmap (\ef -> traverse (`efFind` ef) fc) (gets egEquivFind)
+egCanonicalize fc = fmap (\ef -> traverse (`efFindRoot` ef) fc) (gets egEquivFind)
 
 -- private
 egCanonicalizeInternal :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => ENodeId -> State (EGraph d f) ENodeId
@@ -185,8 +180,7 @@ egCanonicalizeInternal x = state $ \eg ->
   let ef = egEquivFind eg
       assoc = egNodeAssoc eg
       node = assocPartialLookupByKey x assoc
-      -- partial: guaranteed present by construction
-      fz = fmap (`efPartialFind` ef) node
+      fz = fmap (`efLookupRoot` ef) node
   in case assocUpdateInc x fz assoc of
     Nothing -> (x, eg)
     Just (y, assoc') -> (y, eg { egNodeAssoc = assoc' })
@@ -222,8 +216,8 @@ egAddNodeSub q fcd = do
     ChangedYes -> do
       -- node does not exist; get a new class id
       x <- stateLens egSourceL sourceAdd
-      -- add it to the uf
-      stateLens egEquivFindL (efAdd x)
+      -- add it to the uf (can discard return value since it's a new id, will be the same)
+      _ <- stateLens egEquivFindL (efAdd x)
       -- map the node to the class id
       stateLens egHashConsL (modify' (ILM.insert n x))
       -- analyze the node and put that info in the class map
@@ -268,7 +262,7 @@ egMerge i j = egMergeMany (ILS.fromList [i, j])
 egMergeMany :: IntLikeSet EClassId -> State (EGraph d f) (Maybe Changed)
 egMergeMany cs = do
   -- traceM (unwords ["MERGE", "cs=", show cs])
-  mayRoots <- fmap (\ef -> traverse (`efFind` ef) (ILS.toList cs)) (gets egEquivFind)
+  mayRoots <- fmap (\ef -> traverse (`efFindRoot` ef) (ILS.toList cs)) (gets egEquivFind)
   case mayRoots of
     Nothing -> pure Nothing
     Just roots ->
@@ -302,8 +296,7 @@ egRebuildMerge wl = finalRes where
         dc = egDeadClasses eg
     in case efMergeSetsInc (toList wl) ef of
       EquivMergeSetsResChanged roots classRemapSet ef' ->
-        let bwd = efBwd ef'
-            classRemap = ILM.fromList (fmap (\c -> (c, ILM.partialLookup c bwd)) (ILS.toList classRemapSet))
+        let classRemap = ILM.fromList (fmap (\c -> (c, efLookupRoot c ef')) (ILS.toList classRemapSet))
             closure = ILS.difference (efClosure (ILS.toList roots) ef') dc
         in ((classRemap, closure), eg { egEquivFind = ef' })
       _ -> ((ILM.empty, ILS.empty), eg)
@@ -374,11 +367,11 @@ egRebuildNodeRound origHc wl parents = do
   -- First merge all classes together and get merged class sets
   (classRemap, classClosure) <- egRebuildMerge wl
   -- traceM (unwords ["POST MERGE", "classRemap=", show classRemap, "classClosure=", show classClosure])
-  ef <- gets egEquivFind
+  -- ef <- gets egEquivFind
   -- traceM (unwords ["POST EF", "ef=", show ef])
   -- Now update the hashcons so node ids point to merged classes
   egRebuildHashCons classRemap
-  hc <- gets egHashCons
+  -- hc <- gets egHashCons
   -- traceM (unwords ["POST HASHCONS", "hc=", show hc])
   -- Track all classes touched here
   let touchedClasses = ILS.union parents classClosure
@@ -422,11 +415,9 @@ egRebuildClassMap q touchedClasses = state $ \eg ->
   let ef = egEquivFind eg
       dc = egDeadClasses eg
       hc = egHashCons eg
-      fwd = efFwd ef
-      bwd = efBwd ef
       deadNodes = ILS.fromList (ILM.keys (assocDeadFwd (egNodeAssoc eg)))
-      roots = ILS.map (`ILM.partialLookup` bwd) touchedClasses
-      rootMap = ILM.fromList (fmap (\r -> (r, ILS.filter (/= r) (ILS.difference (ILM.partialLookup r fwd) dc))) (ILS.toList roots))
+      roots = ILS.map (`efLookupRoot` ef) touchedClasses
+      rootMap = ILM.fromList (fmap (\r -> (r, ILS.difference (efLookupLeaves r ef) dc)) (ILS.toList roots))
       cm' = foldl' (\cm (r, vs) -> egRebuildClassSingle q hc deadNodes r vs cm) (egClassMap eg) (ILM.toList rootMap)
       dc' = foldl' ILS.union (egDeadClasses eg) (ILM.elems rootMap)
   in (rootMap, eg { egClassMap = cm', egDeadClasses = dc' })

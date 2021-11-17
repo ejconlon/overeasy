@@ -6,20 +6,22 @@ module Overeasy.EquivFind
   ( EquivFind
   , efFwd
   , efBwd
-  , efSize
+  , efRootsSize
+  , efLeavesSize
   , efTotalSize
   , efNew
   , efMember
   , efRoots
-  , efElems
+  , efLeaves
   , efAddInc
   , efAdd
-  , efEnsureInc
-  , efEnsure
   , efEquivs
   , efClosure
-  , efFind
-  , efPartialFind
+  , efFindRoot
+  , efFindLeaves
+  , efLookupRoot
+  , efLookupLeaves
+  , efFindAll
   , EquivMergeRes (..)
   , efMergeInc
   , efMerge
@@ -31,50 +33,55 @@ module Overeasy.EquivFind
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (State, modify', state)
+import Control.Monad.State.Strict (State, state)
 import Data.Coerce (Coercible)
 import Data.Foldable (foldl')
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, fromMaybe)
 import GHC.Generics (Generic)
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
-import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
-import qualified Overeasy.IntLike.MultiMap as ILMM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
+import Control.Applicative ((<|>))
 
 -- private ctor
 data EquivFind x = EquivFind
-  { efFwd :: !(IntLikeMultiMap x x)
+  { efFwd :: !(IntLikeMap x (IntLikeSet x))
   , efBwd :: !(IntLikeMap x x)
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
-efSize :: EquivFind x -> Int
-efSize = ILMM.size . efFwd
+efRootsSize :: EquivFind x -> Int
+efRootsSize = ILM.size . efFwd
 
--- | How many discrete members have ever been added? (Number of classes via 'efSize' is always LTE total.)
+efLeavesSize :: EquivFind x -> Int
+efLeavesSize = ILM.size . efBwd
+
 efTotalSize :: EquivFind x -> Int
-efTotalSize = ILM.size . efBwd
+efTotalSize ef = efRootsSize ef + efLeavesSize ef
 
 -- | Creates a new UF
 efNew :: EquivFind x
-efNew = EquivFind ILMM.empty ILM.empty
+efNew = EquivFind ILM.empty ILM.empty
 
-efAddInc :: Coercible x Int => x -> EquivFind x -> EquivFind x
-efAddInc x u@(EquivFind fwd bwd) = if ILM.member x bwd then u else EquivFind (ILMM.insert x x fwd) (ILM.insert x x bwd)
+-- private
+allocMM :: Coercible x Int => x -> IntLikeMap x (IntLikeSet x) -> IntLikeMap x (IntLikeSet x)
+allocMM = ILM.alter (<|> Just ILS.empty)
 
-efAdd :: Coercible x Int => x -> State (EquivFind x) ()
-efAdd = modify' . efAddInc
+insertMM :: Coercible x Int => x -> x -> IntLikeMap x (IntLikeSet x) -> IntLikeMap x (IntLikeSet x)
+insertMM x y = ILM.alter (\case { Nothing -> Just (ILS.singleton y); Just s -> Just (ILS.insert y s) }) x
 
-efEnsureInc :: Coercible x Int => x -> EquivFind x -> (x, EquivFind x)
-efEnsureInc x u@(EquivFind fwd bwd) =
+efAddInc :: Coercible x Int => x -> EquivFind x -> (x, EquivFind x)
+efAddInc x u@(EquivFind fwd bwd) =
   case ILM.lookup x bwd of
-    Nothing -> (x, EquivFind (ILMM.insert x x fwd) (ILM.insert x x bwd))
+    Nothing ->
+      if ILM.member x fwd
+        then (x, u)
+        else (x, EquivFind (ILM.insert x ILS.empty fwd) bwd)
     Just y -> (y, u)
 
-efEnsure :: Coercible x Int => x -> State (EquivFind x) x
-efEnsure = state . efEnsureInc
+efAdd :: Coercible x Int => x -> State (EquivFind x) x
+efAdd = state . efAddInc
 
 efEquivs :: Coercible x Int => x -> EquivFind x -> IntLikeSet x
 efEquivs x (EquivFind fwd bwd) =
@@ -96,18 +103,26 @@ efClosure xs ef = foldl' (\c x -> if ILS.member x c then c else ILS.union (efEqu
 --           Nothing -> ILM.insert r (ILM.partialLookup r fwd) m
 --           _ -> m
 
-efFind :: Coercible x Int => x -> EquivFind x -> Maybe x
-efFind x = ILM.lookup x . efBwd
+efFindRoot :: Coercible x Int => x -> EquivFind x -> Maybe x
+efFindRoot x ef = ILM.lookup x (efBwd ef) <|> if ILM.member x (efFwd ef) then Just x else Nothing
 
-efPartialFind :: Coercible x Int => x -> EquivFind x -> x
-efPartialFind x = ILM.partialLookup x . efBwd
+efFindLeaves :: Coercible x Int => x -> EquivFind x -> Maybe (IntLikeSet x)
+efFindLeaves x ef = ILM.lookup x (efFwd ef)
+
+-- | Like 'efFindRoot' but returns same key if not found - does not guarantee presence in map
+efLookupRoot :: Coercible x Int => x -> EquivFind x -> x
+efLookupRoot x = fromMaybe x . ILM.lookup x . efBwd
+
+-- | Like 'efFindLEaves' but returns empty set if not found - does not guarantee presence in map
+efLookupLeaves :: Coercible x Int => x -> EquivFind x -> IntLikeSet x
+efLookupLeaves x = fromMaybe ILS.empty . ILM.lookup x . efFwd
 
 efFindAll :: Coercible x Int => [x] -> EquivFind x -> Either x (IntLikeSet x)
-efFindAll xs (EquivFind _ bwd) = go ILS.empty xs where
+efFindAll xs ef = go ILS.empty xs where
   go !acc = \case
     [] -> Right acc
     y:ys ->
-      case ILM.lookup y bwd of
+      case efFindRoot y ef of
         Nothing -> Left y
         Just z -> go (ILS.insert z acc) ys
 
@@ -117,8 +132,8 @@ efMember x  = ILM.member x . efBwd
 efRoots :: Coercible x Int => EquivFind x -> [x]
 efRoots = ILM.keys . efFwd
 
-efElems :: Coercible x Int => EquivFind x -> [x]
-efElems = ILM.keys . efBwd
+efLeaves :: Coercible x Int => EquivFind x -> [x]
+efLeaves = ILM.keys . efBwd
 
 -- | The result of trying to merge two elements of the 'EquivFind'
 data EquivMergeRes x =
@@ -129,11 +144,11 @@ data EquivMergeRes x =
   deriving anyclass (NFData)
 
 efMergeInc :: (Coercible x Int, Ord x) => x -> x -> EquivFind x -> EquivMergeRes x
-efMergeInc i j (EquivFind fwd bwd) =
-  case ILM.lookup i bwd of
+efMergeInc i j ef@(EquivFind fwd bwd) =
+  case efFindRoot i ef of
     Nothing -> EquivMergeResMissing i
     Just ix ->
-      case ILM.lookup j bwd of
+      case efFindRoot j ef of
         Nothing -> EquivMergeResMissing j
         Just jx ->
           if ix == jx
@@ -141,7 +156,7 @@ efMergeInc i j (EquivFind fwd bwd) =
             else
               let loKey = min ix jx
                   hiKey = max ix jx
-                  hiSet = ILM.partialLookup hiKey fwd
+                  hiSet = ILS.insert hiKey (ILM.partialLookup hiKey fwd)
                   finalFwd = ILM.adjust (hiSet <>) loKey (ILM.delete hiKey fwd)
                   finalBwd = foldl' (flip (`ILM.insert` loKey)) bwd (ILS.toList hiSet)
               in EquivMergeResChanged loKey hiSet (EquivFind finalFwd finalBwd)
@@ -176,7 +191,7 @@ efMergeSetsInc css0 u0 = res where
   go !roots !classRemapSet u@(EquivFind fwd bwd) css =
     case css of
       [] ->
-        let finalRoots = ILS.map (`ILM.partialLookup` bwd) roots
+        let finalRoots = ILS.map (`efLookupRoot` u) roots
         in if ILS.null classRemapSet
           then EquivMergeSetsResUnchanged finalRoots
           else EquivMergeSetsResChanged finalRoots classRemapSet u
@@ -188,7 +203,7 @@ efMergeSetsInc css0 u0 = res where
             Right xs ->
               let (loKey, ys) = fromJust (ILS.minView xs)
                   newRoots = ILS.insert loKey roots
-                  hiSet = ILS.unions (fmap (`ILM.partialLookup` fwd) (ILS.toList ys))
+                  hiSet = ILS.unions (fmap (\y -> ILS.insert y (efLookupLeaves y u)) (ILS.toList ys))
                   newClassRemapSet = ILS.union hiSet classRemapSet
                   newFwd = ILM.adjust (ILS.union hiSet) loKey (foldl' (flip ILM.delete) fwd (ILS.toList ys))
                   newBwd = foldl' (flip (`ILM.insert` loKey)) bwd (ILS.toList hiSet)
@@ -202,8 +217,8 @@ efMergeSets css = state $ \ef ->
     _ -> (Nothing, ef)
 
 efCompactInc :: Coercible x Int => IntLikeSet x -> EquivFind x -> (IntLikeSet x, EquivFind x)
-efCompactInc dc (EquivFind fwd bwd) =
-  let roots = ILS.map (`ILM.partialLookup` bwd) dc
+efCompactInc dc u@(EquivFind fwd bwd) =
+  let roots = ILS.map (`efLookupRoot` u) dc
       fwd' = foldl' (flip (ILM.adjust (`ILS.difference` dc))) fwd (ILS.toList roots)
       bwd' = foldl' (flip ILM.delete) bwd (ILS.toList dc)
   in (roots, EquivFind fwd' bwd')

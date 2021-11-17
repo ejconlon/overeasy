@@ -15,6 +15,7 @@ module Overeasy.IntLike.Map
   , insert
   , insertWith
   , adjust
+  , alter
   , delete
   , minViewWithKey
   , filter
@@ -93,6 +94,10 @@ insertWith f x a = IntLikeMap . IntMap.insertWith f (coerce x) a . unIntLikeMap
 adjust :: Coercible x Int => (a -> a) -> x -> IntLikeMap x a -> IntLikeMap x a
 adjust f x = IntLikeMap . IntMap.adjust f (coerce x) . unIntLikeMap
 {-# INLINE adjust #-}
+
+alter :: Coercible x Int => (Maybe a -> Maybe a) -> x -> IntLikeMap x a -> IntLikeMap x a
+alter f x = IntLikeMap . IntMap.alter f (coerce x) . unIntLikeMap
+{-# INLINE alter #-}
 
 delete :: Coercible x Int => x -> IntLikeMap x a -> IntLikeMap x a
 delete x = IntLikeMap . IntMap.delete (coerce x) . unIntLikeMap
