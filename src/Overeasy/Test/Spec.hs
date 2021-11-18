@@ -27,8 +27,11 @@ import Overeasy.EGraph (EClassId (..), ENodeId (..))
 -- import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
 --                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
 --                         egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
+-- import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
+--                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
+--                         egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge, efMergeSets,
-                           efNew, efRoots, efRootsSize, efTotalSize)
+                           efNew, efRoots, efRootsSize, efTotalSize, efCanCompact)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -78,6 +81,12 @@ fromV = chr . unV
 setV :: String -> IntLikeSet V
 setV = ILS.fromList . fmap toV
 
+mapV :: [(Char, Char)] -> IntLikeMap V V
+mapV = ILM.fromList . fmap (bimap toV toV)
+
+multiMapV :: [(Char, String)] -> IntLikeMap V (IntLikeSet V)
+multiMapV = ILM.fromList . fmap (bimap toV setV)
+
 type UF = EquivFind V
 
 testUfSimple :: TestTree
@@ -97,7 +106,7 @@ testUfSimple = testUnit "UF simple" $ runS efNew $ do
     efTotalSize ef === 1
     ILS.fromList (efRoots ef) === setV "a"
     ILS.fromList (efLeaves ef) === ILS.empty
-    efFwd ef === ILM.fromList [(toV 'a', ILS.empty)]
+    efFwd ef === multiMapV [('a', "")]
     efBwd ef === ILM.empty
   _ <- applyS (efAdd (toV 'b'))
   _ <- applyS (efAdd (toV 'c'))
@@ -107,7 +116,7 @@ testUfSimple = testUnit "UF simple" $ runS efNew $ do
     efTotalSize ef === 3
     ILS.fromList (efRoots ef) === setV "abc"
     ILS.fromList (efLeaves ef) === ILS.empty
-    efFwd ef === ILM.fromList [(toV 'a', ILS.empty), (toV 'b', ILS.empty), (toV 'c', ILS.empty)]
+    efFwd ef === multiMapV [('a', ""), ('b', ""), ('c', "")]
     efBwd ef === ILM.empty
   applyTestS (efMerge (toV 'a') (toV 'c')) $ \res ef -> do
     res === Just (toV 'a', setV "c")
@@ -116,8 +125,8 @@ testUfSimple = testUnit "UF simple" $ runS efNew $ do
     efTotalSize ef === 3
     ILS.fromList (efRoots ef) === setV "ab"
     ILS.fromList (efLeaves ef) === setV "c"
-    efFwd ef === ILM.fromList [(toV 'a', setV "c"), (toV 'b', ILS.empty)]
-    efBwd ef === ILM.fromList [(toV 'c', toV 'a')]
+    efFwd ef === multiMapV [('a', "c"), ('b', "")]
+    efBwd ef === mapV [('c', 'a')]
   applyTestS (efMerge (toV 'c') (toV 'a')) $ \res _ -> res === Nothing
   applyTestS (efMerge (toV 'b') (toV 'z')) $ \res _ -> res === Nothing
 
@@ -133,8 +142,8 @@ testUfRec = testUnit "UF rec" $ runS efNew $ do
     efTotalSize ef === 3
     ILS.fromList (efRoots ef) === setV "ab"
     ILS.fromList (efLeaves ef) === setV "c"
-    efFwd ef === ILM.fromList [(toV 'a', ILS.empty), (toV 'b', setV "c")]
-    efBwd ef === ILM.fromList [(toV 'c', toV 'b')]
+    efFwd ef === multiMapV [('a', ""), ('b', "c")]
+    efBwd ef === mapV [('c', 'b')]
   applyTestS (efMerge (toV 'a') (toV 'c')) $ \res ef -> do
     res === Just (toV 'a', setV "bc")
     efRootsSize ef === 1
@@ -142,8 +151,8 @@ testUfRec = testUnit "UF rec" $ runS efNew $ do
     efTotalSize ef === 3
     ILS.fromList (efRoots ef) === setV "a"
     ILS.fromList (efLeaves ef) === setV "bc"
-    efFwd ef === ILM.fromList [(toV 'a', setV "bc")]
-    efBwd ef === ILM.fromList [(toV 'b', toV 'a'), (toV 'c', toV 'a')]
+    efFwd ef === multiMapV [('a', "bc")]
+    efBwd ef === mapV [('b', 'a'), ('c', 'a')]
 
 testUfMany :: TestTree
 testUfMany = testUnit "UF many" $ runS efNew $ do
@@ -159,8 +168,8 @@ testUfMany = testUnit "UF many" $ runS efNew $ do
     efTotalSize ef === 5
     ILS.fromList (efRoots ef) === setV "abc"
     ILS.fromList (efLeaves ef) === setV "de"
-    efFwd ef === ILM.fromList [(toV 'a', ILS.empty), (toV 'b', ILS.empty), (toV 'c', setV "de")]
-    efBwd ef === ILM.fromList [(toV 'd', toV 'c'), (toV 'e', toV 'c')]
+    efFwd ef === multiMapV [('a', ""), ('b', ""), ('c', "de")]
+    efBwd ef === mapV [('d', 'c'), ('e', 'c')]
   applyTestS (efMergeSets [setV "abd"]) $ \res ef -> do
     res === Just (setV "a", setV "bcde")
     efRootsSize ef === 1
@@ -168,8 +177,8 @@ testUfMany = testUnit "UF many" $ runS efNew $ do
     efTotalSize ef === 5
     ILS.fromList (efRoots ef) === setV "a"
     ILS.fromList (efLeaves ef) === setV "bcde"
-    efFwd ef === ILM.fromList [(toV 'a', setV "bcde")]
-    efBwd ef === ILM.fromList [(toV 'b', toV 'a'), (toV 'c', toV 'a'), (toV 'd', toV 'a'), (toV 'e', toV 'a')]
+    efFwd ef === multiMapV [('a', "bcde")]
+    efBwd ef === mapV [('b', 'a'), ('c', 'a'), ('d', 'a'), ('e', 'a')]
 
 testUfSets :: TestTree
 testUfSets = testUnit "UF sets" $ runS efNew $ do
@@ -184,7 +193,7 @@ testUfSets = testUnit "UF sets" $ runS efNew $ do
     efLeavesSize ef === 4
     efTotalSize ef === 5
     ILS.fromList (efRoots ef) === setV "a"
-    efFwd ef === ILM.fromList [(toV 'a', setV "bcde")]
+    efFwd ef === multiMapV [('a', "bcde")]
 
 testUfCompact :: TestTree
 testUfCompact = testUnit "UF compact" $ runS efNew $ do
@@ -193,14 +202,17 @@ testUfCompact = testUnit "UF compact" $ runS efNew $ do
   _ <- applyS (efAdd (toV 'c'))
   _ <- applyS (efAdd (toV 'd'))
   _ <- applyS (efAdd (toV 'e'))
+  testS $ \ef -> assert (not (efCanCompact ef))
   applyTestS (efMergeSets [setV "cde"]) $ \res ef -> do
     res === Just (setV "c", setV "de")
-    efFwd ef === ILM.fromList [(toV 'a', ILS.empty), (toV 'b', ILS.empty), (toV 'c', setV "de")]
-    efBwd ef === ILM.fromList [(toV 'd', toV 'c'), (toV 'e', toV 'c')]
-  applyTestS (gets (ILS.fromList . efLeaves) >>= efCompact) $ \res ef -> do
-    res === setV "c"
-    efFwd ef === ILM.fromList [(toV 'a', ILS.empty), (toV 'b', ILS.empty), (toV 'c', ILS.empty)]
+    efFwd ef === multiMapV [('a', ""), ('b', ""), ('c', "de")]
+    efBwd ef === mapV [('d', 'c'), ('e', 'c')]
+    assert (efCanCompact ef)
+  applyTestS efCompact $ \res ef -> do
+    efFwd ef === multiMapV [('a', ""), ('b', ""), ('c', "")]
     efBwd ef === ILM.empty
+    res === multiMapV [('c', "de")]
+    assert (not (efCanCompact ef))
 
 testUfUnit :: TestTree
 testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec, testUfMany, testUfSets, testUfCompact]

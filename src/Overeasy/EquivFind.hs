@@ -32,6 +32,7 @@ module Overeasy.EquivFind
   , EquivMergeSetsRes (..)
   , efMergeSetsInc
   , efMergeSets
+  , efCanCompact
   , efCompactInc
   , efCompact
   ) where
@@ -47,6 +48,7 @@ import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
+import Debug.Trace (traceShow, trace)
 
 -- private ctor
 data EquivFind x = EquivFind
@@ -238,12 +240,21 @@ efMergeSets css = state $ \ef ->
     EquivMergeSetsResChanged roots classRemapSet ef' -> (Just (roots, classRemapSet), ef')
     _ -> (Nothing, ef)
 
-efCompactInc :: Coercible x Int => IntLikeSet x -> EquivFind x -> (IntLikeSet x, EquivFind x)
-efCompactInc dc ef@(EquivFind fwd bwd) =
-  let roots = ILS.map (`efLookupRoot` ef) dc
-      fwd' = foldl' (flip (ILM.adjust (`ILS.difference` dc))) fwd (ILS.toList roots)
-      bwd' = foldl' (flip ILM.delete) bwd (ILS.toList dc)
-  in (roots, EquivFind fwd' bwd')
+efCanCompact :: EquivFind x -> Bool
+efCanCompact = not . ILM.null . efBwd
 
-efCompact :: Coercible x Int => IntLikeSet x -> State (EquivFind x) (IntLikeSet x)
-efCompact = state . efCompactInc
+efCompactInc :: Coercible x Int => EquivFind x -> (IntLikeMap x (IntLikeSet x), EquivFind x)
+efCompactInc (EquivFind origFwd origBwd) = finalRes where
+  finalRes =
+    let (rootMap, fwd') = foldl' go (ILM.empty, origFwd) (ILM.elems origBwd)
+    in (rootMap, EquivFind fwd' ILM.empty)
+  go p@(rootMap, fwd) r =
+    if ILM.member r rootMap
+      then p
+      else
+        let xs = ILM.partialLookup r fwd
+        in (ILM.insert r xs rootMap, if ILS.null xs then fwd else ILM.insert r ILS.empty fwd)
+
+
+efCompact :: Coercible x Int => State (EquivFind x) (IntLikeMap x (IntLikeSet x))
+efCompact = state efCompactInc
