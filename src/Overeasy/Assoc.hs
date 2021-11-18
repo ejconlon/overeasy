@@ -3,24 +3,18 @@
 -- | Associates elements with unique ids drawn from a 'Source'
 module Overeasy.Assoc
   ( Assoc
-  , assocSize
-  , assocNew
-  , assocFromPairs
-  , assocAdd
-  , assocEnsure
   , assocFwd
   , assocBwd
-  , assocSrc
-  , assocDeadFwd
-  , assocDeadBwd
+  , assocEquiv
+  , assocChanged
+  , assocSize
+  , assocNew
+  , assocInsert
+  , assocFromList
+  , assocToList
   , assocLookupByKey
-  , assocPartialLookupByKey
   , assocLookupByValue
-  , assocPartialLookupByValue
-  , assocUpdateInc
-  , assocUpdate
   , assocCanCompact
-  , assocCompactInc
   , assocCompact
   ) where
 
@@ -39,16 +33,17 @@ import GHC.Generics (Generic)
 import Overeasy.Classes (Changed (..))
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
-import Overeasy.Source (Source, sourceAddInc, sourceNew, sourceSize, sourceSkipInc)
+import Overeasy.IntLike.Set (IntLikeSet)
+import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.StateUtil (stateFail)
+import Overeasy.EquivFind (EquivFind, EquivEnsureRes (..), efNew, efLookupRoot, efUnsafeMerge, efEnsureInc)
 
 -- private ctor
 data Assoc x a = Assoc
   { assocFwd :: !(IntLikeMap x a)
   , assocBwd :: !(HashMap a x)
-  , assocDeadFwd :: !(IntLikeMap x x)
-  , assocDeadBwd :: !(HashSet a)
-  , assocSrc :: !(Source x)
+  , assocEquiv :: !(EquivFind x)
+  , assocChanged :: !(IntLikeSet x)
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
@@ -56,145 +51,104 @@ data Assoc x a = Assoc
 assocSize :: Assoc x a -> Int
 assocSize = ILM.size . assocFwd
 
--- | How many ids have ever been created?
-assocTotalSize :: Assoc x a -> Int
-assocTotalSize = sourceSize . assocSrc
+-- | Creates a new 'Assoc'
+assocNew :: Assoc x a
+assocNew = Assoc ILM.empty HashMap.empty efNew ILS.empty
 
--- | Creates a new 'Assoc' from a starting element
-assocNew :: Coercible x Int => x -> Assoc x a
-assocNew = Assoc ILM.empty HashMap.empty ILM.empty HashSet.empty . sourceNew
+assocInsertInc :: (Coercible x Int, Ord x, Eq a, Hashable a) => x -> a -> Assoc x a -> (x, Assoc x a)
+assocInsertInc x a1 assoc@(Assoc fwd bwd equiv changed) = finalRes where
+  finalRes =
+    let (res, equiv') = efEnsureInc x equiv
+    in case res of
+      EquivEnsureResNewRoot -> insertRoot x equiv'
+      EquivEnsureResAlreadyLeafOf z -> updateRoot z
+      EquivEnsureResAlreadyRoot -> updateRoot x
+  updateRoot w =
+    -- w is existing root and is guaranteed to map to something
+    let a0 = ILM.partialLookup w fwd
+    in if a0 == a1
+      -- the value has not changed, don't need to change assoc
+      then (w, assoc)
+      else
+        -- value has changed, need to check if it's fresh
+        case HashMap.lookup a1 bwd of
+          -- never seen; insert and return
+          Nothing ->
+            let fwd' = ILM.insert w a1 fwd
+                bwd' = HashMap.insert a1 w (HashMap.delete a0 bwd)
+                changed' = ILS.insert w changed
+            in (w, Assoc fwd' bwd' equiv changed')
+          -- mapped to another set of nodes, merge
+          Just v ->
+            let (toKeep, _, equiv') = efUnsafeMerge w v equiv
+            in if toKeep == w
+              -- w wins
+              then
+                let fwd' = ILM.insert w a1 (ILM.delete v fwd)
+                    bwd' = HashMap.insert a1 w (HashMap.delete a0 bwd)
+                    changed' = ILS.insert w changed
+                in (w, Assoc fwd' bwd' equiv' changed')
+              -- v wins
+              else
+                let fwd' = ILM.delete w fwd
+                    bwd' = HashMap.delete a0 bwd
+                    changed' = ILS.insert w changed
+                in (v, Assoc fwd' bwd' equiv' changed')
+  insertRoot w equiv' =
+    -- w is new root that doesn't exist
+    case HashMap.lookup a1 bwd of
+      -- never seen; insert and return
+      Nothing ->
+        let fwd' = ILM.insert w a1 fwd
+            bwd' = HashMap.insert a1 w bwd
+            changed' = ILS.insert w changed
+        in (w, Assoc fwd' bwd' equiv' changed')
+      Just v ->
+        let (toKeep, _, equiv'') = efUnsafeMerge w v equiv'
+        in if toKeep == w
+          -- w wins
+          then
+            let fwd' = ILM.insert w a1 (ILM.delete v fwd)
+                bwd' = HashMap.insert a1 w bwd
+                changed' = ILS.insert w changed
+            in (w, Assoc fwd' bwd' equiv'' changed')
+          -- v wins
+          else
+            let fwd' = ILM.delete w fwd
+                changed' = ILS.insert w changed
+            in (v, Assoc fwd' bwd equiv'' changed')
 
--- | Creates a new 'Assoc' from pairs of elements.
-assocFromPairs :: (Coercible x Int, Eq a, Hashable a) => x -> [(x, a)] -> Maybe (Assoc x a)
-assocFromPairs start pairs =
-  let fwd = ILM.fromList pairs
-      bwd = HashMap.fromList (fmap swap pairs)
-      n = foldl' (flip sourceSkipInc) (sourceNew start) (fmap fst pairs)
-      nElems = length pairs
-      nFwd = ILM.size fwd
-      nBwd = HashMap.size bwd
-  in if nFwd == nElems && nBwd == nElems
-    then Just (Assoc fwd bwd ILM.empty HashSet.empty n)
-    else Nothing
+assocInsert :: (Coercible x Int, Ord x, Eq a, Hashable a) => x -> a -> State (Assoc x a) x
+assocInsert x a = state (assocInsertInc x a)
 
--- private
-assocAddInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> Maybe (x, Assoc x a)
-assocAddInc a (Assoc fwd bwd deadFwd deadBwd src) =
-  case HashMap.lookup a bwd of
-    Nothing ->
-      let (n, src') = sourceAddInc src
-      in Just (n, Assoc (ILM.insert n a fwd) (HashMap.insert a n bwd) deadFwd deadBwd src')
-    Just _ -> Nothing
+assocFromList :: (Coercible x Int, Ord x, Eq a, Hashable a) => [(x, a)] -> Assoc x a
+assocFromList = foldl' (\assoc (x, a) -> let (_, assoc') = assocInsertInc x a assoc in assoc') assocNew
 
--- | Adds the given element to the 'Assoc' and returns a new id or 'Nothing' if it already exists
-assocAdd :: (Coercible x Int, Eq a, Hashable a) => a -> State (Assoc x a) (Maybe x)
-assocAdd = stateFail . assocAddInc
-
--- private
-assocEnsureInc :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> ((Changed, x), Assoc x a)
-assocEnsureInc a w@(Assoc fwd bwd deadFwd deadBwd src) =
-  case HashMap.lookup a bwd of
-    Nothing ->
-      let (n, src') = sourceAddInc src
-      in ((ChangedYes, n), Assoc (ILM.insert n a fwd) (HashMap.insert a n bwd) deadFwd deadBwd src')
-    Just x -> ((ChangedNo, x), w)
-
--- | Adds the given element to the 'Assoc' and returns a new id or the existing one on conflict
-assocEnsure :: (Coercible x Int, Eq a, Hashable a) => a -> State (Assoc x a) (Changed, x)
-assocEnsure = state . assocEnsureInc
+assocToList :: Coercible x Int => Assoc x a -> [(x, a)]
+assocToList = ILM.toList . assocFwd
 
 -- | Forward lookup
 assocLookupByKey :: (Coercible x Int) => x -> Assoc x a -> Maybe a
-assocLookupByKey x = ILM.lookup x . assocFwd
+assocLookupByKey x (Assoc fwd _ equiv _) = ILM.lookup (efLookupRoot x equiv) fwd
 
--- | PARTIAL forward lookup
-assocPartialLookupByKey :: (Coercible x Int) => x -> Assoc x a ->  a
-assocPartialLookupByKey x = ILM.partialLookup x . assocFwd
+-- -- | PARTIAL forward lookup
+-- assocPartialLookupByKey :: (Coercible x Int) => x -> Assoc x a ->  a
+-- assocPartialLookupByKey x = undefined
 
 -- | Backward lookup
 assocLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> Maybe x
 assocLookupByValue a = HashMap.lookup a . assocBwd
 
--- | PARTIAL backward lookup
-assocPartialLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> x
-assocPartialLookupByValue a assoc = assocBwd assoc HashMap.! a
-
--- | Updates the assoc. You may need to clean the 'Assoc' with 'assocClean' when you have finished updating.
--- If (x, a0) is in the assoc fwd and you update with (x, a1) where a0 /= a1, you should not call with a0 again.
--- May break the 1-1 fwd and bwd mappings until you clean.
--- If returns nothing, the assoc was not updated.
-assocUpdateInc :: (Coercible x Int, Eq x, Eq a, Hashable a) => x -> a -> Assoc x a -> Maybe (x, Assoc x a)
-assocUpdateInc x a1 (Assoc fwd bwd deadFwd deadBwd n) =
-  case (ILM.lookup x fwd, HashMap.lookup a1 bwd) of
-    (Nothing, Nothing) ->
-      -- Neither x nor a1 were ever in the map - simply insert
-      let fwd' = ILM.insert x a1 fwd
-          bwd' = HashMap.insert a1 x bwd
-          n' = sourceSkipInc x n
-      in Just (x, Assoc fwd' bwd' deadFwd deadBwd n')
-    (Nothing, Just y) ->
-      -- x was not in the map but a1 was
-      -- Update fwd x a1, mark x for deletion, return y
-      -- This makes fwd many-to-one until clean. No elem in bwd will point to x.
-      let fwd' = ILM.insert x a1 fwd
-          deadFwd' = ILM.insert x y deadFwd
-          n' = sourceSkipInc x n
-      in Just (y, Assoc fwd' bwd deadFwd' deadBwd n')
-    (Just a0, Nothing) ->
-      -- x was in the map but a1 was not
-      -- Update fwd bwd for x a1, mark original a for deletion, then return x
-      -- This makes bwd many-to-one. No elem in fwd will point to a0.
-        let fwd' = ILM.insert x a1 fwd
-            bwd' = HashMap.insert a1 x bwd
-            deadBwd' = HashSet.insert a0 deadBwd
-        in Just (x, Assoc fwd' bwd' deadFwd deadBwd' n)
-    (Just a0, Just y) ->
-      -- x and a1 are in the map already
-      if a0 == a1
-        -- duplicate insert, no change
-        then Nothing
-        else if x == y
-          -- (a1 -> x) in bwd but (x -> a0) in fwd
-          -- Update fwd for x a1, mark a0 for deletion, then return x.
-          -- No elem in fwd will point to a0.
-          then
-            let fwd' = ILM.insert x a1 fwd
-                deadBwd' = HashSet.insert a0 deadBwd
-            in Just (x, Assoc fwd' bwd deadFwd deadBwd' n)
-          -- Update fwd for x a1, update bwd for a0 y, mark original x and a for deletion, then return y.
-          -- This makes fwd and bwd many-to-one. No elem in fwd will point to a0, no elem in bwd will point to x.
-          else
-            let fwd' = ILM.insert x a1 fwd
-                bwd' = HashMap.insert a0 y bwd
-                deadFwd' = ILM.insert x y deadFwd
-                deadBwd' = HashSet.insert a0 deadBwd
-            in Just (y, Assoc fwd' bwd' deadFwd' deadBwd' n)
-
-assocUpdate :: (Coercible x Int, Eq x, Eq a, Hashable a) => x -> a -> State (Assoc x a) x
-assocUpdate x a = state (\assoc -> fromMaybe (x, assoc) (assocUpdateInc x a assoc))
+-- -- | PARTIAL backward lookup
+-- assocPartialLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> x
+-- assocPartialLookupByValue a assoc = assocBwd assoc HashMap.! a
 
 -- | Are there dead elements in the forward map from 'assocUpdate'?
 assocCanCompact :: Assoc x a -> Bool
-assocCanCompact assoc = not (ILM.null (assocDeadFwd assoc) && HashSet.null (assocDeadBwd assoc))
-
--- private
-pathCompactMap :: Coercible x Int => IntLikeMap x x -> IntLikeMap x x
-pathCompactMap m = foldl' (\n (x, y) -> go [] n x y) m (ILM.toList m) where
-  go acc n x y =
-    case ILM.lookup y n of
-      Nothing -> foldl' (\o w -> ILM.insert w y o) n acc
-      Just z -> go (x:acc) n y z
+assocCanCompact = const False -- TODO XXX
 
 assocCompactInc :: (Coercible x Int, Eq a, Hashable a) => Assoc x a -> (IntLikeMap x x, Assoc x a)
-assocCompactInc assoc@(Assoc fwd bwd deadFwd deadBwd n) =
-  if assocCanCompact assoc
-    then
-      let fwd' = foldl' (flip ILM.delete) fwd (ILM.keys deadFwd)
-          bwd' = foldl' (flip HashMap.delete) bwd deadBwd
-          assoc' = Assoc fwd' bwd' ILM.empty HashSet.empty n
-          mapping = pathCompactMap deadFwd
-      in (mapping, assoc')
-    else (ILM.empty, assoc)
+assocCompactInc assoc = (ILM.empty, assoc) -- TODO XXX
 
 -- | Removes all dead elements from the forward map
 assocCompact :: (Coercible x Int, Eq a, Hashable a) => State (Assoc x a) (IntLikeMap x x)
