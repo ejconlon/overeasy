@@ -1,8 +1,9 @@
 -- | Some useful functions for state
 module Overeasy.StateUtil
   ( stateFail
+  , stateOption
   , stateFailChanged
-  , stateLens
+  -- , stateLens
   , stateFold
   ) where
 
@@ -20,6 +21,16 @@ stateFail f = do
     Nothing -> pure Nothing
     Just (b, s') -> put s' >> pure (Just b)
 
+-- | Embeds a function that may fail in a stateful context
+stateOption :: (s -> (b, Maybe s)) -> State s b
+stateOption f = do
+  s <- get
+  let (b, ms) = f s
+  case ms of
+    Nothing -> pure ()
+    Just s' -> put s'
+  pure b
+
 -- | Embeds a function that may fail in a stateful context with change tracking
 stateFailChanged :: (s -> Maybe s) -> State s Changed
 stateFailChanged f = do
@@ -28,12 +39,12 @@ stateFailChanged f = do
     Nothing -> pure ChangedNo
     Just s' -> put s' >> pure ChangedYes
 
--- | Embeds a stateful action in a larger context
-stateLens :: Lens' s a -> State a b -> State s b
-stateLens l act = state $ \s ->
-  let (b, a') = runState act (view l s)
-      s' = set l a' s
-  in (b, s')
+-- -- | Embeds a stateful action in a larger context
+-- stateLens :: Lens' s a -> State a b -> State s b
+-- stateLens l act = state $ \s ->
+--   let (b, a') = runState act (view l s)
+--       s' = set l a' s
+--   in (b, s')
 
 -- | 'foldM' specialized and flipped.
 stateFold :: Foldable t => b -> t a -> (b -> a -> State s b) -> State s b

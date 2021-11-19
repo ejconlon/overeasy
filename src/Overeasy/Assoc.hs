@@ -8,12 +8,17 @@ module Overeasy.Assoc
   , assocEquiv
   , assocSize
   , assocNew
+  , assocInsertInc
   , assocInsert
   , assocFromList
   , assocToList
   , assocLookupByKey
+  , assocPartialLookupByKey
   , assocLookupByValue
+  , assocPartialLookupByValue
+  , assocDead
   , assocCanCompact
+  , assocCompactInc
   , assocCompact
   ) where
 
@@ -28,7 +33,9 @@ import GHC.Generics (Generic)
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
-import Overeasy.EquivFind (EquivFind, EquivEnsureRes (..), efNew, efLookupRoot, efUnsafeMerge, efEnsureInc, efCanCompact, efCompactInc)
+import Overeasy.EquivFind (EquivFind, EquivEnsureRes (..), efNew, efLookupRoot, efUnsafeMerge, efEnsureInc, efCanCompact, efCompactInc, efLeaves)
+import Data.Maybe (fromJust, fromMaybe)
+import Overeasy.StateUtil (stateOption)
 
 -- private ctor
 data Assoc x a = Assoc
@@ -46,8 +53,8 @@ assocSize = ILM.size . assocFwd
 assocNew :: Assoc x a
 assocNew = Assoc ILM.empty HashMap.empty efNew
 
-assocInsertInc :: (Coercible x Int, Ord x, Eq a, Hashable a) => x -> a -> Assoc x a -> (x, Assoc x a)
-assocInsertInc x a1 assoc@(Assoc fwd bwd equiv) = finalRes where
+assocInsertInc :: (Coercible x Int, Ord x, Eq a, Hashable a) => x -> a -> Assoc x a -> (x, Maybe (Assoc x a))
+assocInsertInc x a1 (Assoc fwd bwd equiv) = finalRes where
   finalRes =
     let (res, equiv') = efEnsureInc x equiv
     in case res of
@@ -59,7 +66,7 @@ assocInsertInc x a1 assoc@(Assoc fwd bwd equiv) = finalRes where
     let a0 = ILM.partialLookup w fwd
     in if a0 == a1
       -- the value has not changed, don't need to change assoc
-      then (w, assoc)
+      then (w, Nothing)
       else
         -- value has changed, need to check if it's fresh
         case HashMap.lookup a1 bwd of
@@ -67,7 +74,7 @@ assocInsertInc x a1 assoc@(Assoc fwd bwd equiv) = finalRes where
           Nothing ->
             let fwd' = ILM.insert w a1 fwd
                 bwd' = HashMap.insert a1 w (HashMap.delete a0 bwd)
-            in (w, Assoc fwd' bwd' equiv)
+            in (w, Just (Assoc fwd' bwd' equiv))
           -- mapped to another set of nodes, merge
           Just v ->
             let (toKeep, _, equiv') = efUnsafeMerge w v equiv
@@ -76,12 +83,12 @@ assocInsertInc x a1 assoc@(Assoc fwd bwd equiv) = finalRes where
               then
                 let fwd' = ILM.insert w a1 (ILM.delete v fwd)
                     bwd' = HashMap.insert a1 w (HashMap.delete a0 bwd)
-                in (w, Assoc fwd' bwd' equiv')
+                in (w, Just (Assoc fwd' bwd' equiv'))
               -- v wins
               else
                 let fwd' = ILM.delete w fwd
                     bwd' = HashMap.delete a0 bwd
-                in (v, Assoc fwd' bwd' equiv')
+                in (v, Just (Assoc fwd' bwd' equiv'))
   insertRoot w equiv' =
     -- w is new root that doesn't exist
     case HashMap.lookup a1 bwd of
@@ -89,7 +96,7 @@ assocInsertInc x a1 assoc@(Assoc fwd bwd equiv) = finalRes where
       Nothing ->
         let fwd' = ILM.insert w a1 fwd
             bwd' = HashMap.insert a1 w bwd
-        in (w, Assoc fwd' bwd' equiv')
+        in (w, Just (Assoc fwd' bwd' equiv'))
       Just v ->
         let (toKeep, _, equiv'') = efUnsafeMerge w v equiv'
         in if toKeep == w
@@ -97,36 +104,40 @@ assocInsertInc x a1 assoc@(Assoc fwd bwd equiv) = finalRes where
           then
             let fwd' = ILM.insert w a1 (ILM.delete v fwd)
                 bwd' = HashMap.insert a1 w bwd
-            in (w, Assoc fwd' bwd' equiv'')
+            in (w, Just (Assoc fwd' bwd' equiv''))
           -- v wins
           else
             let fwd' = ILM.delete w fwd
-            in (v, Assoc fwd' bwd equiv'')
+            in (v, Just (Assoc fwd' bwd equiv''))
 
 assocInsert :: (Coercible x Int, Ord x, Eq a, Hashable a) => x -> a -> State (Assoc x a) x
-assocInsert x a = state (assocInsertInc x a)
+assocInsert x a = stateOption (assocInsertInc x a)
 
 assocFromList :: (Coercible x Int, Ord x, Eq a, Hashable a) => [(x, a)] -> Assoc x a
-assocFromList = foldl' (\assoc (x, a) -> let (_, assoc') = assocInsertInc x a assoc in assoc') assocNew
+assocFromList = foldl' (\assoc (x, a) -> let (_, massoc) = assocInsertInc x a assoc in fromMaybe assoc massoc) assocNew
 
 assocToList :: Coercible x Int => Assoc x a -> [(x, a)]
 assocToList = ILM.toList . assocFwd
 
 -- | Forward lookup
-assocLookupByKey :: (Coercible x Int) => x -> Assoc x a -> Maybe a
+assocLookupByKey :: Coercible x Int => x -> Assoc x a -> Maybe a
 assocLookupByKey x (Assoc fwd _ equiv) = ILM.lookup (efLookupRoot x equiv) fwd
 
--- -- | PARTIAL forward lookup
--- assocPartialLookupByKey :: (Coercible x Int) => x -> Assoc x a ->  a
--- assocPartialLookupByKey x = undefined
+-- | PARTIAL forward lookup
+assocPartialLookupByKey :: Coercible x Int => x -> Assoc x a -> a
+assocPartialLookupByKey x = fromJust . assocLookupByKey x
 
 -- | Backward lookup
 assocLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> Maybe x
 assocLookupByValue a = HashMap.lookup a . assocBwd
 
--- -- | PARTIAL backward lookup
--- assocPartialLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> x
--- assocPartialLookupByValue a assoc = assocBwd assoc HashMap.! a
+-- | PARTIAL backward lookup
+assocPartialLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> x
+assocPartialLookupByValue a = flip (HashMap.!) a . assocBwd
+
+-- | List all dead (compactible) entries
+assocDead :: Coercible x Int => Assoc x a -> [x]
+assocDead = efLeaves . assocEquiv
 
 -- | Are there dead keys in the equiv from 'assocInsert'?
 assocCanCompact :: Assoc x a -> Bool

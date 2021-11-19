@@ -21,7 +21,7 @@ import Data.Traversable (for)
 import Hedgehog (Gen, Range, forAll)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
-import Overeasy.Assoc (Assoc, assocNew, assocSize, assocInsert, assocFromList, assocFwd, assocBwd, assocCompact)
+import Overeasy.Assoc (Assoc, assocNew, assocSize, assocInsert, assocFromList, assocFwd, assocBwd, assocCompact, assocCanCompact, assocDead)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EClassId (..), ENodeId (..))
 -- import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
@@ -396,31 +396,32 @@ testAssocCase (AssocCase name start act end) = testUnit name $ runAV start $ do
 testAssocCases :: TestTree
 testAssocCases = testGroup "Assoc case" (fmap testAssocCase allAssocCases)
 
--- testAssocUnit :: TestTree
--- testAssocUnit = testUnit "Assoc unit" $ do
---   let a0 = assocNew :: AV
---   assertAssocInvariants a0
---   assertAssocCompact a0
---   assocSize a0 === 0
---   let members = [toV 'a', toV 'b', toV 'c'] :: [V]
---   let a1 = execState (for_ members assocAdd) a0
---   assertAssocInvariants a1
---   assertAssocCompact a0
---   assocSize a1 === 3
---   let aVal = toV 'a'
---       aKey = fromJust (HashMap.lookup aVal (assocBwd a1))
---       bVal = toV 'b'
---       bKey = fromJust (HashMap.lookup bVal (assocBwd a1))
---   let (newAKey, a2) = runState (assocInsert aKey bVal) a1
---   newAKey === bKey
---   assertAssocInvariants a2
---   assert $ assocCanCompact a2
---   assocDeadFwd a2 === ILM.fromList [(aKey, bKey)]
---   assocDeadBwd a2 === HashSet.fromList [aVal]
---   let a3 = execState assocCompact a2
---   assertAssocInvariants a3
---   assertAssocCompact a3
---   assocSize a3 === 2
+testAssocUnit :: TestTree
+testAssocUnit = testUnit "Assoc unit" $ do
+  let a0 = assocNew :: AV
+  assertAssocInvariants a0
+  assertAssocCompact a0
+  assocSize a0 === 0
+  let aKey = ENodeId 0
+      aVal = toV 'a'
+      bKey = ENodeId 1
+      bVal = toV 'b'
+      cKey = ENodeId 2
+      cVal = toV 'c'
+  let members = [(aKey, aVal), (bKey, bVal), (cKey, cVal)]
+  let a1 = execState (for_ members (uncurry assocInsert)) a0
+  assertAssocInvariants a1
+  assertAssocCompact a0
+  assocSize a1 === 3
+  let (newAKey, a2) = runState (assocInsert aKey bVal) a1
+  newAKey === aKey
+  assertAssocInvariants a2
+  assert $ assocCanCompact a2
+  assocDead a2 === [bKey]
+  let a3 = execState assocCompact a2
+  assertAssocInvariants a3
+  assertAssocCompact a3
+  assocSize a3 === 2
 
 -- testEgUnit :: TestTree
 -- testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ do
@@ -805,7 +806,7 @@ main = do
   defaultMain $ testGroup "Overeasy"
     [ testILM
     , testUfUnit
-    -- , testAssocUnit
+    , testAssocUnit
     , testAssocCases
     -- , testEgUnit
     -- , testEgNew

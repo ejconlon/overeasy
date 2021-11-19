@@ -48,7 +48,6 @@ import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
-import Debug.Trace (traceShow, trace)
 
 -- private ctor
 data EquivFind x = EquivFind
