@@ -2,7 +2,7 @@ module Overeasy.Test.Spec (main) where
 
 import Control.DeepSeq (NFData, force)
 import Control.Monad (foldM, unless, void, when)
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT, gets,
                                    runState)
 import Control.Monad.Trans (MonadTrans (lift))
@@ -23,13 +23,9 @@ import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Overeasy.Assoc (Assoc, assocNew, assocSize, assocInsert, assocFromList, assocFwd, assocBwd, assocCompact, assocCanCompact, assocDead)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EGraph (EClassId (..), ENodeId (..))
--- import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
---                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
---                         egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
--- import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
---                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
---                         egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
+import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
+                        ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
+                        egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge, efMergeSets,
                            efNew, efRoots, efRootsSize, efTotalSize, efCanCompact)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
@@ -43,7 +39,11 @@ import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions (MonadTest, TestLimit, assert, setupTests, testGen, testUnit, (/==), (===))
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
+import Control.Exception (evaluate)
 -- import Text.Pretty.Simple (pPrint)
+
+fullyEvaluate :: (MonadIO m, NFData a) => a -> m a
+fullyEvaluate = liftIO . evaluate . force
 
 applyS :: Monad m => State s a -> StateT s m a
 applyS = state . runState
@@ -306,11 +306,6 @@ testUfProp lim = after AllSucceed "UF unit" $ testGen "UF prop" lim $ do
       else x /== y
   pure ()
 
--- type EGA = EGraph () ArithF
-
--- noA :: EAnalysisOff ArithF
--- noA = EAnalysisOff
-
 type AV = Assoc ENodeId V
 
 -- | Asserts assoc is compact - should also check 'assertAssocInvariants'
@@ -423,76 +418,78 @@ testAssocUnit = testUnit "Assoc unit" $ do
   assertAssocCompact a3
   assocSize a3 === 2
 
--- testEgUnit :: TestTree
--- testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ do
---   -- We're going to have our egraph track the equality `2 + 2 = 4`.
---   -- Some simple terms:
---   let termFour = ArithConst 4
---       termTwo = ArithConst 2
---       termPlus = ArithPlus termTwo termTwo
---   -- Test that the empty egraph is sane
---   testS $ \eg -> do
---     egClassSize eg === 0
---     egNodeSize eg === 0
---     egNeedsRebuild eg === False
---   -- Add the term `4`
---   cidFour <- applyTestS (egAddTerm noA termFour) $ \(c, x) eg -> do
---     c === ChangedYes
---     egFindTerm termFour eg === Just x
---     egClassSize eg === 1
---     egNodeSize eg === 1
---     egNeedsRebuild eg === False
---     pure x
---   -- Add the term `2`
---   cidTwo <- applyTestS (egAddTerm noA termTwo) $ \(c, x) eg -> do
---     c === ChangedYes
---     x /== cidFour
---     egFindTerm termTwo eg === Just x
---     egClassSize eg === 2
---     egNodeSize eg === 2
---     egNeedsRebuild eg === False
---     pure x
---   -- Add the term `4` again and assert things haven't changed
---   applyTestS (egAddTerm noA termFour) $ \(c, x) eg -> do
---     c === ChangedNo
---     x === cidFour
---     egFindTerm termFour eg === Just x
---     egClassSize eg === 2
---     egNodeSize eg === 2
---     egNeedsRebuild eg === False
---   -- Add the term `2 + 2`
---   cidPlus <- applyTestS (egAddTerm noA termPlus) $ \(c, x) eg -> do
---     c === ChangedYes
---     x /== cidFour
---     x /== cidTwo
---     egFindTerm termPlus eg === Just x
---     egClassSize eg === 3
---     egNodeSize eg === 3
---     egNeedsRebuild eg === False
---     pure x
---   -- Merge `4` and `4` and assert things haven't changed
---   applyTestS (egMerge cidFour cidFour) $ \m eg -> do
---     egNeedsRebuild eg === False
---     case m of
---       Nothing -> fail "Could not resolve cidFour"
---       Just c -> c === ChangedNo
---   -- Merge `2 + 2` and `4`
---   applyTestS (egMerge cidPlus cidFour) $ \m eg -> do
---     egNeedsRebuild eg === True
---     egWorkList eg === Seq.singleton (ILS.fromList [cidPlus, cidFour])
---     case m of
---       Nothing -> fail "Could not resolve one of cidFour or cidPlus"
---       Just c -> c === ChangedYes
---   -- Now rebuild
---   applyTestS (egRebuild noA) $ \newRoots eg -> do
---     cidMerged <-
---       case ILM.keys newRoots of
---         [x] -> pure x
---         _ -> fail "Expected singleton root list"
---     egFindTerm termFour eg === Just cidMerged
---     egFindTerm termPlus eg === Just cidMerged
---     egFindTerm termTwo eg === Just cidTwo
---     egNeedsRebuild eg === False
+type EGA = EGraph () ArithF
+
+testEgUnit :: TestTree
+testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ do
+  -- We're going to have our egraph track the equality `2 + 2 = 4`.
+  -- Some simple terms:
+  let termFour = ArithConst 4
+      termTwo = ArithConst 2
+      termPlus = ArithPlus termTwo termTwo
+  -- Test that the empty egraph is sane
+  testS $ \eg -> do
+    egClassSize eg === 0
+    egNodeSize eg === 0
+    egNeedsRebuild eg === False
+  -- Add the term `4`
+  cidFour <- applyTestS (egAddTerm EAnalysisOff termFour) $ \(c, x) eg -> do
+    c === ChangedYes
+    egFindTerm termFour eg === Just x
+    egClassSize eg === 1
+    egNodeSize eg === 1
+    egNeedsRebuild eg === False
+    pure x
+  -- Add the term `2`
+  cidTwo <- applyTestS (egAddTerm EAnalysisOff termTwo) $ \(c, x) eg -> do
+    c === ChangedYes
+    x /== cidFour
+    egFindTerm termTwo eg === Just x
+    egClassSize eg === 2
+    egNodeSize eg === 2
+    egNeedsRebuild eg === False
+    pure x
+  -- Add the term `4` again and assert things haven't changed
+  applyTestS (egAddTerm EAnalysisOff termFour) $ \(c, x) eg -> do
+    c === ChangedNo
+    x === cidFour
+    egFindTerm termFour eg === Just x
+    egClassSize eg === 2
+    egNodeSize eg === 2
+    egNeedsRebuild eg === False
+  -- Add the term `2 + 2`
+  cidPlus <- applyTestS (egAddTerm EAnalysisOff termPlus) $ \(c, x) eg -> do
+    c === ChangedYes
+    x /== cidFour
+    x /== cidTwo
+    egFindTerm termPlus eg === Just x
+    egClassSize eg === 3
+    egNodeSize eg === 3
+    egNeedsRebuild eg === False
+    pure x
+  -- Merge `4` and `4` and assert things haven't changed
+  applyTestS (egMerge cidFour cidFour) $ \m eg -> do
+    egNeedsRebuild eg === False
+    case m of
+      Nothing -> fail "Could not resolve cidFour"
+      Just c -> c === ChangedNo
+  -- Merge `2 + 2` and `4`
+  applyTestS (egMerge cidPlus cidFour) $ \m eg -> do
+    egNeedsRebuild eg === True
+    egWorkList eg === Seq.singleton (ILS.fromList [cidPlus, cidFour])
+    case m of
+      Nothing -> fail "Could not resolve one of cidFour or cidPlus"
+      Just c -> c === ChangedYes
+  -- Now rebuild
+  applyTestS (egRebuild EAnalysisOff) $ \newRoots eg -> do
+    cidMerged <-
+      case ILM.keys newRoots of
+        [x] -> pure x
+        _ -> fail "Expected singleton root list"
+    egFindTerm termFour eg === Just cidMerged
+    egFindTerm termPlus eg === Just cidMerged
+    egFindTerm termTwo eg === Just cidTwo
+    egNeedsRebuild eg === False
 
 -- genBinTree :: Gen a -> Gen (BinTree a)
 -- genBinTree genA = genEither where
@@ -503,10 +500,10 @@ testAssocUnit = testUnit "Assoc unit" $ do
 -- genBinTreeMembers :: Int -> Gen [BinTree V]
 -- genBinTreeMembers maxElems = Gen.list (Range.constant 0 maxElems) (genBinTree (genV maxElems))
 
--- type EGD = Max V
--- type EGF = BinTreeF V
--- type EGT = BinTree V
--- type EGV = EGraph EGD EGF
+type EGD = Max V
+type EGF = BinTreeF V
+type EGT = BinTree V
+type EGV = EGraph EGD EGF
 
 -- maxVAnalysis :: EAnalysisAlgebra EGD EGF
 -- maxVAnalysis = EAnalysisAlgebra $ \case
@@ -522,68 +519,62 @@ testAssocUnit = testUnit "Assoc unit" $ do
 -- maxBinTreeLeaf :: Ord a => BinTree a -> a
 -- maxBinTreeLeaf = getMax . analyzeBinTree Max
 
--- assertEgInvariants :: (MonadTest m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
--- assertEgInvariants eg = do
---   -- Invariants require that no rebuild is needed (empty worklist)
---   assert $ not (egNeedsRebuild eg)
---   let assoc = egNodeAssoc eg
---       hc = egHashCons eg
---       fwd = assocFwd assoc
---       bwd = assocBwd assoc
---       deadFwd = assocDeadFwd assoc
---       deadBwd = assocDeadBwd assoc
---       ef = egEquivFind eg
---       efRootClasses = ILS.fromList (efRoots ef)
---       efLeafClasses = ILS.fromList (efLeaves ef)
---       allClasses = ILS.union efRootClasses efLeafClasses
---       deadClasses = egDeadClasses eg
---       deadNodes = ILS.fromList (ILM.keys deadFwd)
---       cm = egClassMap eg
---       cmClasses = ILS.fromList (ILM.keys cm)
---   -- Assert that dead classes and root classes are disjoint
---   ILS.intersection deadClasses efRootClasses === ILS.empty
---   -- Assert that dead classes and root classes partition all classes
---   ILS.union deadClasses efRootClasses === allClasses
---   -- Assert that the assoc is 1-1 etc
---   assertAssocInvariants assoc
---   -- Assert that the hashcons and assoc have equal key sets
---   ILM.keys hc === ILM.keys fwd
---   -- Assert that hashcons has exactly the same values as unionfind roots for all nodes
---   for_ (ILM.elems hc) $ \c ->
---     assert $ ILS.member c efRootClasses
---   -- Assert that classmap contains all unionfind roots
---   for_ (ILS.toList efRootClasses) $ \r ->
---     assert $ ILS.member r cmClasses
---   -- Assert that those non-root classes are marked dead
---   for_ (ILS.toList cmClasses) $ \c ->
---     unless (ILS.member c efRootClasses) $
---       assert $ ILS.member c deadClasses
---   -- For every non-dead class
---   cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) ->
---     if ILS.member c deadClasses
---       -- skip dead classes
---       then pure accNodes
---       else do
---         let nodes = eciNodes eci
---         -- Assert that classmap node values are non-empty
---         nodes /== ILS.empty
---         -- Assert that classmap class has node values that are hashconsed to class
---         for_ (ILS.toList nodes) $ \n ->
---           ILM.lookup n hc === Just c
---         assert $ ILS.disjoint nodes accNodes
---         pure (ILS.union accNodes nodes)
---   -- Assert hc keys contain class nodes and dead nodes
---   ILS.union cmNodes deadNodes === ILS.fromList (ILM.keys hc)
---   -- Assert class nodes and dead nodes disjoint
---   ILS.intersection deadNodes cmNodes === ILS.empty
---   -- Now test recanonicalization
---   for_ (HashMap.toList bwd) $ \(fc, _) ->
---     let recanon = evalState (egCanonicalize fc) eg
---     in if HashSet.member fc deadBwd
---       -- If it's dead, best you can say is that it's something
---       then assert $ isJust recanon
---       -- otherwise it should already be canonical
---       else recanon === Just fc
+assertEgInvariants :: (MonadTest m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
+assertEgInvariants eg = do
+  -- Invariants require that no rebuild is needed (empty worklist)
+  assert $ not (egNeedsRebuild eg)
+  let assoc = egNodeAssoc eg
+      hc = egHashCons eg
+      fwd = assocFwd assoc
+      bwd = assocBwd assoc
+      deadNodes = ILS.fromList (assocDead assoc)
+      ef = egEquivFind eg
+      efRootClasses = ILS.fromList (efRoots ef)
+      efLeafClasses = ILS.fromList (efLeaves ef)
+      allClasses = ILS.union efRootClasses efLeafClasses
+      deadClasses = egDeadClasses eg
+      cm = egClassMap eg
+      cmClasses = ILS.fromList (ILM.keys cm)
+  -- Assert that dead classes and root classes are disjoint
+  ILS.intersection deadClasses efRootClasses === ILS.empty
+  -- Assert that dead classes and root classes partition all classes
+  ILS.union deadClasses efRootClasses === allClasses
+  -- Assert that the assoc is 1-1 etc
+  assertAssocInvariants assoc
+  -- Assert that the hashcons and assoc have equal key sets
+  ILM.keys hc === ILM.keys fwd
+  -- Assert that hashcons has exactly the same values as unionfind roots for all nodes
+  for_ (ILM.elems hc) $ \c ->
+    assert $ ILS.member c efRootClasses
+  -- Assert that classmap contains all unionfind roots
+  for_ (ILS.toList efRootClasses) $ \r ->
+    assert $ ILS.member r cmClasses
+  -- Assert that those non-root classes are marked dead
+  for_ (ILS.toList cmClasses) $ \c ->
+    unless (ILS.member c efRootClasses) $
+      assert $ ILS.member c deadClasses
+  -- For every non-dead class
+  cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) ->
+    if ILS.member c deadClasses
+      -- skip dead classes
+      then pure accNodes
+      else do
+        let nodes = eciNodes eci
+        -- Assert that classmap node values are non-empty
+        nodes /== ILS.empty
+        -- Assert that classmap class has node values that are hashconsed to class
+        for_ (ILS.toList nodes) $ \n ->
+          ILM.lookup n hc === Just c
+        assert $ ILS.disjoint nodes accNodes
+        pure (ILS.union accNodes nodes)
+  -- Assert hc keys contain class nodes and dead nodes
+  ILS.union cmNodes deadNodes === ILS.fromList (ILM.keys hc)
+  -- Assert class nodes and dead nodes disjoint
+  ILS.intersection deadNodes cmNodes === ILS.empty
+  -- Now test recanonicalization
+  for_ (HashMap.toList bwd) $ \(fc, _) ->
+    let recanon = evalState (egCanonicalize fc) eg
+    in recanon === Just fc
 
 -- -- assert this after the usual eg invariants
 -- assertEgCompactInvariants :: (MonadTest m, Eq (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
@@ -751,12 +742,12 @@ testAssocUnit = testUnit "Assoc unit" $ do
 -- genSomeList xs = go where
 --   go = Gen.recursive Gen.choice [Gen.constant [], fmap pure (Gen.element xs)] [Gen.subterm2 go go (++)]
 
--- testEgNew :: TestTree
--- testEgNew = testUnit "EG new" $ do
---   let eg0 = force egNew :: EGV
---   egNodeSize eg0 === 0
---   egClassSize eg0 === 0
---   assertEgInvariants eg0
+testEgNew :: TestTree
+testEgNew = testUnit "EG new" $ do
+  eg0 <- fullyEvaluate (egNew :: EGV)
+  egNodeSize eg0 === 0
+  egClassSize eg0 === 0
+  assertEgInvariants eg0
 
 -- testEgProp :: TestLimit -> TestTree
 -- testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testGen "EG prop" lim $ do
@@ -808,8 +799,8 @@ main = do
     , testUfUnit
     , testAssocUnit
     , testAssocCases
-    -- , testEgUnit
-    -- , testEgNew
+    , testEgUnit
+    , testEgNew
     -- , testEgCases
     -- , testUfProp lim
     -- , testEgProp lim
