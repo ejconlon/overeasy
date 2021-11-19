@@ -1,17 +1,16 @@
 module Overeasy.Test.Spec (main) where
 
 import Control.DeepSeq (NFData, force)
+import Control.Exception (evaluate)
 import Control.Monad (foldM, unless, void, when)
-import Control.Monad.IO.Class (liftIO, MonadIO)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT, gets,
                                    runState)
 import Control.Monad.Trans (MonadTrans (lift))
 import Data.Bifunctor (bimap)
 import Data.Char (chr, ord)
 import Data.Foldable (for_)
-import Data.Functor.Foldable (cata)
 import qualified Data.HashMap.Strict as HashMap
-import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
 import Data.List (delete)
 import Data.Maybe (fromJust, isJust)
@@ -21,13 +20,14 @@ import Data.Traversable (for)
 import Hedgehog (Gen, Range, forAll)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
-import Overeasy.Assoc (Assoc, assocNew, assocSize, assocInsert, assocFromList, assocFwd, assocBwd, assocCompact, assocCanCompact, assocDead)
+import Overeasy.Assoc (Assoc, assocBwd, assocCanCompact, assocCompact, assocEquiv, assocFromList, assocFwd, assocInsert,
+                       assocLeaves, assocNew, assocRoots, assocSize)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
                         egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
-import Overeasy.EquivFind (EquivFind (..), efAdd, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge, efMergeSets,
-                           efNew, efRoots, efRootsSize, efTotalSize, efCanCompact)
+import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge,
+                           efMergeSets, efNew, efRoots, efRootsSize, efTotalSize)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import qualified Overeasy.IntLike.Equiv as ILE
 import qualified Overeasy.IntLike.Graph as ILG
@@ -35,12 +35,10 @@ import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
-import Overeasy.Source (sourcePeek)
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions (MonadTest, TestLimit, assert, setupTests, testGen, testUnit, (/==), (===))
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
-import Control.Exception (evaluate)
--- import Text.Pretty.Simple (pPrint)
+import Text.Pretty.Simple (pPrint)
 
 fullyEvaluate :: (MonadIO m, NFData a) => a -> m a
 fullyEvaluate = liftIO . evaluate . force
@@ -332,6 +330,8 @@ assertAssocInvariants :: (MonadTest m, Eq a, Hashable a) => Assoc ENodeId a -> m
 assertAssocInvariants av = do
   let fwd = assocFwd av
       bwd = assocBwd av
+      equiv = assocEquiv av
+  -- First check that fwd and bwd are 1-1
   -- Go through keys forward
   for_ (ILM.toList fwd) $ \(_, fc) -> do
     -- Assert is found in backward map
@@ -340,6 +340,8 @@ assertAssocInvariants av = do
   for_ (HashMap.toList bwd) $ \(_, x) ->
     -- Assert is present in forward map
     assert $ ILM.member x fwd
+  -- Assert that fwd keys are exactly the equiv roots
+  ILS.fromList (ILM.keys fwd) === ILS.fromList (efRoots equiv)
 
 data AssocCase = AssocCase !String ![(Int, Char)] ![(Int, Char, Int)] ![(Int, Char)]
 
@@ -408,15 +410,21 @@ testAssocUnit = testUnit "Assoc unit" $ do
   assertAssocInvariants a1
   assertAssocCompact a0
   assocSize a1 === 3
+  assocRoots a1 === [aKey, bKey, cKey]
+  assocLeaves a1 === []
   let (newAKey, a2) = runState (assocInsert aKey bVal) a1
   newAKey === aKey
   assertAssocInvariants a2
   assert $ assocCanCompact a2
-  assocDead a2 === [bKey]
+  assocSize a2 === 2
+  assocRoots a2 === [aKey, cKey]
+  assocLeaves a2 === [bKey]
   let a3 = execState assocCompact a2
   assertAssocInvariants a3
   assertAssocCompact a3
   assocSize a3 === 2
+  assocRoots a3 === [aKey, cKey]
+  assocLeaves a3 === []
 
 type EGA = EGraph () ArithF
 
@@ -491,33 +499,15 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     egFindTerm termTwo eg === Just cidTwo
     egNeedsRebuild eg === False
 
--- genBinTree :: Gen a -> Gen (BinTree a)
--- genBinTree genA = genEither where
---   genLeaf = fmap BinTreeLeaf genA
---   genBranch = Gen.subterm2 genEither genEither BinTreeBranch
---   genEither = Gen.recursive Gen.choice [genLeaf] [genBranch]
-
--- genBinTreeMembers :: Int -> Gen [BinTree V]
--- genBinTreeMembers maxElems = Gen.list (Range.constant 0 maxElems) (genBinTree (genV maxElems))
-
 type EGD = Max V
 type EGF = BinTreeF V
 type EGT = BinTree V
 type EGV = EGraph EGD EGF
 
--- maxVAnalysis :: EAnalysisAlgebra EGD EGF
--- maxVAnalysis = EAnalysisAlgebra $ \case
---   BinTreeLeafF v -> Max v
---   BinTreeBranchF d1 d2 -> d1 <> d2
-
--- analyzeBinTree :: Semigroup m => (a -> m) -> BinTree a -> m
--- analyzeBinTree f = cata go where
---   go = \case
---     BinTreeLeafF a -> f a
---     BinTreeBranchF x y -> x <> y
-
--- maxBinTreeLeaf :: Ord a => BinTree a -> a
--- maxBinTreeLeaf = getMax . analyzeBinTree Max
+maxVAnalysis :: EAnalysisAlgebra EGD EGF
+maxVAnalysis = EAnalysisAlgebra $ \case
+  BinTreeLeafF v -> Max v
+  BinTreeBranchF d1 d2 -> d1 <> d2
 
 assertEgInvariants :: (MonadTest m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
 assertEgInvariants eg = do
@@ -525,33 +515,35 @@ assertEgInvariants eg = do
   assert $ not (egNeedsRebuild eg)
   let assoc = egNodeAssoc eg
       hc = egHashCons eg
-      fwd = assocFwd assoc
       bwd = assocBwd assoc
-      deadNodes = ILS.fromList (assocDead assoc)
+      rootNodes = ILS.fromList (assocRoots assoc)
+      leafNodes = ILS.fromList (assocLeaves assoc)
+      allNodes = ILS.union rootNodes leafNodes
       ef = egEquivFind eg
-      efRootClasses = ILS.fromList (efRoots ef)
-      efLeafClasses = ILS.fromList (efLeaves ef)
-      allClasses = ILS.union efRootClasses efLeafClasses
+      rootClasses = ILS.fromList (efRoots ef)
+      leafClasses = ILS.fromList (efLeaves ef)
       deadClasses = egDeadClasses eg
       cm = egClassMap eg
       cmClasses = ILS.fromList (ILM.keys cm)
-  -- Assert that dead classes and root classes are disjoint
-  ILS.intersection deadClasses efRootClasses === ILS.empty
-  -- Assert that dead classes and root classes partition all classes
-  ILS.union deadClasses efRootClasses === allClasses
+  -- Assert that root nodes and leaf nodes are disjoint
+  ILS.intersection rootNodes leafNodes === ILS.empty
+  -- Assert that root classes and leaf classes are disjoint
+  ILS.intersection rootClasses leafClasses === ILS.empty
+  -- Assert that dead classes are exactly the leaf classes
+  deadClasses === leafClasses
   -- Assert that the assoc is 1-1 etc
   assertAssocInvariants assoc
   -- Assert that the hashcons and assoc have equal key sets
-  ILM.keys hc === ILM.keys fwd
+  ILS.fromList (ILM.keys hc) === allNodes
   -- Assert that hashcons has exactly the same values as unionfind roots for all nodes
   for_ (ILM.elems hc) $ \c ->
-    assert $ ILS.member c efRootClasses
+    assert $ ILS.member c rootClasses
   -- Assert that classmap contains all unionfind roots
-  for_ (ILS.toList efRootClasses) $ \r ->
+  for_ (ILS.toList rootClasses) $ \r ->
     assert $ ILS.member r cmClasses
   -- Assert that those non-root classes are marked dead
   for_ (ILS.toList cmClasses) $ \c ->
-    unless (ILS.member c efRootClasses) $
+    unless (ILS.member c rootClasses) $
       assert $ ILS.member c deadClasses
   -- For every non-dead class
   cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) ->
@@ -568,179 +560,175 @@ assertEgInvariants eg = do
         assert $ ILS.disjoint nodes accNodes
         pure (ILS.union accNodes nodes)
   -- Assert hc keys contain class nodes and dead nodes
-  ILS.union cmNodes deadNodes === ILS.fromList (ILM.keys hc)
+  ILS.union cmNodes leafNodes === ILS.fromList (ILM.keys hc)
   -- Assert class nodes and dead nodes disjoint
-  ILS.intersection deadNodes cmNodes === ILS.empty
-  -- Now test recanonicalization
+  ILS.intersection leafNodes cmNodes === ILS.empty
+  -- Now test recanonicalization - we already know assoc fwd and bwd are 1-1
   for_ (HashMap.toList bwd) $ \(fc, _) ->
     let recanon = evalState (egCanonicalize fc) eg
     in recanon === Just fc
 
--- -- assert this after the usual eg invariants
--- assertEgCompactInvariants :: (MonadTest m, Eq (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
--- assertEgCompactInvariants eg = do
---   let assoc = egNodeAssoc eg
---       deadFwd = assocDeadFwd assoc
---       deadBwd = assocDeadBwd assoc
---       deadClasses = egDeadClasses eg
---   -- dead classes should be empty
---   deadClasses === ILS.empty
---   -- dead nodes should be empty
---   deadFwd === ILM.empty
---   deadBwd === HashSet.empty
+-- assert this after the usual eg invariants
+assertEgCompactInvariants :: MonadTest m => EGraph d f -> m ()
+assertEgCompactInvariants eg = do
+  let assoc = egNodeAssoc eg
+      deadNodes = assocLeaves assoc
+      deadClasses = egDeadClasses eg
+  -- dead classes should be empty
+  deadClasses === ILS.empty
+  -- dead nodes should be empty
+  deadNodes === []
 
--- data EgRound = EgRound
---   { egRoundTerms :: ![EGT]
---   , egRoundSets :: ![[EGT]]
---   , egRoundEqTests :: ![[EGT]]
---   , egRoundNeqTests :: ![(EGT, EGT)]
---   } deriving stock (Eq, Show)
+data EgRound = EgRound
+  { egRoundTerms :: ![EGT]
+  , egRoundSets :: ![[EGT]]
+  , egRoundEqTests :: ![[EGT]]
+  , egRoundNeqTests :: ![(EGT, EGT)]
+  } deriving stock (Eq, Show)
 
--- data EgCase = EgCase
---   { egCaseName :: !String
---   , egCaseRounds :: ![EgRound]
---   } deriving stock (Eq, Show)
+data EgCase = EgCase
+  { egCaseName :: !String
+  , egCaseRounds :: ![EgRound]
+  } deriving stock (Eq, Show)
 
--- allEgCases :: [EgCase]
--- allEgCases =
---   let leafA = BinTreeLeaf (toV 'a')
---       leafB = BinTreeLeaf (toV 'b')
---       leafC = BinTreeLeaf (toV 'c')
---       leafD = BinTreeLeaf (toV 'd')
---       leafE = BinTreeLeaf (toV 'e')
---       leafTerms = [leafA, leafB, leafC, leafD]
---       parentAC = BinTreeBranch leafA leafC
---       parentAD = BinTreeBranch leafA leafD
---       parentBD = BinTreeBranch leafB leafD
---       simpleParentTerms = [parentAC, parentAD]
---       complexParentTerms = [parentAC, parentBD]
---       grandparentAAC = BinTreeBranch leafA parentAC
---       grandparentAAD = BinTreeBranch leafA parentAD
---       grandparentBAC = BinTreeBranch leafB parentAC
---       grandparentEAD = BinTreeBranch leafE parentAD
---       simpleGrandparentTerms = [grandparentAAC, grandparentAAD]
---       complexGrandparentTerms = [grandparentBAC, grandparentEAD]
---   in [ EgCase "simple"
---           [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC)]
---           , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafB, leafC)]
---           ]
---      , EgCase "transitive one round"
---         [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
---         , EgRound [] [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
---         ]
---      , EgCase "transitive two round"
---         [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
---         , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
---         , EgRound [] [[leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
---         ]
---      , EgCase "simple parents"
---         [ EgRound simpleParentTerms [] [] [(leafC, leafD), (parentAC, parentAD)]
---         , EgRound [] [[leafC, leafD]] [[parentAC, parentAD]] []
---         ]
---      , EgCase "complex parents one round"
---         [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
---         , EgRound [] [[leafA, leafB], [leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
---         ]
---      , EgCase "complex parents two round"
---         [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
---         , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafC, leafD), (parentAC, parentBD)]
---         , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
---         ]
---      , EgCase "simple grandparents"
---         [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
---         , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
---         ]
---      , EgCase "complex grandparents bottom up"
---         [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
---         , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD]] [(leafB, leafE), (grandparentBAC, grandparentEAD)]
---         , EgRound [] [[leafB, leafE]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
---         ]
---      , EgCase "complex grandparents top down"
---         [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
---         , EgRound [] [[leafB, leafE]] [[leafB, leafE]] [(leafC, leafD), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
---         , EgRound [] [[leafC, leafD]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
---         ]
---      , EgCase "connect"
---         [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
---         , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
---         , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD]] [(leafA, leafD)]
---         , EgRound [] [[leafB, leafD]] [[leafA, leafB, leafC, leafD]] []
---         ]
---      , EgCase "mid grandparents"
---         [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
---         , EgRound [] [[parentAC, parentAD]] [[parentAC, parentAD], [grandparentAAC, grandparentAAD]] [(leafC, leafD)]
---         , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
---         ]
---      , EgCase "repro"
---         [ EgRound [leafB, grandparentAAC] [] [] []
---         , EgRound [] [[leafA, leafC]] [] []
---         ]
---      ]
+allEgCases :: [EgCase]
+allEgCases =
+  let leafA = BinTreeLeaf (toV 'a')
+      leafB = BinTreeLeaf (toV 'b')
+      leafC = BinTreeLeaf (toV 'c')
+      leafD = BinTreeLeaf (toV 'd')
+      leafE = BinTreeLeaf (toV 'e')
+      leafTerms = [leafA, leafB, leafC, leafD]
+      parentAA = BinTreeBranch leafA leafA
+      parentAC = BinTreeBranch leafA leafC
+      parentAD = BinTreeBranch leafA leafD
+      parentBD = BinTreeBranch leafB leafD
+      simpleParentTerms = [parentAC, parentAD]
+      complexParentTerms = [parentAC, parentBD]
+      grandparentAAC = BinTreeBranch leafA parentAC
+      grandparentAAD = BinTreeBranch leafA parentAD
+      grandparentBAC = BinTreeBranch leafB parentAC
+      grandparentEAD = BinTreeBranch leafE parentAD
+      simpleGrandparentTerms = [grandparentAAC, grandparentAAD]
+      complexGrandparentTerms = [grandparentBAC, grandparentEAD]
+  in [ EgCase "simple"
+          [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC)]
+          , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafB, leafC)]
+          ]
+     , EgCase "transitive one round"
+        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+        , EgRound [] [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
+        ]
+     , EgCase "transitive two round"
+        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
+        , EgRound [] [[leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
+        ]
+     , EgCase "simple parents"
+        [ EgRound simpleParentTerms [] [] [(leafC, leafD), (parentAC, parentAD)]
+        , EgRound [] [[leafC, leafD]] [[parentAC, parentAD]] []
+        ]
+     , EgCase "complex parents one round"
+        [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
+        , EgRound [] [[leafA, leafB], [leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
+        ]
+     , EgCase "complex parents two round"
+        [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
+        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafC, leafD), (parentAC, parentBD)]
+        , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
+        ]
+     , EgCase "simple grandparents"
+        [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
+        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
+        ]
+     , EgCase "complex grandparents bottom up"
+        [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD]] [(leafB, leafE), (grandparentBAC, grandparentEAD)]
+        , EgRound [] [[leafB, leafE]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
+        ]
+     , EgCase "complex grandparents top down"
+        [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+        , EgRound [] [[leafB, leafE]] [[leafB, leafE]] [(leafC, leafD), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
+        ]
+     , EgCase "connect"
+        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
+        , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD]] [(leafA, leafD)]
+        , EgRound [] [[leafB, leafD]] [[leafA, leafB, leafC, leafD]] []
+        ]
+     , EgCase "mid grandparents"
+        [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
+        , EgRound [] [[parentAC, parentAD]] [[parentAC, parentAD], [grandparentAAC, grandparentAAD]] [(leafC, leafD)]
+        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
+        ]
+    -- -- XXX fix this case
+    --  , EgCase "unify node"
+    --     [ EgRound [BinTreeBranch parentAC leafA, parentAA] [] [] [(parentAC, parentAA)]
+    --     , EgRound [] [[leafA, leafC]] [[parentAC, parentAA]] []
+    --     ]
+     ]
 
--- testEgCase :: Bool -> EgCase -> TestTree
--- testEgCase compact (EgCase name rounds) = kase where
---   findMayTerm t = fmap (egFindTerm t) get
---   findTerm t = fmap fromJust (findMayTerm t)
---   findTerms ts = fmap ILS.fromList (for ts findTerm)
---   assertTermFound t = findMayTerm t >>= \mi -> assert (isJust mi)
---   assertTermsFound ts = for_ ts assertTermFound
---   kase = testUnit (name ++ " (" ++ (if compact then "compact" else "non-compact") ++ ")") $ runS egNew $ do
---     -- for each round
---     for_ rounds $ \(EgRound start act endEq endNeq) -> do
---       -- add initial terms and assert invariants hold
---       applyS (for_ start (egAddTerm maxVAnalysis))
---       testS assertEgInvariants
---       -- assert that all mentioned terms are in the egraph
---       assertTermsFound start
---       for_ act assertTermsFound
---       for_ endEq assertTermsFound
---       for_ endNeq $ \(x, y) -> do
---         -- also assert that neq terms are not themselves equal
---         x /== y
---         assertTermFound x
---         assertTermFound y
---       -- merge sets of terms and rebuild
---       applyS $ do
---         sets <- for act findTerms
---         for_ sets egMergeMany
---       -- liftIO (putStrLn "===== before rebuild =====")
---       -- testS $ liftIO . pPrint
---       _ <- applyS (egRebuild maxVAnalysis)
---       -- liftIO (putStrLn "===== after rebuild =====")
---       -- testS $ liftIO . pPrint
---       -- assert invariants hold
---       testS assertEgInvariants
---       -- find final eq terms and assert they are in same classes
---       for_ endEq $ \ts -> do
---         set <- applyS (findTerms ts)
---         ILS.size set === 1
---       -- find final neq terms and assert they are not in same class
---       for_ endNeq $ \(x, y) -> do
---         i <- applyS (findTerm x)
---         j <- applyS (findTerm y)
---         i /== j
---       -- compact if configured to do so
---       when compact $ do
---         -- liftIO (putStrLn "===== before compact =====")
---         -- testS $ liftIO . pPrint
---         applyS egCompact
---         -- liftIO (putStrLn "===== after compact =====")
---         -- testS $ liftIO . pPrint
---         testS assertEgInvariants
---         testS assertEgCompactInvariants
+testEgCase :: Bool -> EgCase -> TestTree
+testEgCase compact (EgCase name rounds) = kase where
+  findMayTerm t = fmap (egFindTerm t) get
+  findTerm t = fmap fromJust (findMayTerm t)
+  findTerms ts = fmap ILS.fromList (for ts findTerm)
+  assertTermFound t = findMayTerm t >>= \mi -> assert (isJust mi)
+  assertTermsFound ts = for_ ts assertTermFound
+  kase = testUnit (name ++ " (" ++ (if compact then "compact" else "non-compact") ++ ")") $ runS egNew $ do
+    -- for each round
+    for_ rounds $ \(EgRound start act endEq endNeq) -> do
+      -- add initial terms and assert invariants hold
+      applyS (for_ start (egAddTerm maxVAnalysis))
+      testS assertEgInvariants
+      -- assert that all mentioned terms are in the egraph
+      assertTermsFound start
+      for_ act assertTermsFound
+      for_ endEq assertTermsFound
+      for_ endNeq $ \(x, y) -> do
+        -- also assert that neq terms are not themselves equal
+        x /== y
+        assertTermFound x
+        assertTermFound y
+      -- merge sets of terms and rebuild
+      applyS $ do
+        sets <- for act findTerms
+        for_ sets egMergeMany
+      -- liftIO (putStrLn "===== before rebuild =====")
+      -- testS $ liftIO . pPrint
+      _ <- applyS (egRebuild maxVAnalysis)
+      -- liftIO (putStrLn "===== after rebuild =====")
+      -- testS $ liftIO . pPrint
+      -- assert invariants hold
+      testS assertEgInvariants
+      -- find merged terms again and assert they are in same classes
+      sets <- applyS $ for act findTerms
+      for_ sets $ \set -> ILS.size set === 1
+      -- find final eq terms and assert they are in same classes
+      for_ endEq $ \ts -> do
+        set <- applyS (findTerms ts)
+        ILS.size set === 1
+      -- find final neq terms and assert they are not in same class
+      for_ endNeq $ \(x, y) -> do
+        i <- applyS (findTerm x)
+        j <- applyS (findTerm y)
+        i /== j
+      -- compact if configured to do so
+      when compact $ do
+        -- liftIO (putStrLn "===== before compact =====")
+        -- testS $ liftIO . pPrint
+        applyS egCompact
+        -- liftIO (putStrLn "===== after compact =====")
+        -- testS $ liftIO . pPrint
+        testS assertEgInvariants
+        testS assertEgCompactInvariants
 
--- testEgCases :: TestTree
--- testEgCases = testGroup "Eg case" $ do
---   kase <- allEgCases
---   compact <- [True] -- [False, True]
---   pure (testEgCase compact kase)
-
--- genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
--- genNodePairs nOpsRange eg = genListOfDistinctPairs nOpsRange (ILM.keys (egClassMap eg))
-
--- genSomeList :: [a] -> Gen [a]
--- genSomeList xs = go where
---   go = Gen.recursive Gen.choice [Gen.constant [], fmap pure (Gen.element xs)] [Gen.subterm2 go go (++)]
+testEgCases :: TestTree
+testEgCases = testGroup "Eg case" $ do
+  kase <- allEgCases
+  compact <- [False, True]
+  pure (testEgCase compact kase)
 
 testEgNew :: TestTree
 testEgNew = testUnit "EG new" $ do
@@ -749,38 +737,54 @@ testEgNew = testUnit "EG new" $ do
   egClassSize eg0 === 0
   assertEgInvariants eg0
 
--- testEgProp :: TestLimit -> TestTree
--- testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testGen "EG prop" lim $ do
---   let maxElems = 10
---       eg0 = force egNew :: EGV
---   members <- forAll (genBinTreeMembers maxElems)
---   let nMembers = length members
---       nOpsRange = Range.linear 0 (nMembers * nMembers)
---   let eg1 = force (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
---   assertEgInvariants eg1
---   egClassSize eg1 === egNodeSize eg1
---   execState (egRebuild maxVAnalysis) eg1 === eg1
---   pairs <- forAll (genNodePairs nOpsRange eg1)
---   mergeStrat <- forAll genMergeStrat
---   let merge =
---         case mergeStrat of
---           MergeStratPairs -> for_ pairs (uncurry egMerge)
---           MergeStratSets -> for_ pairs (\(x, y) -> egMergeMany (ILS.fromList [x, y]))
---           MergeStratSingle -> void (egMergeMany (ILS.fromList (pairs >>= \(x, y) -> [x, y])))
---   let eg2 = force (execState merge eg1)
---   -- liftIO (putStrLn "===== eg2 =====")
---   -- liftIO (pPrint eg2)
---   egNodeSize eg2 === egNodeSize eg1
---   egNeedsRebuild eg2 === not (null pairs)
---   let eg3 = force (execState (egRebuild maxVAnalysis) eg2)
---   -- liftIO (putStrLn "===== eg3 =====")
---   -- liftIO (pPrint eg3)
---   egNodeSize eg3 === egNodeSize eg2
---   assertEgInvariants eg3
---   -- TODO test compaction
---   -- let eg4 = force (execState egCompact eg3)
---   -- assertEgInvariants eg4
---   -- assertEgCompactInvariants eg4
+genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
+genNodePairs nOpsRange eg = genListOfDistinctPairs nOpsRange (ILM.keys (egClassMap eg))
+
+genSomeList :: [a] -> Gen [a]
+genSomeList xs = go where
+  go = Gen.recursive Gen.choice [Gen.constant [], fmap pure (Gen.element xs)] [Gen.subterm2 go go (++)]
+
+genBinTree :: Gen a -> Gen (BinTree a)
+genBinTree genA = genEither where
+  genLeaf = fmap BinTreeLeaf genA
+  genBranch = Gen.subterm2 genEither genEither BinTreeBranch
+  genEither = Gen.recursive Gen.choice [genLeaf] [genBranch]
+
+genBinTreeMembers :: Int -> Gen [BinTree V]
+genBinTreeMembers maxElems = Gen.list (Range.constant 0 maxElems) (genBinTree (genV maxElems))
+
+testEgProp :: TestLimit -> TestTree
+testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testGen "EG prop" lim $ do
+  let maxElems = 3
+      eg0 = force egNew :: EGV
+  members <- forAll (genBinTreeMembers maxElems)
+  let nMembers = length members
+      nOpsRange = Range.linear 0 (nMembers * nMembers)
+  let eg1 = force (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
+  assertEgInvariants eg1
+  egClassSize eg1 === egNodeSize eg1
+  execState (egRebuild maxVAnalysis) eg1 === eg1
+  pairs <- forAll (genNodePairs nOpsRange eg1)
+  mergeStrat <- forAll genMergeStrat
+  let merge =
+        case mergeStrat of
+          MergeStratPairs -> for_ pairs (uncurry egMerge)
+          MergeStratSets -> for_ pairs (\(x, y) -> egMergeMany (ILS.fromList [x, y]))
+          MergeStratSingle -> void (egMergeMany (ILS.fromList (pairs >>= \(x, y) -> [x, y])))
+  let eg2 = force (execState merge eg1)
+  -- liftIO (putStrLn "===== eg2 =====")
+  -- liftIO (pPrint eg2)
+  egNodeSize eg2 === egNodeSize eg1
+  egNeedsRebuild eg2 === not (null pairs)
+  let eg3 = force (execState (egRebuild maxVAnalysis) eg2)
+  -- liftIO (putStrLn "===== eg3 =====")
+  -- liftIO (pPrint eg3)
+  egNodeSize eg3 === egNodeSize eg2
+  assertEgInvariants eg3
+  -- TODO test compaction
+  -- let eg4 = force (execState egCompact eg3)
+  -- assertEgInvariants eg4
+  -- assertEgCompactInvariants eg4
 
 type M = IntLikeMap ENodeId Char
 
@@ -795,13 +799,14 @@ main :: IO ()
 main = do
   lim <- setupTests
   defaultMain $ testGroup "Overeasy"
+    -- [ testEgCase False (allEgCases !! (length allEgCases - 1)) ]
     [ testILM
     , testUfUnit
     , testAssocUnit
     , testAssocCases
     , testEgUnit
     , testEgNew
-    -- , testEgCases
-    -- , testUfProp lim
-    -- , testEgProp lim
+    , testEgCases
+    -- -- , testUfProp lim
+    -- -- , testEgProp lim
     ]

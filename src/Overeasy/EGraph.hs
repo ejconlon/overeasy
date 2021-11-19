@@ -52,10 +52,13 @@ import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
 -- import Lens.Micro.TH (makeLensesFor)
 -- import Lens.Micro.TH (makeLensesFor)
-import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocFwd, assocLookupByValue, assocNew, assocInsertInc, assocPartialLookupByKey, assocDead)
+import Control.Monad (unless)
+import Data.Maybe (fromJust)
+import Overeasy.Assoc (Assoc, assocCanCompact, assocCompactInc, assocInsertInc, assocLeaves, assocLookupByValue,
+                       assocNew, assocPartialLookupByKey)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EquivFind (EquivFind, EquivMergeSetsRes (..), efAdd, efClosure, efCompactInc, efFindRoot,
-                           efLookupLeaves, efLookupRoot, efMergeSetsInc, efNew, efRoots, efRootsSize, efAddInc)
+import Overeasy.EquivFind (EquivFind, EquivMergeSetsRes (..), efAdd, efAddInc, efClosure, efCompactInc, efFindRoot,
+                           efLookupLeaves, efLookupRoot, efMergeSetsInc, efNew, efRoots, efRootsSize)
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
@@ -63,9 +66,8 @@ import qualified Overeasy.IntLike.MultiMap as ILMM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
-import Overeasy.Source (Source, sourceAdd, sourceNew, sourceAddInc)
+import Overeasy.Source (Source, sourceAdd, sourceAddInc, sourceNew)
 import Overeasy.StateUtil (stateFold)
-import Control.Monad (unless)
 
 -- | An opaque class id
 newtype EClassId = EClassId { unEClassId :: Int }
@@ -220,13 +222,16 @@ egAddNodeSub q fcd = do
           (x, classSource') = sourceAddInc (egClassSource eg)
           -- add it to the uf (can discard return value since it's a new id, will be the same)
           (_, ef') = efAddInc x (egEquivFind eg)
+          -- add it to the assoc (ignore and partial by construction)
+          (_, massoc) = assocInsertInc n fc (egNodeAssoc eg)
+          assoc' = fromJust massoc
           -- insert into the hashcons
           hc' = ILM.insert n x (egHashCons eg)
           -- analyze the node and put that info in the class map
           d = eaMake q (fmap entData fcd)
           eci = EClassInfo d (ILS.singleton n) ILS.empty
           classMap' = ILM.insert x eci (egClassMap eg)
-          eg' = eg { egNodeSource = nodeSource', egClassSource = classSource', egEquivFind = ef', egHashCons = hc', egClassMap = classMap' }
+          eg' = eg { egNodeSource = nodeSource', egClassSource = classSource', egEquivFind = ef', egNodeAssoc = assoc', egHashCons = hc', egClassMap = classMap' }
       in ((ChangedYes, ENodeTriple n x d), eg')
 
 -- private
@@ -419,7 +424,7 @@ egRebuildClassMap q touchedClasses = state $ \eg ->
   let ef = egEquivFind eg
       dc = egDeadClasses eg
       hc = egHashCons eg
-      deadNodes = ILS.fromList (assocDead (egNodeAssoc eg))
+      deadNodes = ILS.fromList (assocLeaves (egNodeAssoc eg))
       roots = ILS.map (`efLookupRoot` ef) touchedClasses
       rootMap = ILM.fromList (fmap (\r -> (r, ILS.difference (efLookupLeaves r ef) dc)) (ILS.toList roots))
       cm' = foldl' (\cm (r, vs) -> egRebuildClassSingle q hc deadNodes r vs cm) (egClassMap eg) (ILM.toList rootMap)
@@ -454,9 +459,9 @@ egCompactParentClass :: IntLikeSet ENodeId -> EClassInfo d -> EClassInfo d
 egCompactParentClass deadNodes (EClassInfo dat nodes parents) =
   EClassInfo dat nodes (ILS.difference parents deadNodes)
 
-findDeadNodeParentClasses :: Foldable f => IntLikeMap ENodeId (f EClassId) -> [ENodeId] -> IntLikeSet EClassId
-findDeadNodeParentClasses fwd = foldl' go ILS.empty where
-  go s n = foldl' (flip ILS.insert) s (ILM.partialLookup n fwd)
+findDeadNodeParentClasses :: Foldable f => Assoc ENodeId (f EClassId) -> [ENodeId] -> IntLikeSet EClassId
+findDeadNodeParentClasses assoc = foldl' go ILS.empty where
+  go s n = foldl' (flip ILS.insert) s (assocPartialLookupByKey n assoc)
 
 -- Requires that class be rebuilt!
 egCompactInc :: Foldable f => EGraph d f -> EGraph d f
@@ -470,7 +475,7 @@ egCompactInc eg =
       (rootNodeMap, assoc') = assocCompactInc assoc
       deadNodes = ILS.unions (ILM.elems rootNodeMap)
       -- select all live classes containing dead nodes
-      deadNodeParentClasses = findDeadNodeParentClasses (assocFwd assoc) (ILS.toList deadNodes)
+      deadNodeParentClasses = findDeadNodeParentClasses assoc (ILS.toList deadNodes)
       -- remove dead classes from hashcons
       hc' = foldl' (flip ILM.delete) hc (ILS.toList deadNodes)
       -- remove dead classes from unionfind

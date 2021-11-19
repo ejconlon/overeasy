@@ -16,7 +16,8 @@ module Overeasy.Assoc
   , assocPartialLookupByKey
   , assocLookupByValue
   , assocPartialLookupByValue
-  , assocDead
+  , assocRoots
+  , assocLeaves
   , assocCanCompact
   , assocCompactInc
   , assocCompact
@@ -29,12 +30,13 @@ import Data.Foldable (foldl')
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
+import Data.Maybe (fromJust, fromMaybe)
 import GHC.Generics (Generic)
+import Overeasy.EquivFind (EquivEnsureRes (..), EquivFind, efCanCompact, efCompactInc, efEnsureInc, efLeaves,
+                           efLookupRoot, efNew, efRoots, efUnsafeMerge)
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
-import Overeasy.EquivFind (EquivFind, EquivEnsureRes (..), efNew, efLookupRoot, efUnsafeMerge, efEnsureInc, efCanCompact, efCompactInc, efLeaves)
-import Data.Maybe (fromJust, fromMaybe)
 import Overeasy.StateUtil (stateOption)
 
 -- private ctor
@@ -135,9 +137,13 @@ assocLookupByValue a = HashMap.lookup a . assocBwd
 assocPartialLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> x
 assocPartialLookupByValue a = flip (HashMap.!) a . assocBwd
 
--- | List all dead (compactible) entries
-assocDead :: Coercible x Int => Assoc x a -> [x]
-assocDead = efLeaves . assocEquiv
+-- | List all root (live, non-compactible) entries
+assocRoots :: Coercible x Int => Assoc x a -> [x]
+assocRoots = efRoots . assocEquiv
+
+-- | List all leaf (dead, compactible) entries
+assocLeaves :: Coercible x Int => Assoc x a -> [x]
+assocLeaves = efLeaves . assocEquiv
 
 -- | Are there dead keys in the equiv from 'assocInsert'?
 assocCanCompact :: Assoc x a -> Bool
