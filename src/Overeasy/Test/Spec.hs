@@ -756,11 +756,11 @@ genBinTreeMembers maxElems = Gen.list (Range.constant 0 maxElems) (genBinTree (g
 testEgProp :: TestLimit -> TestTree
 testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testGen "EG prop" lim $ do
   let maxElems = 3
-      eg0 = force egNew :: EGV
+  eg0 <- fullyEvaluate (egNew :: EGV)
   members <- forAll (genBinTreeMembers maxElems)
   let nMembers = length members
       nOpsRange = Range.linear 0 (nMembers * nMembers)
-  let eg1 = force (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
+  eg1 <- fullyEvaluate (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
   assertEgInvariants eg1
   egClassSize eg1 === egNodeSize eg1
   execState (egRebuild maxVAnalysis) eg1 === eg1
@@ -771,18 +771,18 @@ testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ test
           MergeStratPairs -> for_ pairs (uncurry egMerge)
           MergeStratSets -> for_ pairs (\(x, y) -> egMergeMany (ILS.fromList [x, y]))
           MergeStratSingle -> void (egMergeMany (ILS.fromList (pairs >>= \(x, y) -> [x, y])))
-  let eg2 = force (execState merge eg1)
+  eg2 <- fullyEvaluate (execState merge eg1)
   -- liftIO (putStrLn "===== eg2 =====")
   -- liftIO (pPrint eg2)
   egNodeSize eg2 === egNodeSize eg1
   egNeedsRebuild eg2 === not (null pairs)
-  let eg3 = force (execState (egRebuild maxVAnalysis) eg2)
+  eg3 <- fullyEvaluate (execState (egRebuild maxVAnalysis) eg2)
   -- liftIO (putStrLn "===== eg3 =====")
   -- liftIO (pPrint eg3)
   egNodeSize eg3 === egNodeSize eg2
   assertEgInvariants eg3
   -- TODO test compaction
-  -- let eg4 = force (execState egCompact eg3)
+  -- eg4 <- fullyEvaluate (execState egCompact eg3)
   -- assertEgInvariants eg4
   -- assertEgCompactInvariants eg4
 
@@ -807,6 +807,6 @@ main = do
     , testEgUnit
     , testEgNew
     , testEgCases
-    -- -- , testUfProp lim
-    -- -- , testEgProp lim
+    , testUfProp lim
+    -- , testEgProp lim
     ]
