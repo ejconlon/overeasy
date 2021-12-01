@@ -21,7 +21,7 @@ import Hedgehog (Gen, Range, forAll)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import Overeasy.Assoc (Assoc, assocBwd, assocCanCompact, assocCompact, assocEquiv, assocFromList, assocFwd, assocInsert,
-                       assocLeaves, assocNew, assocRoots, assocSize)
+                       assocLeaves, assocNew, assocRoots, assocSize, AssocInsertRes (..))
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
                         ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
@@ -38,7 +38,8 @@ import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Test.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
 import Overeasy.Test.Assertions (MonadTest, TestLimit, assert, setupTests, testGen, testUnit, (/==), (===))
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
-import Text.Pretty.Simple (pPrint)
+-- import Text.Pretty.Simple (pPrint)
+import Data.Coerce (coerce)
 
 fullyEvaluate :: (MonadIO m, NFData a) => a -> m a
 fullyEvaluate = liftIO . evaluate . force
@@ -343,24 +344,51 @@ assertAssocInvariants av = do
   -- Assert that fwd keys are exactly the equiv roots
   ILS.fromList (ILM.keys fwd) === ILS.fromList (efRoots equiv)
 
-data AssocCase = AssocCase !String ![(Int, Char)] ![(Int, Char, Int)] ![(Int, Char)]
+data AssocCase = AssocCase !String ![(Int, Char)] ![(Int, Char, Int, AssocInsertRes Int)] ![(Int, Char)]
 
 allAssocCases :: [AssocCase]
 allAssocCases =
   let start = [(0, 'a'), (1, 'b'), (2, 'c')]
   in [ AssocCase "base" start [] start
-     , AssocCase "ident" start [(0, 'a', 0)] start
-     , AssocCase "superfluous" start [(4, 'a', 0)] start
-     , AssocCase "internal" start [(0, 'b', 0)] [(0, 'b'), (2, 'c')]
-     , AssocCase "external" start [(0, 'd', 0)] [(0, 'd'), (1, 'b'), (2, 'c')]
-     , AssocCase "additional" start [(4, 'd', 4)] [(0, 'a'), (1, 'b'), (2, 'c'), (4, 'd')]
-     , AssocCase "chain fwd" start [(0, 'b', 0), (1, 'c', 0)] [(0, 'c')]
-     , AssocCase "chain bwd" start [(1, 'c', 1), (0, 'c', 0)] [(0, 'c')]
-     , AssocCase "chain self" start [(1, 'c', 1), (2, 'c', 1)] [(0, 'a'), (1, 'c')]
-     , AssocCase "chain change" start [(1, 'c', 1), (2, 'd', 1)] [(0, 'a'), (1, 'd')]
-     , AssocCase "chain back id" start [(1, 'c', 1), (1, 'b', 1)] [(0, 'a'), (1, 'b')]
-     , AssocCase "chain back del" start [(1, 'c', 1), (2, 'b', 1)] [(0, 'a'), (1, 'b')]
-     , AssocCase "chain change rev" start [(2, 'd', 2), (1, 'c', 1)] [(0, 'a'), (1, 'c'), (2, 'd')]
+     , AssocCase "ident" start
+        [(0, 'a', 0, AssocInsertResUnchanged)]
+        start
+     , AssocCase "superfluous" start
+        [(4, 'a', 0, AssocInsertResMerged (ILS.singleton 4))]
+        start
+     , AssocCase "internal" start
+        [(0, 'b', 0, AssocInsertResMerged (ILS.singleton 1))]
+        [(0, 'b'), (2, 'c')]
+     , AssocCase "external" start
+        [(0, 'd', 0, AssocInsertResUpdated)]
+        [(0, 'd'), (1, 'b'), (2, 'c')]
+     , AssocCase "additional" start
+        [(4, 'd', 4, AssocInsertResCreated)]
+        [(0, 'a'), (1, 'b'), (2, 'c'), (4, 'd')]
+     , AssocCase "chain fwd" start
+        -- The singleton set in the second result is just the children (and self) of the clobbered node
+        -- We don't have to lookup the old clobbered nodes for 1 bc when this is used everything will be merged
+        [(0, 'b', 0, AssocInsertResMerged (ILS.singleton 1)), (1, 'c', 0, AssocInsertResMerged (ILS.singleton 2))]
+        [(0, 'c')]
+     , AssocCase "chain bwd" start
+        -- The set in the second result is not a singleton here because it already had children
+        [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (0, 'c', 0, AssocInsertResMerged (ILS.fromList [1,2]))]
+        [(0, 'c')]
+     , AssocCase "chain self" start
+        [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (2, 'c', 1, AssocInsertResUnchanged)]
+        [(0, 'a'), (1, 'c')]
+     , AssocCase "chain change" start
+        [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (2, 'd', 1, AssocInsertResUpdated)]
+        [(0, 'a'), (1, 'd')]
+     , AssocCase "chain back id" start
+        [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (1, 'b', 1, AssocInsertResUpdated)]
+        [(0, 'a'), (1, 'b')]
+     , AssocCase "chain back del" start
+        [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (2, 'b', 1, AssocInsertResUpdated)]
+        [(0, 'a'), (1, 'b')]
+     , AssocCase "chain change rev" start
+        [(2, 'd', 2, AssocInsertResUpdated), (1, 'c', 1, AssocInsertResUpdated)]
+        [(0, 'a'), (1, 'c'), (2, 'd')]
      ]
 
 mkAssoc :: [(Int, Char)] -> AV
@@ -377,10 +405,10 @@ testAssocCase (AssocCase name start act end) = testUnit name $ runAV start $ do
     assertAssocInvariants av
     assertAssocCompact av
     assocSize av === length start
-  for_ act $ \(x, a, y) -> do
-    z <- applyS (assocInsert (ENodeId x) (toV a))
+  for_ act $ \(x, a, expectedY, expectedRes) -> do
+    (actualY, actualRes) <- applyS (assocInsert (ENodeId x) (toV a))
+    (actualY, actualRes) === coerce (expectedY, expectedRes)
     testS assertAssocInvariants
-    z === ENodeId y
   _ <- applyS assocCompact
   testS $ \av -> do
     assertAssocInvariants av
@@ -412,8 +440,8 @@ testAssocUnit = testUnit "Assoc unit" $ do
   assocSize a1 === 3
   assocRoots a1 === [aKey, bKey, cKey]
   assocLeaves a1 === []
-  let (newAKey, a2) = runState (assocInsert aKey bVal) a1
-  newAKey === aKey
+  let (res, a2) = runState (assocInsert aKey bVal) a1
+  res === (aKey, AssocInsertResMerged (ILS.singleton bKey))
   assertAssocInvariants a2
   assert $ assocCanCompact a2
   assocSize a2 === 2
@@ -546,23 +574,34 @@ assertEgInvariants eg = do
     unless (ILS.member c rootClasses) $
       assert $ ILS.member c deadClasses
   -- For every non-dead class
-  cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) ->
+  (cmNodes, cmParents) <- flipFoldM (ILS.empty, ILS.empty) (ILM.toList cm) $ \(accNodes, accParents) (c, eci) ->
     if ILS.member c deadClasses
       -- skip dead classes
-      then pure accNodes
+      then pure (accNodes, accParents)
       else do
         let nodes = eciNodes eci
+            parents = eciParents eci
         -- Assert that classmap node values are non-empty
         nodes /== ILS.empty
         -- Assert that classmap class has node values that are hashconsed to class
         for_ (ILS.toList nodes) $ \n ->
           ILM.lookup n hc === Just c
+        -- Assert that classmap class has NO parents that are hashconsed to class
+        for_ (ILS.toList parents) $ \p ->
+          ILM.lookup p hc /== Just c
+        -- Assert we haven't seen these nodes before
         assert $ ILS.disjoint nodes accNodes
-        pure (ILS.union accNodes nodes)
+        -- Assert that the nodes and parents are disjoint
+        assert $ ILS.disjoint nodes parents
+        pure (ILS.union accNodes nodes, ILS.union accParents parents)
+  let hcNodes = ILS.fromList (ILM.keys hc)
   -- Assert hc keys contain class nodes and dead nodes
-  ILS.union cmNodes leafNodes === ILS.fromList (ILM.keys hc)
-  -- Assert class nodes and dead nodes disjoint
-  ILS.intersection leafNodes cmNodes === ILS.empty
+  ILS.union cmNodes leafNodes === hcNodes
+  -- Assert hc keys contain parent nodes
+  assert $ ILS.isSubsetOf cmParents hcNodes
+  -- NOTE This may be unnecessary
+  -- -- Assert class nodes and dead nodes disjoint
+  -- ILS.intersection leafNodes cmNodes === ILS.empty
   -- Now test recanonicalization - we already know assoc fwd and bwd are 1-1
   for_ (HashMap.toList bwd) $ \(fc, _) ->
     let recanon = evalState (egCanonicalize fc) eg
@@ -662,11 +701,18 @@ allEgCases =
         , EgRound [] [[parentAC, parentAD]] [[parentAC, parentAD], [grandparentAAC, grandparentAAD]] [(leafC, leafD)]
         , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
         ]
-    -- -- XXX fix this case
-    --  , EgCase "unify node"
-    --     [ EgRound [BinTreeBranch parentAC leafA, parentAA] [] [] [(parentAC, parentAA)]
-    --     , EgRound [] [[leafA, leafC]] [[parentAC, parentAA]] []
-    --     ]
+     , EgCase "unify node"
+        [ EgRound [BinTreeBranch parentAC leafA, parentAA] [] [] [(parentAC, parentAA)]
+        , EgRound [] [[leafA, leafC]] [[parentAC, parentAA]] []
+        ]
+     , EgCase "self parent"
+        [ EgRound [BinTreeBranch parentAC leafB] [] [] []
+        , EgRound [] [[parentAC, leafA]] [] []
+        ]
+     , EgCase "self parent again"
+        [ EgRound [leafB, parentAA] [] [] []
+        , EgRound [] [[leafB, leafA], [leafB, parentAA]] [] []
+        ]
      ]
 
 testEgCase :: Bool -> EgCase -> TestTree
@@ -781,10 +827,9 @@ testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ test
   -- liftIO (pPrint eg3)
   egNodeSize eg3 === egNodeSize eg2
   assertEgInvariants eg3
-  -- TODO test compaction
-  -- eg4 <- fullyEvaluate (execState egCompact eg3)
-  -- assertEgInvariants eg4
-  -- assertEgCompactInvariants eg4
+  eg4 <- fullyEvaluate (execState egCompact eg3)
+  assertEgInvariants eg4
+  assertEgCompactInvariants eg4
 
 type M = IntLikeMap ENodeId Char
 
@@ -800,13 +845,13 @@ main = do
   lim <- setupTests
   defaultMain $ testGroup "Overeasy"
     -- [ testEgCase False (allEgCases !! (length allEgCases - 1)) ]
-    [ testILM
-    , testUfUnit
-    , testAssocUnit
-    , testAssocCases
-    , testEgUnit
-    , testEgNew
-    , testEgCases
-    , testUfProp lim
-    -- , testEgProp lim
+    -- [ testILM
+    -- , testUfUnit
+    -- , testAssocUnit
+    -- , testAssocCases
+    -- , testEgUnit
+    -- , testEgNew
+    -- , testEgCases
+    -- , testUfProp lim
+    [ testEgProp lim
     ]

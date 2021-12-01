@@ -84,8 +84,6 @@ library
     , deepseq
     , hashable
     , hedgehog
-    , microlens
-    , microlens-th
     , mtl
     , pretty-simple
     , recursion-schemes
@@ -138,8 +136,6 @@ test-suite overeasy-test
     , deepseq
     , hashable
     , hedgehog
-    , microlens
-    , microlens-th
     , mtl
     , overeasy
     , pretty-simple

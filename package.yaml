@@ -20,8 +20,6 @@ dependencies:
 - data-fix
 - deepseq
 - hashable
-- microlens
-- microlens-th
 - mtl
 - recursion-schemes
 - text

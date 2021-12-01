@@ -13,9 +13,7 @@ module Overeasy.EquivFind
   , efMember
   , efRoots
   , efLeaves
-  , EquivEnsureRes (..)
-  , efEnsureInc
-  , efEnsure
+  , EquivAddRes (..)
   , efAddInc
   , efAdd
   , efEquivs
@@ -76,32 +74,24 @@ allocMM = ILM.alter (<|> Just ILS.empty)
 insertMM :: Coercible x Int => x -> x -> IntLikeMap x (IntLikeSet x) -> IntLikeMap x (IntLikeSet x)
 insertMM x y = ILM.alter (\case { Nothing -> Just (ILS.singleton y); Just s -> Just (ILS.insert y s) }) x
 
-data EquivEnsureRes x =
-    EquivEnsureResAlreadyRoot
-  | EquivEnsureResAlreadyLeafOf !x
-  | EquivEnsureResNewRoot
+-- TODO call these efAdd
+data EquivAddRes x =
+    EquivAddResAlreadyRoot
+  | EquivAddResAlreadyLeafOf !x
+  | EquivAddResNewRoot
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData)
 
-efEnsureInc :: Coercible x Int => x -> EquivFind x -> (EquivEnsureRes x, EquivFind x)
-efEnsureInc x ef@(EquivFind fwd bwd) =
+efAddInc :: Coercible x Int => x -> EquivFind x -> (EquivAddRes x, EquivFind x)
+efAddInc x ef@(EquivFind fwd bwd) =
   case ILM.lookup x bwd of
     Nothing ->
       if ILM.member x fwd
-        then (EquivEnsureResAlreadyRoot, ef)
-        else (EquivEnsureResNewRoot, EquivFind (ILM.insert x ILS.empty fwd) bwd)
-    Just y -> (EquivEnsureResAlreadyLeafOf y, ef)
+        then (EquivAddResAlreadyRoot, ef)
+        else (EquivAddResNewRoot, EquivFind (ILM.insert x ILS.empty fwd) bwd)
+    Just y -> (EquivAddResAlreadyLeafOf y, ef)
 
-efEnsure :: Coercible x Int => x -> State (EquivFind x) (EquivEnsureRes x)
-efEnsure = state . efEnsureInc
-
-efAddInc :: Coercible x Int => x -> EquivFind x -> (x, EquivFind x)
-efAddInc x ef =
-  let (res, ef') = efEnsureInc x ef
-      k = case res of { EquivEnsureResAlreadyLeafOf z -> z; _ -> x }
-  in (k, ef')
-
-efAdd :: Coercible x Int => x -> State (EquivFind x) x
+efAdd :: Coercible x Int => x -> State (EquivFind x) (EquivAddRes x)
 efAdd = state . efAddInc
 
 efEquivs :: Coercible x Int => x -> EquivFind x -> IntLikeSet x

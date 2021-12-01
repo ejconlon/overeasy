@@ -3,14 +3,11 @@ module Overeasy.StateUtil
   ( stateFail
   , stateOption
   , stateFailChanged
-  -- , stateLens
   , stateFold
   ) where
 
 import Control.Monad (foldM)
-import Control.Monad.State.Strict (State, get, put, runState, state)
-import Lens.Micro (Lens', set)
-import Lens.Micro.Extras (view)
+import Control.Monad.State.Strict (State, get, put)
 import Overeasy.Classes (Changed (..))
 
 -- | Embeds a function that may fail in a stateful context
