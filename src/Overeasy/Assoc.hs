@@ -17,6 +17,7 @@ module Overeasy.Assoc
   , assocPartialLookupByKey
   , assocLookupByValue
   , assocPartialLookupByValue
+  , assocLookupRoot
   , assocRoots
   , assocLeaves
   , assocCanCompact
@@ -33,7 +34,7 @@ import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
 import Data.Maybe (fromJust)
 import GHC.Generics (Generic)
-import Overeasy.EquivFind (EquivAddRes (..), EquivFind, efCanCompact, efCompactInc, efAddInc, efLeaves,
+import Overeasy.EquivFind (EquivAddRes (..), EquivFind, efAddInc, efBwd, efCanCompact, efCompactInc, efLeaves,
                            efLookupRoot, efNew, efRoots, efUnsafeMerge)
 import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
@@ -146,6 +147,10 @@ assocLookupByValue a = HashMap.lookup a . assocBwd
 assocPartialLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> x
 assocPartialLookupByValue a = flip (HashMap.!) a . assocBwd
 
+-- | Finds the root for the given key (id if not found)
+assocLookupRoot :: Coercible x Int => x -> Assoc x a -> x
+assocLookupRoot x = efLookupRoot x . assocEquiv
+
 -- | List all root (live, non-compactible) entries
 assocRoots :: Coercible x Int => Assoc x a -> [x]
 assocRoots = efRoots . assocEquiv
@@ -158,11 +163,16 @@ assocLeaves = efLeaves . assocEquiv
 assocCanCompact :: Assoc x a -> Bool
 assocCanCompact = efCanCompact . assocEquiv
 
-assocCompactInc :: Coercible x Int => Assoc x a -> (IntLikeMap x (IntLikeSet x), Assoc x a)
+assocCompactInc :: Coercible x Int => Assoc x a -> (IntLikeMap x x, Assoc x a)
 assocCompactInc assoc@(Assoc fwd bwd equiv) =
-  let (rootMap, equiv') = efCompactInc equiv
-  in (rootMap, if ILM.null rootMap then assoc else Assoc fwd bwd equiv')
+  let replacements = efBwd equiv
+      assoc' =
+        if ILM.null replacements
+          then assoc
+          else let (_, equiv') = efCompactInc equiv in Assoc fwd bwd equiv'
+  in (replacements, assoc')
 
 -- | Removes all dead keys in the equiv
-assocCompact :: Coercible x Int => State (Assoc x a) (IntLikeMap x (IntLikeSet x))
+-- Returns map of dead leaf node -> live root node
+assocCompact :: Coercible x Int => State (Assoc x a) (IntLikeMap x x)
 assocCompact = state assocCompactInc

@@ -1,4 +1,4 @@
-module Overeasy.Test.Assertions
+module Test.Overeasy.Assertions
   ( (===)
   , (/==)
   , assert

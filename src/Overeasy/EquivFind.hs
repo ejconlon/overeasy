@@ -244,6 +244,6 @@ efCompactInc (EquivFind origFwd origBwd) = finalRes where
         let xs = ILM.partialLookup r fwd
         in (ILM.insert r xs rootMap, if ILS.null xs then fwd else ILM.insert r ILS.empty fwd)
 
-
+-- | Removes leaves and returns map of root -> deleted leaf
 efCompact :: Coercible x Int => State (EquivFind x) (IntLikeMap x (IntLikeSet x))
 efCompact = state efCompactInc

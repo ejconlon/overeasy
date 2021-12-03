@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 
-module Overeasy.Test.Arith
+module Test.Overeasy.Arith
   ( ArithF (..)
   , Arith (..)
   , pattern ArithPlus

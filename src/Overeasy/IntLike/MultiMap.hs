@@ -6,6 +6,7 @@ module Overeasy.IntLike.MultiMap
   , insert
   , member
   , invertDisjoint
+  , unsafeInvertDisjoint
   , fromInvertedMap
   ) where
 
@@ -46,6 +47,11 @@ invertDisjoint = foldM go1 ILM.empty . ILM.toList where
     case ILM.lookup v m of
       Nothing -> Right (ILM.insert v k m)
       Just k' -> Left (k, k', v)
+
+unsafeInvertDisjoint :: (Coercible k Int, Coercible v Int) => IntLikeMultiMap k v -> IntLikeMap v k
+unsafeInvertDisjoint = foldl' go1 ILM.empty . ILM.toList where
+  go1 m (k, vs) = foldl' (go2 k) m (ILS.toList vs)
+  go2 k m v = ILM.insert v k m
 
 fromInvertedMap :: (Coercible k Int, Coercible v Int) => IntLikeMap k v -> IntLikeMultiMap v k
 fromInvertedMap = foldl' (\m (k, v) -> insert v k m) empty . ILM.toList
