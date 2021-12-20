@@ -37,7 +37,7 @@ import Overeasy.IntLike.Map (IntLikeMap)
 import qualified Overeasy.IntLike.Map as ILM
 import Overeasy.IntLike.Set (IntLikeSet)
 import qualified Overeasy.IntLike.Set as ILS
-import Test.Overeasy.Arith (ArithF, pattern ArithConst, pattern ArithPlus)
+import Test.Overeasy.Arith (Arith (..), ArithF)
 import Test.Overeasy.Assertions (MonadTest, TestLimit, assert, setupTests, testGen, testUnit, (/==), (===))
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 

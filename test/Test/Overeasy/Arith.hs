@@ -1,53 +1,30 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Test.Overeasy.Arith
   ( ArithF (..)
   , Arith (..)
-  , pattern ArithPlus
-  , pattern ArithTimes
-  , pattern ArithShiftL
-  , pattern ArithShiftR
-  , pattern ArithConst
   ) where
 
 import Control.DeepSeq (NFData)
-import Data.Functor.Foldable (Base, Corecursive (..), Recursive (..))
+import Data.Functor.Foldable.TH (makeBaseFunctor)
 import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
 
-data ArithF a =
-    ArithPlusF a a
-  | ArithTimesF a a
-  | ArithShiftLF a !Int
-  | ArithShiftRF a !Int
-  | ArithConstF !Int
-  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Generic)
+data Arith =
+    ArithPlus Arith Arith
+  | ArithTimes Arith Arith
+  | ArithShiftL Arith !Int
+  | ArithShiftR Arith !Int
+  | ArithConst !Int
+  deriving stock (Eq, Ord, Generic)
   deriving anyclass (Hashable, NFData)
 
-newtype Arith = Arith { unArith :: ArithF Arith }
-  deriving newtype (Eq, Ord, Show, Hashable, NFData)
+-- Generates 'ArithF' and other recursion-schemes boilerplate
+makeBaseFunctor ''Arith
 
-pattern ArithPlus :: Arith -> Arith -> Arith
-pattern ArithPlus a b = Arith (ArithPlusF a b)
-
-pattern ArithTimes :: Arith -> Arith -> Arith
-pattern ArithTimes a b = Arith (ArithTimesF a b)
-
-pattern ArithShiftL :: Arith -> Int -> Arith
-pattern ArithShiftL a b = Arith (ArithShiftLF a b)
-
-pattern ArithShiftR :: Arith -> Int -> Arith
-pattern ArithShiftR a b = Arith (ArithShiftRF a b)
-
-pattern ArithConst :: Int -> Arith
-pattern ArithConst a = Arith (ArithConstF a)
-
-{-# COMPLETE ArithPlus, ArithTimes, ArithShiftL, ArithShiftR, ArithConst #-}
-
-type instance Base Arith = ArithF
-
-instance Recursive Arith where
-  project = unArith
-
-instance Corecursive Arith where
-  embed = Arith
+deriving stock instance Eq a => Eq (ArithF a)
+deriving stock instance Show a => Show (ArithF a)
+deriving stock instance Generic (ArithF a)
+deriving anyclass instance Hashable a => Hashable (ArithF a)
+deriving anyclass instance NFData a => NFData (ArithF a)
