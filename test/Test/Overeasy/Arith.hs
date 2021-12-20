@@ -17,7 +17,7 @@ data Arith =
   | ArithShiftL Arith !Int
   | ArithShiftR Arith !Int
   | ArithConst !Int
-  deriving stock (Eq, Ord, Generic)
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (Hashable, NFData)
 
 -- Generates 'ArithF' and other recursion-schemes boilerplate
