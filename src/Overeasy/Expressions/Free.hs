@@ -3,13 +3,22 @@
 
 -- | We redefine Free here because we prefer undeciable instances
 -- to having to derive 'Eq1' and so on.
+-- See https://hackage.haskell.org/package/free-5.1.7/docs/Control-Monad-Trans-Free.html
 module Overeasy.Expressions.Free
   ( FreeF (..)
   , Free (..)
   , pattern FreeEmbed
   , pattern FreePure
-  , freeVars
-  , freeSubst
+  , substFree
+  , liftFree
+  , iterFree
+  , iterFreeM
+  , FreeT (..)
+  , liftFreeT
+  , iterFreeT
+  , hoistFreeT
+  , transFreeT
+  , joinFreeT
   ) where
 
 import Control.DeepSeq (NFData)
@@ -17,10 +26,7 @@ import Control.Monad (ap)
 import Data.Bifoldable (Bifoldable (..))
 import Data.Bifunctor (Bifunctor (..))
 import Data.Bitraversable (Bitraversable (..))
-import Data.Foldable (toList)
 import Data.Functor.Foldable (Base, Corecursive (..), Recursive (..))
-import Data.HashSet (HashSet)
-import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
 
@@ -58,7 +64,7 @@ pattern FreeEmbed fr = Free (FreeEmbedF fr)
 {-# COMPLETE FreePure, FreeEmbed #-}
 
 deriving newtype instance (Eq (f (Free f a)), Eq a) => Eq (Free f a)
-deriving newtype instance (Show (f (Free f a)), Show a) => Show (Free f a)
+deriving stock instance (Show (f (Free f a)), Show a) => Show (Free f a)
 deriving newtype instance (NFData (f (Free f a)), NFData a) => NFData (Free f a)
 deriving newtype instance (Hashable (f (Free f a)), Hashable a) => Hashable (Free f a)
 
@@ -92,23 +98,84 @@ instance Functor f => Recursive (Free f a) where
 instance Functor f => Corecursive (Free f a) where
   embed = Free
 
--- | The set of all holes in this free functor
-freeVars :: (Foldable f, Eq a, Hashable a) => Free f a -> HashSet a
-freeVars = HashSet.fromList . toList
-
 -- | Fills all the holes in the free functor
-freeSubst :: (Corecursive t, f ~ Base t) => (a -> t) -> Free f a -> t
-freeSubst s = go where
+substFree :: (Corecursive t, f ~ Base t) => (a -> t) -> Free f a -> t
+substFree s = go where
   go = \case
     FreePure a -> s a
     FreeEmbed fr -> embed (fmap go fr)
 
--- TODO: define something like this:
+-- | A version of lift that can be used with just a Functor for f
+liftFree :: Functor f => f a -> Free f a
+liftFree = FreeEmbed . fmap FreePure
 
--- data FreeElem e a =
---     FreeElemPure !a
---   | FreeElemEmbed !e
---   deriving stock (Eq, Show, Generic)
---   deriving anyclass (NFData, Hashable)
+-- | Tear down a free monad using iteration
+iterFree :: Functor f => (f a -> a) -> Free f a -> a
+iterFree f = go where
+  go (Free x) =
+    case x of
+      FreePureF a -> a
+      FreeEmbedF z -> f (fmap go z)
 
--- instance (Whole t f, TreeLike e n t) => TreeLike (FreeElem e a) Maybe (Free f a) where
+-- | Like iterFree for monadic values
+iterFreeM :: (Functor f, Monad m) => (f (m a) -> m a) -> Free f a -> m a
+iterFreeM f = go where
+  go (Free x) =
+    case x of
+      FreePureF a -> pure a
+      FreeEmbedF z -> f (fmap go z)
+
+newtype FreeT f m a = FreeT { unFreeT :: m (FreeF f a (FreeT f m a)) }
+
+deriving newtype instance Eq (m (FreeF f a (FreeT f m a))) => Eq (FreeT f m a)
+deriving stock instance Show (m (FreeF f a (FreeT f m a))) => Show (FreeT f m a)
+deriving newtype instance NFData (m (FreeF f a (FreeT f m a))) => NFData (FreeT f m a)
+deriving newtype instance Hashable (m (FreeF f a (FreeT f m a))) => Hashable (FreeT f m a)
+
+instance (Functor f, Functor m) => Functor (FreeT f m) where
+  fmap f = go where
+    go = FreeT . fmap (bimap f go) . unFreeT
+
+instance (Functor f, Monad m) => Applicative (FreeT f m) where
+  pure = FreeT . pure . FreePureF
+  (<*>) = ap
+
+instance (Functor f, Monad m) => Monad (FreeT f m) where
+  return = pure
+  FreeT mm >>= f = FreeT $ mm >>= \case
+    FreePureF a -> unFreeT (f a)
+    FreeEmbedF z -> pure (FreeEmbedF (fmap (>>= f) z))
+
+instance (Foldable f, Foldable m) => Foldable (FreeT f m) where
+  foldr f z0 x0 = go x0 z0 where
+    go x z = foldr (flip (bifoldr f go)) z (unFreeT x)
+
+instance (Traversable f, Traversable m) => Traversable (FreeT f m) where
+  traverse f = go where
+    go = fmap FreeT . traverse (bitraverse f go) . unFreeT
+
+liftFreeT :: (Functor f, Applicative m) => f a -> FreeT f m a
+liftFreeT = FreeT . pure . FreeEmbedF . fmap (FreeT . pure . FreePureF)
+
+iterFreeT :: (Functor f, Monad m) => (f (m a) -> m a) -> FreeT f m a -> m a
+iterFreeT f = go where
+  go (FreeT m) = m >>= \case
+     FreePureF a -> pure a
+     FreeEmbedF z -> f (fmap go z)
+
+hoistFreeT :: (Functor f, Functor m) => (forall a. m a -> n a) -> FreeT f m b -> FreeT f n b
+hoistFreeT g = go where
+  go (FreeT m) = FreeT $ g $ flip fmap m $ \case
+     FreePureF a -> FreePureF a
+     FreeEmbedF z -> FreeEmbedF (fmap go z)
+
+transFreeT :: (Functor g, Monad m) => (forall a. f a -> g a) -> FreeT f m b -> FreeT g m b
+transFreeT g = go where
+  go (FreeT m) = FreeT $ flip fmap m $ \case
+     FreePureF a -> FreePureF a
+     FreeEmbedF z -> FreeEmbedF (fmap go (g z))
+
+joinFreeT :: (Monad m, Traversable f) => FreeT f m a -> m (Free f a)
+joinFreeT x = unFreeT x >>= \case
+   FreePureF a -> pure (FreePure a)
+   FreeEmbedF z -> fmap FreeEmbed (traverse joinFreeT z)
