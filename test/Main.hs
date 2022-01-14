@@ -21,6 +21,12 @@ import Data.Traversable (for)
 import Hedgehog (Gen, Range, forAll)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
+import qualified IntLike.Equiv as ILE
+import qualified IntLike.Graph as ILG
+import IntLike.Map (IntLikeMap)
+import qualified IntLike.Map as ILM
+import IntLike.Set (IntLikeSet)
+import qualified IntLike.Set as ILS
 import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocBwd, assocCanCompact, assocCompact, assocEquiv, assocFromList,
                        assocFwd, assocInsert, assocLeaves, assocLookupRoot, assocNew, assocPartialLookupByKey,
                        assocRoots, assocSize)
@@ -31,12 +37,6 @@ import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..),
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge,
                            efMergeSets, efNew, efRoots, efRootsSize, efTotalSize)
 import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
-import qualified Overeasy.IntLike.Equiv as ILE
-import qualified Overeasy.IntLike.Graph as ILG
-import Overeasy.IntLike.Map (IntLikeMap)
-import qualified Overeasy.IntLike.Map as ILM
-import Overeasy.IntLike.Set (IntLikeSet)
-import qualified Overeasy.IntLike.Set as ILS
 import Test.Overeasy.Arith (Arith (..), ArithF)
 import Test.Overeasy.Assertions (MonadTest, TestLimit, assert, setupTests, testGen, testUnit, (/==), (===))
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)

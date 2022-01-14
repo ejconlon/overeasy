@@ -42,10 +42,10 @@ import Data.Coerce (Coercible)
 import Data.Foldable (foldl')
 import Data.Maybe (fromJust, fromMaybe)
 import GHC.Generics (Generic)
-import Overeasy.IntLike.Map (IntLikeMap)
-import qualified Overeasy.IntLike.Map as ILM
-import Overeasy.IntLike.Set (IntLikeSet)
-import qualified Overeasy.IntLike.Set as ILS
+import IntLike.Map (IntLikeMap)
+import qualified IntLike.Map as ILM
+import IntLike.Set (IntLikeSet)
+import qualified IntLike.Set as ILS
 
 -- private ctor
 data EquivFind x = EquivFind

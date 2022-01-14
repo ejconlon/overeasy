@@ -3,10 +3,21 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages: []
+packages:
+- completed:
+    name: int-like
+    version: 0.1.0
+    git: git@github.com:ejconlon/int-like.git
+    pantry-tree:
+      size: 1134
+      sha256: 505e65f19ced2a1aff66bc880fa3f194f8d44305fae730ca08a19ddb64776328
+    commit: e814624a26d71f02582e5cb9ea0955aa721d509e
+  original:
+    git: git@github.com:ejconlon/int-like.git
+    commit: e814624a26d71f02582e5cb9ea0955aa721d509e
 snapshots:
 - completed:
-    size: 586296
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/18.yaml
-    sha256: 63539429076b7ebbab6daa7656cfb079393bf644971156dc349d7c0453694ac2
-  original: lts-18.18
+    size: 586110
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/21.yaml
+    sha256: ce4fb8d44f3c6c6032060a02e0ebb1bd29937c9a70101c1517b92a87d9515160
+  original: lts-18.21

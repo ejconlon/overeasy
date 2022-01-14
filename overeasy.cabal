@@ -32,11 +32,6 @@ library
       Overeasy.Expressions.Free
       Overeasy.Expressions.Sexp
       Overeasy.Expressions.Tree
-      Overeasy.IntLike.Equiv
-      Overeasy.IntLike.Graph
-      Overeasy.IntLike.Map
-      Overeasy.IntLike.MultiMap
-      Overeasy.IntLike.Set
       Overeasy.Matching
       Overeasy.Orphans
       Overeasy.Recursion
@@ -80,6 +75,7 @@ library
     , data-fix
     , deepseq
     , hashable
+    , int-like
     , mtl
     , recursion-schemes
     , text
@@ -131,6 +127,7 @@ test-suite overeasy-test
     , deepseq
     , hashable
     , hedgehog
+    , int-like
     , mtl
     , overeasy
     , pretty-simple

@@ -6,7 +6,7 @@ parameters:
     default: "overeasy"
   cache_ver:
     type: string
-    default: "v4"
+    default: "v5"
   haskell_image:
     type: string
     default: "haskell"

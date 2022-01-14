@@ -49,17 +49,17 @@ import Data.Semigroup (sconcat)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
+import IntLike.Map (IntLikeMap)
+import qualified IntLike.Map as ILM
+import IntLike.MultiMap (IntLikeMultiMap)
+import qualified IntLike.MultiMap as ILMM
+import IntLike.Set (IntLikeSet)
+import qualified IntLike.Set as ILS
 import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocCanCompact, assocCompactInc, assocInsertInc, assocLookupByValue,
                        assocNew, assocPartialLookupByKey)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EquivFind (EquivFind, EquivMergeSetsRes (..), efAddInc, efClosure, efCompactInc, efFindRoot,
                            efLookupLeaves, efLookupRoot, efMergeSetsInc, efNew, efRoots, efRootsSize)
-import Overeasy.IntLike.Map (IntLikeMap)
-import qualified Overeasy.IntLike.Map as ILM
-import Overeasy.IntLike.MultiMap (IntLikeMultiMap)
-import qualified Overeasy.IntLike.MultiMap as ILMM
-import Overeasy.IntLike.Set (IntLikeSet)
-import qualified Overeasy.IntLike.Set as ILS
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAddInc, sourceNew)
 import Overeasy.StateUtil (stateFold)

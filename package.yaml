@@ -20,6 +20,7 @@ dependencies:
 - data-fix
 - deepseq
 - hashable
+- int-like
 - mtl
 - recursion-schemes
 - text

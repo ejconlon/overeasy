@@ -34,11 +34,11 @@ import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
 import Data.Maybe (fromJust)
 import GHC.Generics (Generic)
+import IntLike.Map (IntLikeMap)
+import qualified IntLike.Map as ILM
+import IntLike.Set (IntLikeSet)
 import Overeasy.EquivFind (EquivAddRes (..), EquivFind, efAddInc, efBwd, efCanCompact, efCompactInc, efLeaves,
                            efLookupRoot, efNew, efRoots, efUnsafeMerge)
-import Overeasy.IntLike.Map (IntLikeMap)
-import qualified Overeasy.IntLike.Map as ILM
-import Overeasy.IntLike.Set (IntLikeSet)
 
 -- private ctor
 data Assoc x a = Assoc
