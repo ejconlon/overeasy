@@ -1,5 +1,7 @@
 # overeasy
 
+[![CircleCI](https://circleci.com/gh/ejconlon/overeasy/tree/master.svg?style=svg)](https://circleci.com/gh/ejconlon/overeasy/tree/master)
+
 A purely functional E-Graph library
 
 ## How to build and run
