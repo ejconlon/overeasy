@@ -28,10 +28,6 @@ library
       Overeasy.Classes
       Overeasy.EGraph
       Overeasy.EquivFind
-      Overeasy.Expressions.BinTree
-      Overeasy.Expressions.Free
-      Overeasy.Expressions.Sexp
-      Overeasy.Expressions.Tree
       Overeasy.Matching
       Overeasy.Orphans
       Overeasy.Recursion
@@ -88,6 +84,7 @@ test-suite overeasy-test
   other-modules:
       Test.Overeasy.Arith
       Test.Overeasy.Assertions
+      Test.Overeasy.BinTree
       Paths_overeasy
   hs-source-dirs:
       test

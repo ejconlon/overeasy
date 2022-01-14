@@ -36,9 +36,9 @@ import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..),
                         egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge,
                            efMergeSets, efNew, efRoots, efRootsSize, efTotalSize)
-import Overeasy.Expressions.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import Test.Overeasy.Arith (Arith (..), ArithF)
 import Test.Overeasy.Assertions (MonadTest, TestLimit, assert, setupTests, testGen, testUnit, (/==), (===))
+import Test.Overeasy.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 
 fullyEvaluate :: (MonadIO m, NFData a) => a -> m a

@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 
-module Overeasy.Expressions.BinTree
+module Test.Overeasy.BinTree
   ( BinTreeF (..)
   , BinTree (..)
   , pattern BinTreeLeaf
