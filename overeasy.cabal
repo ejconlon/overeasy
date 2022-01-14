@@ -83,7 +83,6 @@ test-suite overeasy-test
   main-is: Main.hs
   other-modules:
       Test.Overeasy.Arith
-      Test.Overeasy.Assertions
       Test.Overeasy.BinTree
       Paths_overeasy
   hs-source-dirs:
@@ -121,14 +120,12 @@ test-suite overeasy-test
     , containers ==0.6.*
     , deepseq ==1.4.*
     , hashable >=1.3 && <1.5
-    , hedgehog
+    , hedgehog ==1.0.*
     , int-like ==0.1.*
     , mtl ==2.2.*
     , overeasy
-    , pretty-simple
+    , prop-unit ==0.1.*
     , recursion-schemes ==5.2.*
-    , tasty
-    , tasty-hedgehog
     , text >=1.2 && <2.1
     , transformers >=0.5 && <0.7
     , unordered-containers ==0.2.*

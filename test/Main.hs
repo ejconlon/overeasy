@@ -18,7 +18,6 @@ import Data.Maybe (fromJust, isJust)
 import Data.Semigroup (Max (..))
 import qualified Data.Sequence as Seq
 import Data.Traversable (for)
-import Hedgehog (Gen, Range, forAll)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import qualified IntLike.Equiv as ILE
@@ -36,10 +35,10 @@ import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..),
                         egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge,
                            efMergeSets, efNew, efRoots, efRootsSize, efTotalSize)
+import PropUnit (DependencyType (..), Gen, MonadTest, Range, TestLimit, TestTree, after, assert, forAll, testGroup,
+                 testMain, testProp, testUnit, (/==), (===))
 import Test.Overeasy.Arith (Arith (..), ArithF)
-import Test.Overeasy.Assertions (MonadTest, TestLimit, assert, setupTests, testGen, testUnit, (/==), (===))
 import Test.Overeasy.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
-import Test.Tasty (DependencyType (..), TestTree, after, defaultMain, testGroup)
 
 fullyEvaluate :: (MonadIO m, NFData a) => a -> m a
 fullyEvaluate = liftIO . evaluate . force
@@ -262,7 +261,7 @@ genMergeStrat :: Gen MergeStrat
 genMergeStrat = Gen.enumBounded
 
 testUfProp :: TestLimit -> TestTree
-testUfProp lim = after AllSucceed "UF unit" $ testGen "UF prop" lim $ do
+testUfProp lim = after AllSucceed "UF unit" $ testProp "UF prop" lim $ do
   let maxElems = 50
   -- generate elements
   memberList <- forAll (genMembers maxElems)
@@ -872,7 +871,7 @@ mkSimpleTreeLevels maxElems =
   in anyLevel
 
 testEgProp :: TestLimit -> TestTree
-testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testGen "EG prop" lim prop where
+testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testProp "EG prop" lim prop where
   maxElems = 10
   termGen = genBinTreeMembers maxElems
   -- Guarantee yourself small trees with this:
@@ -919,12 +918,7 @@ testILM = testUnit "ILM unit" $ do
   mLeft <> mRight === mMerged
 
 main :: IO ()
-main = do
-  lim <- setupTests
-  defaultMain $ testGroup "Overeasy"
-    -- [ testEgCase True (allEgCases !! (length allEgCases - 1)) ]
-    -- [ testEgCase t (fromJust (find (\(EgCase n _) -> n == "repro 2") allEgCases)) | t <- [True]]
-    -- [ testEgProp lim ]
+main = testMain $ \lim -> testGroup "Overeasy"
     [ testILM
     , testUfUnit
     , testAssocUnit

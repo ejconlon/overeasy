@@ -10,8 +10,8 @@ docker-test:
 
 .PHONY: debug-test
 debug-test:
-	DEBUG=1 stack test --trace --profile
+	PROP_UNIT_DEBUG=1 stack test --trace --profile
 
 .PHONY: deep-test
 deep-test:
-	GENLIMIT=1000 make test
+	PROP_UNIT_LIMIT=1000 make test

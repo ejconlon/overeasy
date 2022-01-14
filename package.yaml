@@ -78,7 +78,5 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - overeasy
-    - hedgehog
-    - pretty-simple
-    - tasty
-    - tasty-hedgehog
+    - prop-unit >= 0.1 && < 0.2
+    - hedgehog >= 1.0 && < 1.1
