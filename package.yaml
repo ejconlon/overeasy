@@ -24,6 +24,7 @@ dependencies:
 - recursion-schemes >= 5.2 && < 5.3
 - text >= 1.2 && < 2.1
 - transformers >= 0.5 && < 0.7
+- unfree >= 0.1 && < 0.2
 - unordered-containers >= 0.2 && < 0.3
 
 default-extensions:

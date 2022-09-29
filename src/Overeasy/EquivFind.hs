@@ -71,10 +71,10 @@ efNew = EquivFind ILM.empty ILM.empty
 allocMM :: Coercible x Int => x -> IntLikeMap x (IntLikeSet x) -> IntLikeMap x (IntLikeSet x)
 allocMM = ILM.alter (<|> Just ILS.empty)
 
+-- private
 insertMM :: Coercible x Int => x -> x -> IntLikeMap x (IntLikeSet x) -> IntLikeMap x (IntLikeSet x)
 insertMM x y = ILM.alter (\case { Nothing -> Just (ILS.singleton y); Just s -> Just (ILS.insert y s) }) x
 
--- TODO call these efAdd
 data EquivAddRes x =
     EquivAddResAlreadyRoot
   | EquivAddResAlreadyLeafOf !x
@@ -99,17 +99,6 @@ efEquivs x ef = let r = efLookupRoot x ef in ILS.insert r (efLookupLeaves r ef)
 
 efClosure :: Coercible x Int => [x] -> EquivFind x -> IntLikeSet x
 efClosure xs ef = foldl' (\c x -> if ILS.member x c then c else ILS.union (efEquivs x ef) c) ILS.empty xs
-
--- -- | For all given classes, construct a map of class root to all class elems (not including the root)
--- efRootMap :: Coercible x Int => [x] -> EquivFind x -> IntLikeMultiMap x x
--- efRootMap xs (EquivFind fwd bwd) = foldl' go ILM.empty xs where
---   go m x =
---     case ILM.lookup x bwd of
---       Nothing -> m
---       Just r ->
---         case ILM.lookup r m of
---           Nothing -> ILM.insert r (ILM.partialLookup r fwd) m
---           _ -> m
 
 efFindRoot :: Coercible x Int => x -> EquivFind x -> Maybe x
 efFindRoot x ef = ILM.lookup x (efBwd ef) <|> if ILM.member x (efFwd ef) then Just x else Nothing

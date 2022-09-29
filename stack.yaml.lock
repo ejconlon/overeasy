@@ -26,6 +26,17 @@ packages:
   original:
     git: git@github.com:ejconlon/prop-unit.git
     commit: d562ed5c39b4b87b4c226126f249f0e97d89c2dd
+- completed:
+    name: unfree
+    version: 0.1.0
+    git: git@github.com:ejconlon/unfree.git
+    pantry-tree:
+      size: 882
+      sha256: 784eafe8da10687e79f86d1764bee7a961761880309c3999afdecd9a0e6e9fac
+    commit: c4eaee614c8a62d8c489dbdc9806db7c735435db
+  original:
+    git: git@github.com:ejconlon/unfree.git
+    commit: c4eaee614c8a62d8c489dbdc9806db7c735435db
 snapshots:
 - completed:
     size: 619403

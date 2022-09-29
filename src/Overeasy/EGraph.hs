@@ -137,6 +137,8 @@ data EGraph d f = EGraph
   , egNodeSource :: !(Source ENodeId)
   , egEquivFind :: !(EquivFind EClassId)
   , egClassMap :: !(IntLikeMap EClassId (EClassInfo d))
+  -- TODO remove this - maintain dead class list inside rebuild
+  -- and compact as you go (no separate compaction)
   , egDeadClasses :: !(IntLikeSet EClassId)
   , egNodeAssoc :: !(Assoc ENodeId (f EClassId))
   , egHashCons :: !(IntLikeMap ENodeId EClassId)

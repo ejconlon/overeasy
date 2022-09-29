@@ -11,4 +11,5 @@ extra-deps:
   commit: c277da03d6e0b61280f67169c4dc6219a2578faa
 - git: git@github.com:ejconlon/prop-unit.git
   commit: d562ed5c39b4b87b4c226126f249f0e97d89c2dd
-
+- git: git@github.com:ejconlon/unfree.git
+  commit: c4eaee614c8a62d8c489dbdc9806db7c735435db
