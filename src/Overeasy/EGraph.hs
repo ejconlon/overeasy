@@ -12,13 +12,12 @@ module Overeasy.EGraph
   , EGraph
   , WorkItem
   , WorkList
-  , RootMap
+  , ClassReplacements
   , MergeResult (..)
   , egClassSource
   , egNodeSource
   , egEquivFind
   , egClassMap
-  , egDeadClasses
   , egNodeAssoc
   , egHashCons
   , egClassSize
@@ -32,8 +31,6 @@ module Overeasy.EGraph
   , egAddTerm
   , egMerge
   , egMergeMany
-  , egCanCompact
-  , egCompact
   ) where
 
 import Control.DeepSeq (NFData)
@@ -42,23 +39,24 @@ import Control.Monad.State.Strict (State, gets, modify', state)
 import Data.Foldable (foldl', toList)
 import Data.Functor.Foldable (project)
 import Data.Hashable (Hashable)
+import qualified Data.IntMap.Strict as IntMap
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Semigroup (sconcat)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
-import IntLike.Map (IntLikeMap)
+import IntLike.Map (IntLikeMap (..))
 import qualified IntLike.Map as ILM
 import IntLike.MultiMap (IntLikeMultiMap)
 import qualified IntLike.MultiMap as ILMM
-import IntLike.Set (IntLikeSet)
+import IntLike.Set (IntLikeSet (..))
 import qualified IntLike.Set as ILS
 import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocCanCompact, assocCompactInc, assocInsertInc, assocLookupByValue,
                        assocNew, assocPartialLookupByKey)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EquivFind (EquivFind, EquivMergeSetsRes (..), efAddInc, efClosure, efCompactInc, efFindRoot,
-                           efLookupLeaves, efLookupRoot, efMergeSetsInc, efNew, efRoots, efRootsSize)
+import Overeasy.EquivFind (EquivFind (..), EquivMergeSetsRes (..), efAddInc, efClosure, efCompactInc, efFindRoot,
+                           efLookupRoot, efMergeSetsInc, efNew, efRoots, efRootsSize, efSubset)
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAddInc, sourceNew)
 import Overeasy.StateUtil (stateFold)
@@ -118,7 +116,7 @@ data EClassInfo d = EClassInfo
 type WorkItem = IntLikeSet EClassId
 type WorkList = Seq WorkItem
 
-type RootMap = IntLikeMultiMap EClassId EClassId
+type ClassReplacements = EquivFind EClassId
 
 data MergeResult a =
     MergeResultUnchanged
@@ -275,7 +273,7 @@ egMerge :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassI
 egMerge q i j = do
   mr <- egMergeMany q (Seq.singleton (ILS.fromList [i, j]))
   -- We're guaranteed to have one and only one root in the map, so this won't fail
-  pure (fmap (fst . head . ILM.toList) mr)
+  pure (fmap (fst . head . ILM.toList . efFwd) mr)
 
 data BuildWorkResult a =
     BuildWorkResultUnchanged
@@ -313,13 +311,16 @@ egBuildWorklist = go Empty where
 -- Returns 'Nothing' if the classes are not found or if they're already equal.
 -- Otherwise returns the class remapping.
 egMergeMany :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId))
-  => q -> WorkList -> State (EGraph d f) (MergeResult RootMap)
+  => q -> WorkList -> State (EGraph d f) (MergeResult ClassReplacements)
 egMergeMany q wl0 = do
   br <- egBuildWorklist wl0
   case br of
     BuildWorkResultUnchanged -> pure MergeResultUnchanged
     BuildWorkResultMissing cs -> pure (MergeResultMissing cs)
-    BuildWorkResultOk wl1 -> fmap MergeResultChanged (egRebuild q wl1)
+    BuildWorkResultOk wl1 -> do
+      rm <- egRebuild q wl1
+      egCompact
+      pure (MergeResultChanged rm)
 
 -- private
 -- Folds over items in worklist to merge, returning:
@@ -429,19 +430,20 @@ egRebuildClassSingle q newClass oldClasses initCm =
 -- private
 -- Rebuilds the classmap: merges old class infos into root class infos
 -- Returns list of modified root classes
-egRebuildClassMap :: EAnalysis d f q => q -> IntLikeSet EClassId -> State (EGraph d f) RootMap
+egRebuildClassMap :: EAnalysis d f q => q -> IntLikeSet EClassId -> State (EGraph d f) ClassReplacements
 egRebuildClassMap q touchedClasses = state $ \eg ->
   let ef = egEquivFind eg
-      dc = egDeadClasses eg
       roots = ILS.map (`efLookupRoot` ef) touchedClasses
-      rootMap = ILM.fromList (fmap (\r -> (r, ILS.difference (efLookupLeaves r ef) dc)) (ILS.toList roots))
-      cm' = foldl' (\cm (r, vs) -> egRebuildClassSingle q r vs cm) (egClassMap eg) (ILM.toList rootMap)
-      dc' = foldl' ILS.union (egDeadClasses eg) (ILM.elems rootMap)
-  in (rootMap, eg { egClassMap = cm', egDeadClasses = dc' })
+      dc = egDeadClasses eg
+      classReplacements = efSubset (ILS.toList roots) ef
+      cm' = foldl' (\cm (r, vs) -> egRebuildClassSingle q r (ILS.difference vs dc) cm) (egClassMap eg) (ILM.toList (efFwd classReplacements))
+      newDead = IntLikeSet (IntMap.keysSet (unIntLikeMap (efBwd classReplacements)))
+      dc' = dc <> newDead
+  in (classReplacements, eg { egClassMap = cm', egDeadClasses = dc' })
 
 -- private
 -- Rebuilds the 'EGraph' after merging to allow adding more terms.
-egRebuild :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> WorkList -> State (EGraph d f) RootMap
+egRebuild :: (EAnalysis d f q, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => q -> WorkList -> State (EGraph d f) ClassReplacements
 egRebuild q wl0 = goRec where
   goRec = do
     -- Note the existing hashcons

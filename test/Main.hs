@@ -27,12 +27,11 @@ import qualified IntLike.Map as ILM
 import IntLike.Set (IntLikeSet)
 import qualified IntLike.Set as ILS
 import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocBwd, assocCanCompact, assocCompact, assocEquiv, assocFromList,
-                       assocFwd, assocInsert, assocLeaves, assocLookupRoot, assocNew, assocPartialLookupByKey,
-                       assocRoots, assocSize)
+                       assocFwd, assocInsert, assocLeaves, assocNew, assocPartialLookupByKey, assocRoots, assocSize)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
-                        ENodeId (..), MergeResult (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm,
-                        egMerge, egMergeMany, egNew, egNodeSize)
+                        ENodeId (..), MergeResult (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge,
+                        egMergeMany, egNew, egNodeSize)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge,
                            efMergeSets, efNew, efRoots, efRootsSize, efTotalSize)
 import PropUnit (DependencyType (..), Gen, MonadTest, Range, TestLimit, TestTree, after, assert, forAll, testGroup,
@@ -533,15 +532,12 @@ assertEgInvariants eg = do
       ef = egEquivFind eg
       rootClasses = ILS.fromList (efRoots ef)
       leafClasses = ILS.fromList (efLeaves ef)
-      deadClasses = egDeadClasses eg
       cm = egClassMap eg
       cmClasses = ILS.fromList (ILM.keys cm)
   -- Assert that root nodes and leaf nodes are disjoint
   ILS.intersection rootNodes leafNodes === ILS.empty
   -- Assert that root classes and leaf classes are disjoint
   ILS.intersection rootClasses leafClasses === ILS.empty
-  -- Assert that dead classes are exactly the leaf classes
-  deadClasses === leafClasses
   -- Assert that the assoc is 1-1 etc
   assertAssocInvariants assoc
   -- Assert that the hashcons and assoc have equal key sets
@@ -549,13 +545,8 @@ assertEgInvariants eg = do
   -- Assert that hashcons has exactly the same values as unionfind roots for all nodes
   for_ (ILM.elems hc) $ \c ->
     assert $ ILS.member c rootClasses
-  -- Assert that classmap contains all unionfind roots
-  for_ (ILS.toList rootClasses) $ \r ->
-    assert $ ILS.member r cmClasses
-  -- Assert that those non-root classes are marked dead
-  for_ (ILS.toList cmClasses) $ \c ->
-    unless (ILS.member c rootClasses) $
-      assert $ ILS.member c deadClasses
+  -- Assert that classmap only contains unionfind roots
+  cmClasses === rootClasses
   -- For every node, assert in the nodes of some class
   for_ (ILM.toList hc) $ \(n, c) -> do
     let nodes = eciNodes (ILM.partialLookup c cm)
@@ -571,76 +562,30 @@ assertEgInvariants eg = do
         let parents = eciParents (ILM.partialLookup y cm)
         -- traceM (unwords ["->", show y, show parents])
         assert (ILS.member n parents)
-  -- For every non-dead class
-  (cmNodes, cmParents) <- flipFoldM (ILS.empty, ILS.empty) (ILM.toList cm) $ \(accNodes, accParents) (c, eci) ->
-    if ILS.member c deadClasses
-      -- skip dead classes
-      then pure (accNodes, accParents)
-      else do
-        let nodes = eciNodes eci
-            parents = eciParents eci
-        -- Assert that classmap node values are non-empty
-        nodes /== ILS.empty
-        -- Assert that classmap class has node values that are hashconsed to class
-        for_ (ILS.toList nodes) $ \n -> do
-          ILM.lookup n hc === Just c
-        -- Assert that classmap class has NO parents that are hashconsed to class
-        -- dead nodes may have to be filtered on compact
-        -- traceM (unwords ["CONSIDERING", show c, show parents])
-        for_ (ILS.toList parents) $ \p ->
-          ILM.lookup p hc /== Just c
-        -- Assert we haven't seen these nodes before
-        assert $ ILS.disjoint nodes accNodes
-        -- Assert that the nodes and parents are disjoint
-        assert $ ILS.disjoint nodes parents
-        pure (ILS.union accNodes nodes, ILS.union accParents parents)
+  -- For every class
+  cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) -> do
+    let nodes = eciNodes eci
+        parents = eciParents eci
+    -- Assert that classmap node values are non-empty
+    nodes /== ILS.empty
+    -- Assert that classmap class has node values that are hashconsed to class
+    for_ (ILS.toList nodes) $ \n -> do
+      ILM.lookup n hc === Just c
+    -- Assert that classmap class has NO parents that are hashconsed to class
+    for_ (ILS.toList parents) $ \p ->
+      ILM.lookup p hc /== Just c
+    -- Assert we haven't seen these nodes before
+    assert $ ILS.disjoint nodes accNodes
+    -- Assert that the nodes and parents are disjoint
+    assert $ ILS.disjoint nodes parents
+    pure (ILS.union accNodes nodes)
   let hcNodes = ILS.fromList (ILM.keys hc)
-  -- Assert hc keys contain class nodes and dead nodes
-  ILS.union cmNodes leafNodes === hcNodes
-  -- Assert hc keys contain parent nodes
-  assert $ ILS.isSubsetOf cmParents hcNodes
+  -- Assert hc keys are exactly the class nodes
+  cmNodes === hcNodes
   -- Now test recanonicalization - we already know assoc fwd and bwd are 1-1
   for_ (HashMap.toList bwd) $ \(fc, _) ->
     let recanon = evalState (egCanonicalize fc) eg
     in recanon === Just fc
-
--- assert this after the usual eg invariants hold on both
-assertEgCompactInvariants :: (MonadTest m, Eq d, Show d) => EGraph d f -> EGraph d f -> m ()
-assertEgCompactInvariants egBefore egAfter = do
-  let assocAfter = egNodeAssoc egAfter
-      deadNodesAfter = ILS.fromList (assocLeaves assocAfter)
-      deadClassesAfter = egDeadClasses egAfter
-      aliveClassesAfter = ILS.fromList (ILM.keys (egClassMap egAfter))
-      aliveNodesAfter = ILS.fromList (assocRoots assocAfter)
-  -- First check that compact has removed dead nodes and classes
-  -- dead classes should be empty
-  deadClassesAfter === ILS.empty
-  -- dead nodes should be empty
-  deadNodesAfter === ILS.empty
-  -- Now check equality of graphs
-  let deadClassesBefore = egDeadClasses egBefore
-      allClassesBefore = ILS.fromList (ILM.keys (egClassMap egBefore))
-      aliveClassesBefore = ILS.difference allClassesBefore deadClassesBefore
-      assocBefore = egNodeAssoc egBefore
-      aliveNodesBefore = ILS.fromList (assocRoots assocBefore)
-  -- that all non-dead classes and nodes are present in the compacted one
-  aliveClassesBefore === aliveClassesAfter
-  aliveNodesBefore === aliveNodesAfter
-  -- for each alive class,
-  for_ (ILS.toList aliveClassesBefore) $ \c -> do
-    -- get the class info before and after
-    let eciBefore = ILM.partialLookup c (egClassMap egBefore)
-        eciAfter = ILM.partialLookup c (egClassMap egAfter)
-        beforeNodes = eciNodes eciBefore
-        remappedBeforeNodes = ILS.map (`assocLookupRoot` assocBefore) beforeNodes
-        beforeParents = eciParents eciBefore
-        remappedBeforeParents = ILS.map (`assocLookupRoot` assocBefore) beforeParents
-    -- assert that class data is the same
-    eciData eciAfter === eciData eciBefore
-    -- assert that nodes are the same
-    eciNodes eciAfter === remappedBeforeNodes
-    -- assert that mappped parents are the same
-    eciParents eciAfter === remappedBeforeParents
 
 data EgRound = EgRound
   { egRoundTerms :: ![EGT]
@@ -756,14 +701,14 @@ allEgCases =
           ]
      ]
 
-testEgCase :: Bool -> EgCase -> TestTree
-testEgCase compact (EgCase name rounds) = kase where
+testEgCase :: EgCase -> TestTree
+testEgCase (EgCase name rounds) = kase where
   findMayTerm t = fmap (egFindTerm t) get
   findTerm t = fmap fromJust (findMayTerm t)
   findTerms ts = fmap ILS.fromList (for ts findTerm)
   assertTermFound t = findMayTerm t >>= \mi -> assert (isJust mi)
   assertTermsFound ts = for_ ts assertTermFound
-  kase = testUnit (name ++ " (" ++ (if compact then "compact" else "non-compact") ++ ")") $ runS egNew $ do
+  kase = testUnit name $ runS egNew $ do
     -- for each round
     for_ rounds $ \(EgRound start act endEq endNeq) -> do
       -- add initial terms and assert invariants hold
@@ -801,22 +746,11 @@ testEgCase compact (EgCase name rounds) = kase where
         i <- applyS (findTerm x)
         j <- applyS (findTerm y)
         i /== j
-      -- compact if configured to do so
-      when compact $ do
-        -- liftIO (putStrLn "===== before compact =====")
-        -- testS $ liftIO . pPrint
-        egBefore <- get
-        applyS egCompact
-        -- liftIO (putStrLn "===== after compact =====")
-        -- testS $ liftIO . pPrint
-        testS assertEgInvariants
-        testS (assertEgCompactInvariants egBefore)
 
 testEgCases :: TestTree
 testEgCases = testGroup "Eg case" $ do
   kase <- allEgCases
-  compact <- [False, True]
-  pure (testEgCase compact kase)
+  pure (testEgCase kase)
 
 testEgNew :: TestTree
 testEgNew = testUnit "EG new" $ do
@@ -876,20 +810,8 @@ testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ test
             MergeResultMissing _ -> error "bad set"
             _ -> pure ()
     eg2 <- fullyEvaluate (execState merge eg1)
-    -- liftIO (putStrLn "===== eg2 =====")
-    -- liftIO (pPrint eg2)
-    egNodeSize eg2 === egNodeSize eg1
-    let eg3 = eg2
-    assertEgInvariants eg3
-    compact <- forAll Gen.bool
-    eg4 <- if compact
-      then do
-        egX <- fullyEvaluate (execState egCompact eg3)
-        assertEgInvariants egX
-        assertEgCompactInvariants eg3 egX
-        pure egX
-      else pure eg3
-    unless (rounds == 1) (body (rounds - 1) eg4)
+    assertEgInvariants eg2
+    unless (rounds == 1) (body (rounds - 1) eg2)
 
 type M = IntLikeMap ENodeId Char
 

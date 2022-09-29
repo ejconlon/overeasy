@@ -20,6 +20,7 @@ module Overeasy.EquivFind
   , efClosure
   , efFindRoot
   , efFindLeaves
+  , efSubset
   , efLookupRoot
   , efLookupLeaves
   , efFindAll
@@ -106,11 +107,19 @@ efFindRoot x ef = ILM.lookup x (efBwd ef) <|> if ILM.member x (efFwd ef) then Ju
 efFindLeaves :: Coercible x Int => x -> EquivFind x -> Maybe (IntLikeSet x)
 efFindLeaves x ef = ILM.lookup x (efFwd ef)
 
+-- | Returns an EquivFind subset representing the given list of keys
+efSubset :: Coercible x Int => [x] -> EquivFind x -> EquivFind x
+efSubset xs0 ef0 = foldl' go efNew xs0 where
+  go (EquivFind fwd1 bwd1) x =
+    let r = efLookupRoot x ef0
+        ls = efLookupLeaves r ef0
+    in EquivFind (ILM.insert r ls fwd1) (foldl' (\b l -> ILM.insert l r b) bwd1 (ILS.toList ls))
+
 -- | Like 'efFindRoot' but returns same key if not found - does not guarantee presence in map
 efLookupRoot :: Coercible x Int => x -> EquivFind x -> x
 efLookupRoot x = fromMaybe x . ILM.lookup x . efBwd
 
--- | Like 'efFindLEaves' but returns empty set if not found - does not guarantee presence in map
+-- | Like 'efFindLeaves' but returns empty set if not found - does not guarantee presence in map
 efLookupLeaves :: Coercible x Int => x -> EquivFind x -> IntLikeSet x
 efLookupLeaves x = fromMaybe ILS.empty . ILM.lookup x . efFwd
 
