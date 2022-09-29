@@ -9,6 +9,8 @@ module Overeasy.EquivFind
   , efRootsSize
   , efLeavesSize
   , efTotalSize
+  , efCanonicalize
+  , efCanonicalizePartial
   , efNew
   , efMember
   , efRoots
@@ -63,6 +65,16 @@ efLeavesSize = ILM.size . efBwd
 
 efTotalSize :: EquivFind x -> Int
 efTotalSize ef = efRootsSize ef + efLeavesSize ef
+
+-- | Canonicalize the given expression functor by replacing leaves with roots.
+-- If any elements are missing, the first is returned.
+efCanonicalize :: (Traversable f, Coercible x Int) => f x -> EquivFind x -> Either x (f x)
+efCanonicalize fx ef = traverse (\x -> maybe (Left x) pure (efFindRoot x ef)) fx
+
+-- | Canonicalize the given expression functor by replacing leaves with roots.
+-- If any elements are missing, they are simply skipped.
+efCanonicalizePartial :: (Functor f, Coercible x Int) => f x -> EquivFind x -> f x
+efCanonicalizePartial fx ef = fmap (`efLookupRoot` ef) fx
 
 -- | Creates a new UF
 efNew :: EquivFind x

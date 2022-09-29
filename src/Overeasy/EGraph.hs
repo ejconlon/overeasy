@@ -28,6 +28,7 @@ module Overeasy.EGraph
   , egNew
   , egClasses
   , egCanonicalize
+  , egCanonicalizePartial
   , egAddTerm
   , egMerge
   , egMergeMany
@@ -55,8 +56,9 @@ import qualified IntLike.Set as ILS
 import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocCanCompact, assocCompactInc, assocInsertInc, assocLookupByValue,
                        assocNew, assocPartialLookupByKey)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EquivFind (EquivFind (..), EquivMergeSetsRes (..), efAddInc, efClosure, efCompactInc, efFindRoot,
-                           efLookupRoot, efMergeSetsInc, efNew, efRoots, efRootsSize, efSubset)
+import Overeasy.EquivFind (EquivFind (..), EquivMergeSetsRes (..), efAddInc, efCanonicalize, efCanonicalizePartial,
+                           efClosure, efCompactInc, efFindRoot, efLookupRoot, efMergeSetsInc, efNew, efRoots,
+                           efRootsSize, efSubset)
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAddInc, sourceNew)
 import Overeasy.StateUtil (stateFold)
@@ -177,9 +179,15 @@ egNew = EGraph (sourceNew (EClassId 0)) (sourceNew (ENodeId 0)) efNew ILM.empty 
 egClasses :: State (EGraph d f) [EClassId]
 egClasses = gets (efRoots . egEquivFind)
 
--- | Find the canonical form of a node
-egCanonicalize :: Traversable f => f EClassId -> State (EGraph d f) (Maybe (f EClassId))
-egCanonicalize fc = fmap (\ef -> traverse (`efFindRoot` ef) fc) (gets egEquivFind)
+-- | Find the canonical form of a node.
+-- If any classes are missing, the first missing is returned.
+egCanonicalize :: Traversable f => f EClassId -> State (EGraph d f) (Either EClassId (f EClassId))
+egCanonicalize fc = gets (efCanonicalize fc . egEquivFind)
+
+-- | Find the canonical form of a node.
+-- If any classes are missing, simply skip them.
+egCanonicalizePartial :: Traversable f => f EClassId -> State (EGraph d f) (f EClassId)
+egCanonicalizePartial fc = gets (efCanonicalizePartial fc . egEquivFind)
 
 -- private
 egCanonicalizeInternal :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => ENodeId -> State (EGraph d f) (ENodeId, Maybe (IntLikeSet ENodeId))

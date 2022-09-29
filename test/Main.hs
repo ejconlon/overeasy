@@ -585,7 +585,7 @@ assertEgInvariants eg = do
   -- Now test recanonicalization - we already know assoc fwd and bwd are 1-1
   for_ (HashMap.toList bwd) $ \(fc, _) ->
     let recanon = evalState (egCanonicalize fc) eg
-    in recanon === Just fc
+    in recanon === Right fc
 
 data EgRound = EgRound
   { egRoundTerms :: ![EGT]
