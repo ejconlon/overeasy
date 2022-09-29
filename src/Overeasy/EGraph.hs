@@ -197,7 +197,6 @@ egCanonicalizeInternal x = state $ \eg ->
   let ef = egEquivFind eg
       assoc = egNodeAssoc eg
       node = assocPartialLookupByKey x assoc
-      -- TODO analyze here
       fz = efCanonicalizePartial node ef
       ((y, res), assoc') = assocInsertInc x fz assoc
   in case res of
@@ -328,7 +327,6 @@ egBuildWorklist = go Empty where
 -- canonicalize with the returned mapping.
 -- Also note that the analysis of a given class is going to be an UNDER-APPROXIMATION
 -- of the true analysis value, because per-node analyses are not recomputed.
--- TODO reanalyze during recanonicalization and get rid of this caveat
 egMergeMany :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId))
   => WorkList -> State (EGraph d f) (MergeResult ClassReplacements)
 egMergeMany wl0 = do
@@ -391,7 +389,6 @@ egRebuildAssoc origHc classRemap touchedClasses = do
     -- Emit observing parents if:
     --   1. class has changed
     --   2. any nodes have changed during canonicalization
-    --   3. TODO class analysis has changed
     -- Note that we look up parents in the ORIGINAL hashcons because those are the ones that have the nodes pointing to this
     let emitParents = finalChanged || ILM.member c classRemap
         addlParents = ILS.map (`ILM.partialLookup` origHc) (eciParents eci)
@@ -411,10 +408,10 @@ egRebuildNodeRound origHc wl parents = do
   -- Traverse all touched classes and canonicalize their nodes,
   -- recording the mapping from old -> new
   -- Also track parents that can observe changes to this class
-  -- (This may include things classes already touched, which is correct -
-  -- we may have to reanalyze to reach a fixpoint)
-  (nextParents, parentWl) <- egRebuildAssoc origHc classRemap touchedClasses
-  pure (touchedClasses, parentWl, nextParents)
+  (candParents, parentWl) <- egRebuildAssoc origHc classRemap touchedClasses
+  -- (We ignore parents that we have just now rebuilt)
+  let finalParents = ILS.difference candParents touchedClasses
+  pure (touchedClasses, parentWl, finalParents)
 
 -- private
 -- Rebuild just the class info corresponding to 'newClass'
@@ -442,7 +439,7 @@ egRebuildClassMap touchedClasses = state $ \eg ->
       roots = ILS.map (`efLookupRoot` ef) touchedClasses
       -- Prepare a replacement map for external consumers that just contains changed classes
       classReplacements = efSubset (ILS.toList roots) ef
-      -- Rebuild the class map (TODO is the difference necessary?)
+      -- Rebuild the class map
       cm' = foldl' (\cm (r, vs) -> egRebuildClassSingle r vs cm) (egClassMap eg) (ILM.toList (efFwd classReplacements))
   in (classReplacements, eg { egClassMap = cm' })
 
