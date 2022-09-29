@@ -29,7 +29,6 @@ library
       Overeasy.EGraph
       Overeasy.EquivFind
       Overeasy.Matching
-      Overeasy.Orphans
       Overeasy.Recursion
       Overeasy.Source
       Overeasy.StateUtil

@@ -11,8 +11,8 @@ import Data.Bifunctor (bimap)
 import Data.Char (chr, ord)
 import Data.Coerce (coerce)
 import Data.Foldable (for_)
-import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
+import qualified Data.HashMap.Strict as HashMap
 import Data.List (delete)
 import Data.Maybe (fromJust, isJust)
 import Data.Semigroup (Max (..))
@@ -31,14 +31,14 @@ import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocBwd, assocCanCompact, as
                        assocRoots, assocSize)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
-                        ENodeId (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm, egMerge,
-                        egMergeMany, egNeedsRebuild, egNew, egNodeSize, egRebuild, egWorkList)
+                        ENodeId (..), MergeResult (..), egAddTerm, egCanonicalize, egClassSize, egCompact, egFindTerm,
+                        egMerge, egMergeMany, egNew, egNodeSize)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge,
                            efMergeSets, efNew, efRoots, efRootsSize, efTotalSize)
 import PropUnit (DependencyType (..), Gen, MonadTest, Range, TestLimit, TestTree, after, assert, forAll, testGroup,
                  testMain, testProp, testUnit, (/==), (===))
 import Test.Overeasy.Arith (Arith (..), ArithF)
-import Test.Overeasy.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
+import Test.Overeasy.BinTree (BinTree, pattern BinTreeBranch, BinTreeF (..), pattern BinTreeLeaf)
 
 fullyEvaluate :: (MonadIO m, NFData a) => a -> m a
 fullyEvaluate = liftIO . evaluate . force
@@ -457,6 +457,8 @@ type EGA = EGraph () ArithF
 testEgUnit :: TestTree
 testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ do
   -- We're going to have our egraph track the equality `2 + 2 = 4`.
+  -- We disable analysis
+  let ana = EAnalysisOff
   -- Some simple terms:
   let termFour = ArithConst 4
       termTwo = ArithConst 2
@@ -465,65 +467,50 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
   testS $ \eg -> do
     egClassSize eg === 0
     egNodeSize eg === 0
-    egNeedsRebuild eg === False
   -- Add the term `4`
-  cidFour <- applyTestS (egAddTerm EAnalysisOff termFour) $ \(c, x) eg -> do
+  cidFour <- applyTestS (egAddTerm ana termFour) $ \(c, x) eg -> do
     c === ChangedYes
     egFindTerm termFour eg === Just x
     egClassSize eg === 1
     egNodeSize eg === 1
-    egNeedsRebuild eg === False
     pure x
   -- Add the term `2`
-  cidTwo <- applyTestS (egAddTerm EAnalysisOff termTwo) $ \(c, x) eg -> do
+  cidTwo <- applyTestS (egAddTerm ana termTwo) $ \(c, x) eg -> do
     c === ChangedYes
     x /== cidFour
     egFindTerm termTwo eg === Just x
     egClassSize eg === 2
     egNodeSize eg === 2
-    egNeedsRebuild eg === False
     pure x
   -- Add the term `4` again and assert things haven't changed
-  applyTestS (egAddTerm EAnalysisOff termFour) $ \(c, x) eg -> do
+  applyTestS (egAddTerm ana termFour) $ \(c, x) eg -> do
     c === ChangedNo
     x === cidFour
     egFindTerm termFour eg === Just x
     egClassSize eg === 2
     egNodeSize eg === 2
-    egNeedsRebuild eg === False
   -- Add the term `2 + 2`
-  cidPlus <- applyTestS (egAddTerm EAnalysisOff termPlus) $ \(c, x) eg -> do
+  cidPlus <- applyTestS (egAddTerm ana termPlus) $ \(c, x) eg -> do
     c === ChangedYes
     x /== cidFour
     x /== cidTwo
     egFindTerm termPlus eg === Just x
     egClassSize eg === 3
     egNodeSize eg === 3
-    egNeedsRebuild eg === False
     pure x
   -- Merge `4` and `4` and assert things haven't changed
-  applyTestS (egMerge cidFour cidFour) $ \m eg -> do
-    egNeedsRebuild eg === False
+  applyTestS (egMerge ana cidFour cidFour) $ \m _ -> do
     case m of
-      Nothing -> fail "Could not resolve cidFour"
-      Just c -> c === ChangedNo
+      MergeResultUnchanged -> pure ()
+      _ -> fail "expected unchanged merge"
   -- Merge `2 + 2` and `4`
-  applyTestS (egMerge cidPlus cidFour) $ \m eg -> do
-    egNeedsRebuild eg === True
-    egWorkList eg === Seq.singleton (ILS.fromList [cidPlus, cidFour])
+  applyTestS (egMerge ana cidPlus cidFour) $ \m eg -> do
     case m of
-      Nothing -> fail "Could not resolve one of cidFour or cidPlus"
-      Just c -> c === ChangedYes
-  -- Now rebuild
-  applyTestS (egRebuild EAnalysisOff) $ \newRoots eg -> do
-    cidMerged <-
-      case ILM.keys newRoots of
-        [x] -> pure x
-        _ -> fail "Expected singleton root list"
-    egFindTerm termFour eg === Just cidMerged
-    egFindTerm termPlus eg === Just cidMerged
+      MergeResultChanged _ -> pure ()
+      _ -> fail "expected changed merge"
+    egFindTerm termFour eg === Just cidFour
+    egFindTerm termPlus eg === Just cidFour
     egFindTerm termTwo eg === Just cidTwo
-    egNeedsRebuild eg === False
 
 type EGD = Max V
 type EGF = BinTreeF V
@@ -537,8 +524,6 @@ maxVAnalysis = EAnalysisAlgebra $ \case
 
 assertEgInvariants :: (MonadTest m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
 assertEgInvariants eg = do
-  -- Invariants require that no rebuild is needed (empty worklist)
-  assert $ not (egNeedsRebuild eg)
   let assoc = egNodeAssoc eg
       hc = egHashCons eg
       bwd = assocBwd assoc
@@ -798,12 +783,10 @@ testEgCase compact (EgCase name rounds) = kase where
       -- merge sets of terms and rebuild
       applyS $ do
         sets <- for act findTerms
-        for_ sets egMergeMany
-      -- liftIO (putStrLn "===== before rebuild =====")
-      -- testS $ liftIO . pPrint
-      _ <- applyS (egRebuild maxVAnalysis)
-      -- liftIO (putStrLn "===== after rebuild =====")
-      -- testS $ liftIO . pPrint
+        mr <- egMergeMany maxVAnalysis (Seq.fromList sets)
+        case mr of
+          MergeResultMissing _ -> error "bad set"
+          _ -> pure ()
       -- assert invariants hold
       testS assertEgInvariants
       -- find merged terms again and assert they are in same classes
@@ -864,7 +847,7 @@ mkSimpleTreeLevels maxElems =
   let letters = take maxElems (['a'..'z'] ++ ['A'..'Z'])
       zeroLevel = fmap (BinTreeLeaf . toV) letters
       mkLevel y x = (BinTreeBranch <$> x <*> y) ++ (BinTreeBranch <$> y <*> x)
-      mkLevels y xs = foldr (\x r -> mkLevel y x ++ r) (BinTreeBranch <$> y <*> y) xs
+      mkLevels y = foldr (\x r -> mkLevel y x ++ r) (BinTreeBranch <$> y <*> y)
       oneLevel = mkLevels zeroLevel []
       twoLevel = mkLevels oneLevel [zeroLevel]
       anyLevel = zeroLevel ++ oneLevel ++ twoLevel
@@ -886,17 +869,17 @@ testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ test
         nOpsRange = Range.linear 0 (nMembers * nMembers)
     eg1 <- fullyEvaluate (execState (for_ members (egAddTerm maxVAnalysis)) eg0)
     assertEgInvariants eg1
-    execState (egRebuild maxVAnalysis) eg1 === eg1
     pairs <- forAll (genNodePairs nOpsRange eg1)
-    let merge = for_ pairs (uncurry egMerge)
+    let merge = do
+          mr <- egMergeMany maxVAnalysis (Seq.fromList (fmap (\(a, b) -> ILS.fromList [a, b]) pairs))
+          case mr of
+            MergeResultMissing _ -> error "bad set"
+            _ -> pure ()
     eg2 <- fullyEvaluate (execState merge eg1)
     -- liftIO (putStrLn "===== eg2 =====")
     -- liftIO (pPrint eg2)
     egNodeSize eg2 === egNodeSize eg1
-    eg3 <- fullyEvaluate (execState (egRebuild maxVAnalysis) eg2)
-    -- liftIO (putStrLn "===== eg3 =====")
-    -- liftIO (pPrint eg3)
-    egNodeSize eg3 === egNodeSize eg2
+    let eg3 = eg2
     assertEgInvariants eg3
     compact <- forAll Gen.bool
     eg4 <- if compact

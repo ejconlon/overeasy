@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 
 -- | Assorted abstract nonsense
+-- Mostly unused... for now
 module Overeasy.Classes
   ( Changed (..)
   , PartialOrd (..)

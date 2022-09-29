@@ -6,7 +6,7 @@ module Overeasy.StateUtil
   , stateFold
   ) where
 
-import Control.Monad (foldM)
+import Control.Monad (foldM, forM_)
 import Control.Monad.State.Strict (State, get, put)
 import Overeasy.Classes (Changed (..))
 
@@ -23,9 +23,7 @@ stateOption :: (s -> (b, Maybe s)) -> State s b
 stateOption f = do
   s <- get
   let (b, ms) = f s
-  case ms of
-    Nothing -> pure ()
-    Just s' -> put s'
+  forM_ ms put
   pure b
 
 -- | Embeds a function that may fail in a stateful context with change tracking

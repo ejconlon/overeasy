@@ -10,25 +10,25 @@ packages:
     git: git@github.com:ejconlon/int-like.git
     pantry-tree:
       size: 1134
-      sha256: 505e65f19ced2a1aff66bc880fa3f194f8d44305fae730ca08a19ddb64776328
-    commit: e814624a26d71f02582e5cb9ea0955aa721d509e
+      sha256: eb8c6164e68d71ca83757cf63b79015847341c2165c34ba412eccffabd973d7f
+    commit: c277da03d6e0b61280f67169c4dc6219a2578faa
   original:
     git: git@github.com:ejconlon/int-like.git
-    commit: e814624a26d71f02582e5cb9ea0955aa721d509e
+    commit: c277da03d6e0b61280f67169c4dc6219a2578faa
 - completed:
     name: prop-unit
     version: 0.1.0
     git: git@github.com:ejconlon/prop-unit.git
     pantry-tree:
       size: 840
-      sha256: 099ec2bde5af2374b4c1a9a57800031c3168cf51262330327897f9d21f9b1340
-    commit: 167f919ee66dc2f6f17b9ad952be3921779789ea
+      sha256: 1194fa87c2c23896080a54018f682b6e4a6094fc2156822179380a3e51fc9c92
+    commit: d562ed5c39b4b87b4c226126f249f0e97d89c2dd
   original:
     git: git@github.com:ejconlon/prop-unit.git
-    commit: 167f919ee66dc2f6f17b9ad952be3921779789ea
+    commit: d562ed5c39b4b87b4c226126f249f0e97d89c2dd
 snapshots:
 - completed:
-    size: 586110
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/21.yaml
-    sha256: ce4fb8d44f3c6c6032060a02e0ebb1bd29937c9a70101c1517b92a87d9515160
-  original: lts-18.21
+    size: 619403
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/19/25.yaml
+    sha256: 1ecad1f0bd2c27de88dbff6572446cfdf647c615d58a7e2e2085c6b7dfc04176
+  original: lts-19.25
