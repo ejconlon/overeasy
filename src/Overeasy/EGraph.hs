@@ -43,6 +43,7 @@ import Data.Hashable (Hashable)
 import qualified Data.IntMap.Strict as IntMap
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Maybe (maybeToList)
 import Data.Semigroup (sconcat)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
@@ -283,7 +284,7 @@ egMerge :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId))
 egMerge i j = do
   mr <- egMergeMany (Seq.singleton (ILS.fromList [i, j]))
   -- We're guaranteed to have one and only one root in the map, so this won't fail
-  pure (fmap (fst . head . ILM.toList . efFwd) mr)
+  pure (fmap (fst . head . ILM.toList . efFwd . fst) mr)
 
 -- private
 data BuildWorkResult a =
@@ -328,7 +329,7 @@ egBuildWorklist = go Empty where
 -- Also note that the analysis of a given class is going to be an UNDER-APPROXIMATION
 -- of the true analysis value, because per-node analyses are not recomputed.
 egMergeMany :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId))
-  => WorkList -> State (EGraph d f) (MergeResult ClassReplacements)
+  => WorkList -> State (EGraph d f) (MergeResult (ClassReplacements, IntLikeSet EClassId))
 egMergeMany wl0 = do
   br <- egBuildWorklist wl0
   case br of
@@ -444,9 +445,12 @@ egRebuildClassMap touchedClasses = state $ \eg ->
   in (classReplacements, eg { egClassMap = cm' })
 
 -- private
--- Rebuilds the 'EGraph' - merges classes as requested in the worklist, recanonicalizes, and reanalyzes.
+-- Rebuilds the 'EGraph' - merges classes as requested in the worklist and recanonicalizes.
 -- This may take several rounds as changes propagate "upward" to parents.
-egRebuild :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => WorkList -> State (EGraph d f) ClassReplacements
+-- Returns
+-- 1. class remapping (roots -> removed classes)
+-- 2. touched root classes
+egRebuild :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => WorkList -> State (EGraph d f) (ClassReplacements, IntLikeSet EClassId)
 egRebuild wl0 = goRec where
   goRec = do
     -- Note the existing hashcons
@@ -454,12 +458,15 @@ egRebuild wl0 = goRec where
     -- Merge and induce equivalences
     -- We track "touched classes" to know which to later rebuild in the classmap
     tc <- goNodeRounds origHc ILS.empty wl0 ILS.empty
+    -- Compute final "touched roots"
+    ef <- gets egEquivFind
+    let tr = ILS.fromList [y | x <- ILS.toList tc, y <- maybeToList (efFindRoot x ef)]
     -- Now everything is merged, so rewrite the changed parts of the classmap
     rm <- egRebuildClassMap tc
     -- Finally, cleanup all "dead" classes and nodes
     egCompact rm
-    -- And return the final class remapping
-    pure rm
+    -- And return the final class remapping and touched roots
+    pure (rm, tr)
   goNodeRounds !origHc !tc !wl !parents =
     if null wl && ILS.null parents
       then pure tc

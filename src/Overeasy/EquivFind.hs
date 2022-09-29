@@ -1,7 +1,8 @@
 {-# LANGUAGE DeriveAnyClass #-}
 
--- | A Union-Find implementation using explicit equivalence classes.
--- We inevitably have to construct these classes so we might as well just do it as we go!
+-- | A "Union-Find" implementation using explicit equivalence classes.
+-- Sure, the asympotics aren't as good, but we eventually have to construct these
+-- classes, so we might as well just do it as we go!
 module Overeasy.EquivFind
   ( EquivFind
   , efFwd
