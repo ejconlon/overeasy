@@ -498,12 +498,12 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     egNodeSize eg === 3
     pure x
   -- Merge `4` and `4` and assert things haven't changed
-  applyTestS (egMerge ana cidFour cidFour) $ \m _ -> do
+  applyTestS (egMerge cidFour cidFour) $ \m _ -> do
     case m of
       MergeResultUnchanged -> pure ()
       _ -> fail "expected unchanged merge"
   -- Merge `2 + 2` and `4`
-  applyTestS (egMerge ana cidPlus cidFour) $ \m eg -> do
+  applyTestS (egMerge cidPlus cidFour) $ \m eg -> do
     case m of
       MergeResultChanged _ -> pure ()
       _ -> fail "expected changed merge"
@@ -728,7 +728,7 @@ testEgCase (EgCase name rounds) = kase where
       -- merge sets of terms and rebuild
       applyS $ do
         sets <- for act findTerms
-        mr <- egMergeMany maxVAnalysis (Seq.fromList sets)
+        mr <- egMergeMany (Seq.fromList sets)
         case mr of
           MergeResultMissing _ -> error "bad set"
           _ -> pure ()
@@ -805,7 +805,7 @@ testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ test
     assertEgInvariants eg1
     pairs <- forAll (genNodePairs nOpsRange eg1)
     let merge = do
-          mr <- egMergeMany maxVAnalysis (Seq.fromList (fmap (\(a, b) -> ILS.fromList [a, b]) pairs))
+          mr <- egMergeMany (Seq.fromList (fmap (\(a, b) -> ILS.fromList [a, b]) pairs))
           case mr of
             MergeResultMissing _ -> error "bad set"
             _ -> pure ()
