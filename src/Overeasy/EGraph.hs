@@ -40,7 +40,6 @@ import Control.Monad.State.Strict (State, gets, modify', state)
 import Data.Foldable (foldl', toList)
 import Data.Functor.Foldable (project)
 import Data.Hashable (Hashable)
-import qualified Data.IntMap.Strict as IntMap
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Semigroup (sconcat)
@@ -62,6 +61,7 @@ import Overeasy.EquivFind (EquivFind (..), EquivMergeSetsRes (..), efAddInc, efC
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAddInc, sourceNew)
 import Overeasy.StateUtil (stateFold)
+import qualified Data.IntMap.Strict as IntMap
 
 -- | An opaque class id
 newtype EClassId = EClassId { unEClassId :: Int }
@@ -129,9 +129,6 @@ data EGraph d f = EGraph
   , egNodeSource :: !(Source ENodeId)
   , egEquivFind :: !(EquivFind EClassId)
   , egClassMap :: !(IntLikeMap EClassId (EClassInfo d))
-  -- TODO remove this - maintain dead class list inside rebuild
-  -- and compact as you go (no separate compaction)
-  , egDeadClasses :: !(IntLikeSet EClassId)
   , egNodeAssoc :: !(Assoc ENodeId (f EClassId))
   , egHashCons :: !(IntLikeMap ENodeId EClassId)
   } deriving stock (Generic)
@@ -165,7 +162,7 @@ egFindTerm t eg = foldWholeM (`egFindNode` eg) t
 
 -- | Creates a new 'EGraph'
 egNew :: EGraph d f
-egNew = EGraph (sourceNew (EClassId 0)) (sourceNew (ENodeId 0)) efNew ILM.empty ILS.empty assocNew ILM.empty
+egNew = EGraph (sourceNew (EClassId 0)) (sourceNew (ENodeId 0)) efNew ILM.empty assocNew ILM.empty
 
 -- | Yields all root classes
 egClasses :: State (EGraph d f) [EClassId]
@@ -334,11 +331,10 @@ egRebuildMerge :: WorkList -> State (EGraph d f) (IntLikeMap EClassId EClassId, 
 egRebuildMerge wl = finalRes where
   finalRes = state $ \eg ->
     let ef = egEquivFind eg
-        dc = egDeadClasses eg
     in case efMergeSetsInc (toList wl) ef of
       EquivMergeSetsResChanged roots classRemapSet ef' ->
         let classRemap = ILM.fromList (fmap (\c -> (c, efLookupRoot c ef')) (ILS.toList classRemapSet))
-            closure = ILS.difference (efClosure (ILS.toList roots) ef') dc
+            closure = efClosure (ILS.toList roots) ef'
         in ((classRemap, closure), eg { egEquivFind = ef' })
       _ -> ((ILM.empty, ILS.empty), eg)
 
@@ -444,14 +440,11 @@ egRebuildClassMap touchedClasses = state $ \eg ->
   let ef = egEquivFind eg
       -- Find roots corresponding to all touched classes
       roots = ILS.map (`efLookupRoot` ef) touchedClasses
-      dc = egDeadClasses eg
       -- Prepare a replacement map for external consumers that just contains changed classes
       classReplacements = efSubset (ILS.toList roots) ef
       -- Rebuild the class map (TODO is the difference necessary?)
-      cm' = foldl' (\cm (r, vs) -> egRebuildClassSingle r (ILS.difference vs dc) cm) (egClassMap eg) (ILM.toList (efFwd classReplacements))
-      newDead = IntLikeSet (IntMap.keysSet (unIntLikeMap (efBwd classReplacements)))
-      dc' = dc <> newDead
-  in (classReplacements, eg { egClassMap = cm', egDeadClasses = dc' })
+      cm' = foldl' (\cm (r, vs) -> egRebuildClassSingle r vs cm) (egClassMap eg) (ILM.toList (efFwd classReplacements))
+  in (classReplacements, eg { egClassMap = cm' })
 
 -- private
 -- Rebuilds the 'EGraph' - merges classes as requested in the worklist, recanonicalizes, and reanalyzes.
@@ -467,7 +460,7 @@ egRebuild wl0 = goRec where
     -- Now everything is merged, so rewrite the changed parts of the classmap
     rm <- egRebuildClassMap tc
     -- Finally, cleanup all "dead" classes and nodes
-    egCompact
+    egCompact rm
     -- And return the final class remapping
     pure rm
   goNodeRounds !origHc !tc !wl !parents =
@@ -498,13 +491,13 @@ findDeadNodeParentClasses assoc = foldl' go ILS.empty where
 
 -- private
 -- Remove all dead nodes and classes from the graph
-egCompactInc :: Foldable f => EGraph d f -> EGraph d f
-egCompactInc eg =
+egCompactInc :: Foldable f => ClassReplacements -> EGraph d f -> EGraph d f
+egCompactInc rm eg =
   let ef = egEquivFind eg
       assoc = egNodeAssoc eg
       hc = egHashCons eg
       cm = egClassMap eg
-      deadClasses = egDeadClasses eg
+      deadClasses = IntLikeSet (IntMap.keysSet (unIntLikeMap (efBwd rm)))
       -- remove dead nodes from assoc
       (nodeReplacements, assoc') = assocCompactInc assoc
       -- select all live classes that are parents of dead nodes
@@ -521,7 +514,7 @@ egCompactInc eg =
       cm'' = foldl' (flip (ILM.adjust (egCompactParentClass nodeReplacements))) cm' (ILS.toList deadNodeParentClasses)
       -- rewrite dead self nodes in classmap
       cm''' = foldl' (flip (ILM.adjust (egCompactSelfClass nodeReplacements))) cm'' (ILS.toList deadNodeSelfClasses)
-  in eg { egEquivFind = ef', egNodeAssoc = assoc', egClassMap = cm''', egHashCons = hc', egDeadClasses = ILS.empty }
+  in eg { egEquivFind = ef', egNodeAssoc = assoc', egClassMap = cm''', egHashCons = hc' }
 
-egCompact :: Foldable f => State (EGraph d f) ()
-egCompact = modify' egCompactInc
+egCompact :: Foldable f => ClassReplacements -> State (EGraph d f) ()
+egCompact = modify' . egCompactInc
