@@ -8,11 +8,13 @@ module Overeasy.Assoc
   , assocEquiv
   , assocSize
   , assocNew
+  , assocSingleton
   , AssocInsertRes (..)
   , assocInsertInc
   , assocInsert
   , assocFromList
   , assocToList
+  , assocMember
   , assocLookupByKey
   , assocPartialLookupByKey
   , assocLookupByValue
@@ -20,13 +22,17 @@ module Overeasy.Assoc
   , assocLookupRoot
   , assocRoots
   , assocLeaves
+  , assocMembers
   , assocCanCompact
   , assocCompactInc
   , assocCompact
+  , assocRemoveAllInc
+  , assocRemoveAll
+  , assocUnion
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (MonadState (..), State)
+import Control.Monad.State.Strict (MonadState (..), State, modify')
 import Data.Coerce (Coercible)
 import Data.Foldable (foldl')
 import Data.Hashable (Hashable)
@@ -38,7 +44,8 @@ import IntLike.Map (IntLikeMap)
 import qualified IntLike.Map as ILM
 import IntLike.Set (IntLikeSet)
 import Overeasy.EquivFind (EquivAddRes (..), EquivFind, efAddInc, efBwd, efCanCompact, efCompactInc, efLeaves,
-                           efLookupRoot, efNew, efRoots, efUnsafeMerge)
+                           efLookupRoot, efMember, efMembers, efNew, efRemoveAllInc, efRoots, efSingleton,
+                           efUnsafeAddLeafInc, efUnsafeMerge)
 
 -- private ctor
 data Assoc x a = Assoc
@@ -52,9 +59,13 @@ data Assoc x a = Assoc
 assocSize :: Assoc x a -> Int
 assocSize = ILM.size . assocFwd
 
--- | Creates a new 'Assoc'
+-- | Creates an empty 'Assoc'
 assocNew :: Assoc x a
 assocNew = Assoc ILM.empty HashMap.empty efNew
+
+-- | Creates a singleton 'Assoc'
+assocSingleton :: (Coercible x Int, Hashable a) => x -> a -> Assoc x a
+assocSingleton x a = Assoc (ILM.singleton x a) (HashMap.singleton a x) (efSingleton x)
 
 data AssocInsertRes x =
     AssocInsertResUnchanged
@@ -131,6 +142,9 @@ assocFromList = foldl' (\assoc (x, a) -> snd (assocInsertInc x a assoc)) assocNe
 assocToList :: Coercible x Int => Assoc x a -> [(x, a)]
 assocToList = ILM.toList . assocFwd
 
+assocMember :: Coercible x Int => x -> Assoc x a -> Bool
+assocMember x (Assoc _ _ equiv) = efMember x equiv
+
 -- | Forward lookup
 assocLookupByKey :: Coercible x Int => x -> Assoc x a -> Maybe a
 assocLookupByKey x (Assoc fwd _ equiv) = ILM.lookup (efLookupRoot x equiv) fwd
@@ -159,6 +173,9 @@ assocRoots = efRoots . assocEquiv
 assocLeaves :: Coercible x Int => Assoc x a -> [x]
 assocLeaves = efLeaves . assocEquiv
 
+assocMembers :: Coercible x Int => Assoc x a -> [x]
+assocMembers = efMembers . assocEquiv
+
 -- | Are there dead keys in the equiv from 'assocInsert'?
 assocCanCompact :: Assoc x a -> Bool
 assocCanCompact = efCanCompact . assocEquiv
@@ -176,3 +193,39 @@ assocCompactInc assoc@(Assoc fwd bwd equiv) =
 -- Returns map of dead leaf node -> live root node
 assocCompact :: Coercible x Int => State (Assoc x a) (IntLikeMap x x)
 assocCompact = state assocCompactInc
+
+assocRemoveAllInc :: (Coercible x Int, Eq a, Hashable a) => [x] -> Assoc x a -> Assoc x a
+assocRemoveAllInc xs (Assoc fwd0 bwd0 equiv0) = Assoc fwdFinal bwdFinal equivFinal where
+  (remap, equivFinal) = efRemoveAllInc xs equiv0
+  (fwdFinal, bwdFinal) = foldl' go (fwd0, bwd0) xs
+  go tup@(fwd, bwd) x =
+    case ILM.lookup x fwd of
+      -- Leaf, ignore
+      Nothing -> tup
+      -- Root
+      Just a ->
+        case ILM.lookup x remap of
+          -- Singleton root, delete
+          Nothing ->
+            let fwd' = ILM.delete x fwd
+                bwd' = HashMap.delete a bwd
+            in (fwd', bwd')
+          -- Remapped root, rotate
+          Just y ->
+            let fwd' = ILM.delete x (ILM.insert y a fwd)
+                bwd' = HashMap.insert a y bwd
+            in (fwd', bwd')
+
+-- | Removes the given keys from the assoc.
+-- Values will only be removed from the assoc if the key is a singleton root.
+-- If a key is not found, it is simply ignored.
+assocRemoveAll :: (Coercible x Int, Eq a, Hashable a) => [x] -> State (Assoc x a) ()
+assocRemoveAll = modify' . assocRemoveAllInc
+
+-- | Join two assocs (uses the first as the base)
+assocUnion :: (Coercible x Int, Ord x, Eq a, Hashable a) => Assoc x a -> Assoc x a -> Assoc x a
+assocUnion base (Assoc fwd _ equiv) = Assoc fwdFinal bwdFinal equivFinal where
+  goRoots assocGo (x, a) = snd (assocInsertInc x a assocGo)
+  goLeaves equivGo (leaf, oldRoot) = efUnsafeAddLeafInc oldRoot leaf equivGo
+  Assoc fwdFinal bwdFinal equivMid = foldl' goRoots base (ILM.toList fwd)
+  equivFinal = foldl' goLeaves equivMid (ILM.toList (efBwd equiv))

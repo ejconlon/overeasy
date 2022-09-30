@@ -6,7 +6,7 @@ import Control.Monad (foldM, unless, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT, gets,
                                    runState)
-import Control.Monad.Trans (MonadTrans (lift))
+import Control.Monad.Trans (MonadTrans (..))
 import Data.Bifunctor (bimap)
 import Data.Char (chr, ord)
 import Data.Coerce (coerce)
@@ -27,15 +27,16 @@ import qualified IntLike.Map as ILM
 import IntLike.Set (IntLikeSet)
 import qualified IntLike.Set as ILS
 import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocBwd, assocCanCompact, assocCompact, assocEquiv, assocFromList,
-                       assocFwd, assocInsert, assocLeaves, assocNew, assocPartialLookupByKey, assocRoots, assocSize)
+                       assocFwd, assocInsert, assocLeaves, assocMember, assocMembers, assocNew, assocPartialLookupByKey,
+                       assocRoots, assocSize)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysis, EClassId (..), EClassInfo (..), EGraph (..), ENodeId (..), MergeResult (..),
                         egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egMergeMany, egNew, egNodeSize,
                         noAnalysis)
-import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge,
-                           efMergeSets, efNew, efRoots, efRootsSize, efTotalSize)
-import PropUnit (DependencyType (..), Gen, MonadTest, Range, TestLimit, TestTree, after, assert, forAll, testGroup,
-                 testMain, testProp, testUnit, (/==), (===))
+import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMember,
+                           efMembers, efMerge, efMergeSets, efNew, efRemoveAll, efRoots, efRootsSize, efTotalSize)
+import PropUnit (DependencyType (..), Gen, MonadTest, PropertyT, Range, TestLimit, TestTree, after, assert, forAll,
+                 testGroup, testMain, testProp, testUnit, (/==), (===))
 import Test.Overeasy.Arith (Arith (..), ArithF)
 import Test.Overeasy.BinTree (BinTree, pattern BinTreeBranch, BinTreeF (..), pattern BinTreeLeaf)
 
@@ -84,16 +85,19 @@ mapV = ILM.fromList . fmap (bimap toV toV)
 multiMapV :: [(Char, String)] -> IntLikeMap V (IntLikeSet V)
 multiMapV = ILM.fromList . fmap (bimap toV setV)
 
-type UF = EquivFind V
+type EF = EquivFind V
 
-testUfSimple :: TestTree
-testUfSimple = testUnit "UF simple" $ runS efNew $ do
+testEfSimple :: TestTree
+testEfSimple = testUnit "EF simple" $ runS efNew $ do
   testS $ \ef -> do
     efRootsSize ef === 0
     efLeavesSize ef === 0
     efTotalSize ef === 0
     efRoots ef === []
     efLeaves ef === []
+    efMembers ef === []
+    efMember (toV 'a') ef === False
+    efMember (toV 'c') ef === False
     efFwd ef === ILM.empty
     efBwd ef === ILM.empty
   _ <- applyS (efAdd (toV 'a'))
@@ -124,11 +128,87 @@ testUfSimple = testUnit "UF simple" $ runS efNew $ do
     ILS.fromList (efLeaves ef) === setV "c"
     efFwd ef === multiMapV [('a', "c"), ('b', "")]
     efBwd ef === mapV [('c', 'a')]
+    efMembers ef === fmap toV ['a', 'b', 'c']
+    efMember (toV 'a') ef === True
+    efMember (toV 'c') ef === True
   applyTestS (efMerge (toV 'c') (toV 'a')) $ \res _ -> res === Nothing
   applyTestS (efMerge (toV 'b') (toV 'z')) $ \res _ -> res === Nothing
 
-testUfRec :: TestTree
-testUfRec = testUnit "UF rec" $ runS efNew $ do
+resetEf :: StateT EF (PropertyT IO) ()
+resetEf = do
+  put efNew
+  _ <- applyS (efAdd (toV 'a'))
+  _ <- applyS (efAdd (toV 'b'))
+  _ <- applyS (efAdd (toV 'c'))
+  _ <- applyS (efMerge (toV 'a') (toV 'c'))
+  ef <- get
+  efFwd ef === multiMapV [('a', "c"), ('b', "")]
+  efBwd ef === mapV [('c', 'a')]
+
+addExtraEf :: StateT EF (PropertyT IO) ()
+addExtraEf = do
+  _ <- applyS (efAdd (toV 'd'))
+  _ <- applyS (efMerge (toV 'a') (toV 'd'))
+  ef <- get
+  efFwd ef === multiMapV [('a', "cd"), ('b', "")]
+  efBwd ef === mapV [('c', 'a'), ('d', 'a')]
+
+testEfRemove :: TestTree
+testEfRemove = testUnit "EF remove" $ runS efNew $ do
+  -- remove leav
+  resetEf
+  applyTestS (efRemoveAll [toV 'c']) $ \res ef -> do
+    res === ILM.empty
+    efFwd ef === multiMapV [('a', ""), ('b', "")]
+    efBwd ef === mapV []
+  -- remove singleton root
+  resetEf
+  applyTestS (efRemoveAll [toV 'b']) $ \res ef -> do
+    res === ILM.empty
+    efFwd ef === multiMapV [('a', "c")]
+    efBwd ef === mapV [('c', 'a')]
+  -- remove non-singleton root
+  resetEf
+  applyTestS (efRemoveAll [toV 'a']) $ \res ef -> do
+    res === mapV [('a', 'c')]
+    efFwd ef === multiMapV [('b', ""), ('c', "")]
+    efBwd ef === mapV []
+  -- remove all in class (root -> leaf order)
+  resetEf
+  applyTestS (efRemoveAll [toV 'a', toV 'c']) $ \res ef -> do
+    res === ILM.empty
+    efFwd ef === multiMapV [('b', "")]
+    efBwd ef === mapV []
+  -- remove all in class (leaf -> root order)
+  resetEf
+  applyTestS (efRemoveAll [toV 'c', toV 'a']) $ \res ef -> do
+    res === ILM.empty
+    efFwd ef === multiMapV [('b', "")]
+    efBwd ef === mapV []
+  -- remove with rotation and leaf
+  resetEf
+  addExtraEf
+  applyTestS (efRemoveAll [toV 'a']) $ \res ef -> do
+    res === mapV [('a', 'c')]
+    efFwd ef === multiMapV [('c', "d"), ('b', "")]
+    efBwd ef === mapV [('d', 'c')]
+  -- remove with two rotations
+  resetEf
+  addExtraEf
+  applyTestS (efRemoveAll [toV 'a', toV 'c']) $ \res ef -> do
+    res === mapV [('a', 'd')]
+    efFwd ef === multiMapV [('d', ""), ('b', "")]
+    efBwd ef === mapV []
+  -- remove with (leaf, rotation)
+  resetEf
+  addExtraEf
+  applyTestS (efRemoveAll [toV 'c', toV 'a']) $ \res ef -> do
+    res === mapV [('a', 'd')]
+    efFwd ef === multiMapV [('d', ""), ('b', "")]
+    efBwd ef === mapV []
+
+testEfRec :: TestTree
+testEfRec = testUnit "EF rec" $ runS efNew $ do
   _ <- applyS (efAdd (toV 'a'))
   _ <- applyS (efAdd (toV 'b'))
   _ <- applyS (efAdd (toV 'c'))
@@ -151,8 +231,8 @@ testUfRec = testUnit "UF rec" $ runS efNew $ do
     efFwd ef === multiMapV [('a', "bc")]
     efBwd ef === mapV [('b', 'a'), ('c', 'a')]
 
-testUfMany :: TestTree
-testUfMany = testUnit "UF many" $ runS efNew $ do
+testEfMany :: TestTree
+testEfMany = testUnit "EF many" $ runS efNew $ do
   _ <- applyS (efAdd (toV 'a'))
   _ <- applyS (efAdd (toV 'b'))
   _ <- applyS (efAdd (toV 'c'))
@@ -177,8 +257,8 @@ testUfMany = testUnit "UF many" $ runS efNew $ do
     efFwd ef === multiMapV [('a', "bcde")]
     efBwd ef === mapV [('b', 'a'), ('c', 'a'), ('d', 'a'), ('e', 'a')]
 
-testUfSets :: TestTree
-testUfSets = testUnit "UF sets" $ runS efNew $ do
+testEfSets :: TestTree
+testEfSets = testUnit "EF sets" $ runS efNew $ do
   _ <- applyS (efAdd (toV 'a'))
   _ <- applyS (efAdd (toV 'b'))
   _ <- applyS (efAdd (toV 'c'))
@@ -192,8 +272,8 @@ testUfSets = testUnit "UF sets" $ runS efNew $ do
     ILS.fromList (efRoots ef) === setV "a"
     efFwd ef === multiMapV [('a', "bcde")]
 
-testUfCompact :: TestTree
-testUfCompact = testUnit "UF compact" $ runS efNew $ do
+testEfCompact :: TestTree
+testEfCompact = testUnit "EF compact" $ runS efNew $ do
   _ <- applyS (efAdd (toV 'a'))
   _ <- applyS (efAdd (toV 'b'))
   _ <- applyS (efAdd (toV 'c'))
@@ -211,8 +291,8 @@ testUfCompact = testUnit "UF compact" $ runS efNew $ do
     res === multiMapV [('c', "de")]
     assert (not (efCanCompact ef))
 
-testUfUnit :: TestTree
-testUfUnit = testGroup "UF unit" [testUfSimple, testUfRec, testUfMany, testUfSets, testUfCompact]
+testEfUnit :: TestTree
+testEfUnit = testGroup "EF unit" [testEfSimple, testEfRec, testEfMany, testEfSets, testEfCompact, testEfRemove]
 
 genDistinctPairFromList :: Eq a => [a] -> Gen (a, a)
 genDistinctPairFromList = \case
@@ -241,17 +321,17 @@ genMembers maxElems = do
   n <- Gen.int nElemsRange
   pure (fmap (\i -> V (minVal + i)) [0..n-1])
 
-mkInitUf :: [V] -> UF
-mkInitUf vs = execState (for_ vs efAdd) efNew
+mkInitEf :: [V] -> EF
+mkInitEf vs = execState (for_ vs efAdd) efNew
 
-mkPairsMergedUf :: [(V, V)] -> UF -> UF
-mkPairsMergedUf vvs = execState (for_ vvs (uncurry efMerge))
+mkPairsMergedEf :: [(V, V)] -> EF -> EF
+mkPairsMergedEf vvs = execState (for_ vvs (uncurry efMerge))
 
-mkSetsMergedUf :: [(V, V)] -> UF -> UF
-mkSetsMergedUf vvs = execState (for_ (fmap (\(x, y) -> [ILS.fromList [x, y]]) vvs) efMergeSets)
+mkSetsMergedEf :: [(V, V)] -> EF -> EF
+mkSetsMergedEf vvs = execState (for_ (fmap (\(x, y) -> [ILS.fromList [x, y]]) vvs) efMergeSets)
 
-mkSingleMergedUf :: [(V, V)] -> UF -> UF
-mkSingleMergedUf vvs = execState (efMergeSets (fmap (\(x, y) -> ILS.fromList [x, y]) vvs))
+mkSingleMergedEf :: [(V, V)] -> EF -> EF
+mkSingleMergedEf vvs = execState (efMergeSets (fmap (\(x, y) -> ILS.fromList [x, y]) vvs))
 
 data MergeStrat = MergeStratPairs | MergeStratSets | MergeStratSingle
   deriving stock (Eq, Show, Enum, Bounded)
@@ -259,8 +339,8 @@ data MergeStrat = MergeStratPairs | MergeStratSets | MergeStratSingle
 genMergeStrat :: Gen MergeStrat
 genMergeStrat = Gen.enumBounded
 
-testUfProp :: TestLimit -> TestTree
-testUfProp lim = after AllSucceed "UF unit" $ testProp "UF prop" lim $ do
+testEfProp :: TestLimit -> TestTree
+testEfProp lim = after AllSucceed "EF unit" $ testProp "EF prop" lim $ do
   let maxElems = 50
   -- generate elements
   memberList <- forAll (genMembers maxElems)
@@ -268,13 +348,13 @@ testUfProp lim = after AllSucceed "UF unit" $ testProp "UF prop" lim $ do
       nMembers = ILS.size memberSet
       allPairs = ILS.unorderedPairs memberSet
       nOpsRange = Range.linear 0 (nMembers * nMembers)
-  let initUf = mkInitUf memberList
+  let initEf = mkInitEf memberList
   -- assert that sizes indicate nothing is merged
-  efRootsSize initUf === nMembers
-  efLeavesSize initUf === 0
-  efTotalSize initUf === nMembers
+  efRootsSize initEf === nMembers
+  efLeavesSize initEf === 0
+  efTotalSize initEf === nMembers
   -- assert that find indicates nothing is merged
-  for_ allPairs $ \(a, b) -> flip evalStateT initUf $ do
+  for_ allPairs $ \(a, b) -> flip evalStateT initEf $ do
     x <- applyS (gets (efFindRoot a))
     y <- applyS (gets (efFindRoot b))
     assert (isJust x)
@@ -285,9 +365,9 @@ testUfProp lim = after AllSucceed "UF unit" $ testProp "UF prop" lim $ do
   mergeStrat <- forAll genMergeStrat
   let mergedUf =
         case mergeStrat of
-          MergeStratPairs -> mkPairsMergedUf mergePairs initUf
-          MergeStratSets -> mkSetsMergedUf mergePairs initUf
-          MergeStratSingle -> mkSingleMergedUf mergePairs initUf
+          MergeStratPairs -> mkPairsMergedEf mergePairs initEf
+          MergeStratSets -> mkSetsMergedEf mergePairs initEf
+          MergeStratSingle -> mkSingleMergedEf mergePairs initEf
   -- assert that total size is unchanged
   efTotalSize mergedUf === nMembers
   -- calculate components by graph reachability
@@ -550,7 +630,7 @@ assertEgInvariants eg = do
   -- For every node, assert in the nodes of some class
   for_ (ILM.toList hc) $ \(n, c) -> do
     let nodes = eciNodes (ILM.partialLookup c cm)
-    assert (ILS.member n nodes)
+    assert (assocMember n nodes)
   -- For every root, assert is in all parent classes
   for_ (ILM.toList hc) $ \(n, c) ->
     when (ILS.member n rootNodes) $ do
@@ -563,22 +643,23 @@ assertEgInvariants eg = do
         -- traceM (unwords ["->", show y, show parents])
         assert (ILS.member n parents)
   -- For every class
-  cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodes (c, eci) -> do
+  cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodesSet (c, eci) -> do
     let nodes = eciNodes eci
+        nodesSet = ILS.fromList (assocMembers nodes)
         parents = eciParents eci
     -- Assert that classmap node values are non-empty
-    nodes /== ILS.empty
+    nodesSet /== ILS.empty
     -- Assert that classmap class has node values that are hashconsed to class
-    for_ (ILS.toList nodes) $ \n -> do
+    for_ (ILS.toList nodesSet) $ \n -> do
       ILM.lookup n hc === Just c
     -- Assert that classmap class has NO parents that are hashconsed to class
     for_ (ILS.toList parents) $ \p ->
       ILM.lookup p hc /== Just c
     -- Assert we haven't seen these nodes before
-    assert $ ILS.disjoint nodes accNodes
+    assert $ ILS.disjoint nodesSet accNodesSet
     -- Assert that the nodes and parents are disjoint
-    assert $ ILS.disjoint nodes parents
-    pure (ILS.union accNodes nodes)
+    assert $ ILS.disjoint nodesSet parents
+    pure (ILS.union accNodesSet nodesSet)
   let hcNodes = ILS.fromList (ILM.keys hc)
   -- Assert hc keys are exactly the class nodes
   cmNodes === hcNodes
@@ -824,12 +905,12 @@ testILM = testUnit "ILM unit" $ do
 main :: IO ()
 main = testMain $ \lim -> testGroup "Overeasy"
     [ testILM
-    , testUfUnit
+    , testEfUnit
     , testAssocUnit
     , testAssocCases
     , testEgUnit
     , testEgNew
     , testEgCases
-    , testUfProp lim
+    , testEfProp lim
     , testEgProp lim
     ]

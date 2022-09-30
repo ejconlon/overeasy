@@ -6,17 +6,62 @@ module Overeasy.Matching
   -- , EApplier (..)
   ) where
 
-import Unfree (Free)
--- import Data.HashSet (HashSet)
--- import Data.HashMap.Strict (HashMap)
--- import Overeasy.EGraph (EClassId, EGraph, egClasses)
--- import Control.Monad.State.Strict (evalState)
--- import Data.Sequence (Seq)
+import Control.DeepSeq (NFData)
+import Control.Monad.State.Strict (MonadState (..), State, gets)
+import Data.Functor.Foldable (cata)
+import Data.Hashable (Hashable)
+import IntLike.MultiMap (IntLikeMultiMap)
+import qualified IntLike.MultiMap as ILMM
+import Overeasy.Assoc (Assoc, assocInsertInc, assocLookupByValue, assocNew)
+import Overeasy.EGraph (EClassId)
+import Overeasy.Source (Source, sourceAddInc, sourceNew)
+import Unfree (Free, FreeF (..))
 
 -- | A pattern is exactly the free monad over the expression functor
 -- It has spots for var names ('FreePure') and spots for structural
 -- pieces ('FreeEmbed')
 type Pat f v = Free f v
+
+-- | An opaque var id
+-- Constructor exported for coercibility
+newtype VarId = VarId { unVarId :: Int }
+  deriving stock (Show)
+  deriving newtype (Eq, Ord, Enum, Hashable, NFData)
+
+type PatPart f v = FreeF f v VarId
+
+data MatchState f v = MatchState
+  { msSrc :: !(Source VarId)
+  , msAssoc :: !(Assoc VarId (PatPart f v))
+  , msSol :: !(IntLikeMultiMap VarId EClassId)
+  }
+
+deriving stock instance (Eq v, Eq (f VarId)) => Eq (MatchState f v)
+deriving stock instance (Show v, Show (f VarId)) => Show (MatchState f v)
+
+matchStateNew :: MatchState f v
+matchStateNew = MatchState (sourceNew (VarId 0)) assocNew ILMM.empty
+
+type MatchM f v = State (MatchState f v)
+type MatchC f v = (Traversable f, Eq v, Eq (f VarId), Hashable v, Hashable (f VarId))
+
+matchEnsurePart :: MatchC f v => PatPart f v -> MatchM f v VarId
+matchEnsurePart part = do
+  mi <- gets (assocLookupByValue part . msAssoc)
+  case mi of
+    Just i -> pure i
+    Nothing -> state $ \st ->
+      let (i, src') = sourceAddInc (msSrc st)
+          (_, assoc') = assocInsertInc i part (msAssoc st)
+      in (i, st { msSrc = src', msAssoc = assoc' })
+
+matchEnsurePat :: MatchC f v => Pat f v -> MatchM f v VarId
+matchEnsurePat = cata go where
+  go = \case
+    FreePureF v -> matchEnsurePart (FreePureF v)
+    FreeEmbedF fp -> do
+      fi <- sequenceA fp
+      matchEnsurePart (FreeEmbedF fi)
 
 -- patVars :: Foldable f => Pat f v -> HashSet v
 -- patVars = error "TODO"

@@ -13,9 +13,11 @@ module Overeasy.EquivFind
   , efCanonicalize
   , efCanonicalizePartial
   , efNew
+  , efSingleton
   , efMember
   , efRoots
   , efLeaves
+  , efMembers
   , EquivAddRes (..)
   , efAddInc
   , efAdd
@@ -37,6 +39,9 @@ module Overeasy.EquivFind
   , efCanCompact
   , efCompactInc
   , efCompact
+  , efRemoveAllInc
+  , efRemoveAll
+  , efUnsafeAddLeafInc
   ) where
 
 import Control.Applicative ((<|>))
@@ -54,7 +59,12 @@ import qualified IntLike.Set as ILS
 -- private ctor
 data EquivFind x = EquivFind
   { efFwd :: !(IntLikeMap x (IntLikeSet x))
+  -- Map of root to equivalent leaves
+  -- Invariant: Map keys are only roots
+  -- Invariant: Sets only contain leaf keys (and not the root itself)
   , efBwd :: !(IntLikeMap x x)
+  -- Map of leaf to root
+  -- Invariant: Map keys are only leaves, values are only roots
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
@@ -77,9 +87,13 @@ efCanonicalize fx ef = traverse (\x -> maybe (Left x) pure (efFindRoot x ef)) fx
 efCanonicalizePartial :: (Functor f, Coercible x Int) => f x -> EquivFind x -> f x
 efCanonicalizePartial fx ef = fmap (`efLookupRoot` ef) fx
 
--- | Creates a new UF
+-- | Creates an empty equiv
 efNew :: EquivFind x
 efNew = EquivFind ILM.empty ILM.empty
+
+-- | Creates a singleton equiv
+efSingleton :: Coercible x Int => x -> EquivFind x
+efSingleton x = EquivFind (ILM.singleton x ILS.empty) ILM.empty
 
 -- private
 allocMM :: Coercible x Int => x -> IntLikeMap x (IntLikeSet x) -> IntLikeMap x (IntLikeSet x)
@@ -146,13 +160,16 @@ efFindAll xs ef = go ILS.empty xs where
         Just z -> go (ILS.insert z acc) ys
 
 efMember :: Coercible x Int => x -> EquivFind x -> Bool
-efMember x  = ILM.member x . efBwd
+efMember x (EquivFind fwd bwd) = ILM.member x fwd || ILM.member x bwd
 
 efRoots :: Coercible x Int => EquivFind x -> [x]
 efRoots = ILM.keys . efFwd
 
 efLeaves :: Coercible x Int => EquivFind x -> [x]
 efLeaves = ILM.keys . efBwd
+
+efMembers :: Coercible x Int => EquivFind x -> [x]
+efMembers ef = efRoots ef ++ efLeaves ef
 
 -- | The result of trying to merge two elements of the 'EquivFind'
 data EquivMergeRes x =
@@ -258,3 +275,50 @@ efCompactInc (EquivFind origFwd origBwd) = finalRes where
 -- | Removes leaves and returns map of root -> deleted leaf
 efCompact :: Coercible x Int => State (EquivFind x) (IntLikeMap x (IntLikeSet x))
 efCompact = state efCompactInc
+
+efRemoveAllInc :: Coercible x Int => [x] -> EquivFind x -> (IntLikeMap x x, EquivFind x)
+efRemoveAllInc xs (EquivFind fwd0 bwd0) = (remapFinal, EquivFind fwdFinal bwdFinal) where
+  (fwdFinal, bwdFinal, remapFinal) = foldl' go (fwd0, bwd0, ILM.empty) xs
+  go tup@(fwd, bwd, remap) x =
+    case ILM.lookup x fwd of
+      -- Key is not root
+      Nothing -> case ILM.lookup x bwd of
+        -- Key is missing, skip it
+        Nothing -> tup
+        -- Key is leaf, remove from both containers
+        Just r ->
+          let bwd' = ILM.delete x bwd
+              fwd' = ILM.adjust (ILS.delete x) r fwd
+          in (fwd', bwd', remap)
+      -- Key is root
+      Just leaves ->
+        -- ensure the remapping is from ORIGINAL roots to new roots
+        let origRoot = fromMaybe x (ILM.lookup x bwd0)
+        in case ILS.minView leaves of
+          -- Singleton root, remove from fwd and remap
+          Nothing ->
+            let fwd' = ILM.delete x fwd
+                remap' = ILM.delete origRoot remap
+            in (fwd', bwd, remap')
+          -- Non-singleton root, rotate
+          Just (y, rest) ->
+            let fwd' = ILM.delete x (ILM.insert y rest fwd)
+                bwd' = ILM.delete y (foldl' (\m l -> ILM.insert l y m) bwd (ILS.toList rest))
+                remap' = ILM.insert origRoot y remap
+            in (fwd', bwd', remap')
+
+-- | Removes the given keys from the equiv map.
+-- If a key is a leaf or singleton root, simply remove it.
+-- If it is a root of a larger class, select the min leaf and make it root.
+-- Returns a map of old roots to new roots (only those changed in the process -
+-- possibly empty). If a key is not found, it is simply ignored.
+efRemoveAll :: Coercible x Int => [x] -> State (EquivFind x) (IntLikeMap x x)
+efRemoveAll = state . efRemoveAllInc
+
+-- | Given root, add leaf. Requires that root be present in the map
+-- and that leaf would be picked as a leaf. (Therefore, unsafe.)
+-- Exposed for efficient merging.
+efUnsafeAddLeafInc :: Coercible x Int => x -> x -> EquivFind x -> EquivFind x
+efUnsafeAddLeafInc root leaf ef@(EquivFind fwd bwd) =
+  let trueRoot = efLookupRoot root ef
+  in EquivFind (ILM.alter (fmap (ILS.insert leaf)) trueRoot fwd) (ILM.insert leaf trueRoot bwd)
