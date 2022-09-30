@@ -32,6 +32,8 @@ module Overeasy.EGraph
   , egAddTerm
   , egMerge
   , egMergeMany
+  , egReanalyzeSubset
+  , egReanalyze
   ) where
 
 import Control.DeepSeq (NFData)
@@ -40,10 +42,9 @@ import Control.Monad.State.Strict (State, gets, modify', state)
 import Data.Foldable (foldl', toList)
 import Data.Functor.Foldable (project)
 import Data.Hashable (Hashable)
-import qualified Data.IntMap.Strict as IntMap
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Maybe (maybeToList)
+import Data.Maybe (fromMaybe, maybeToList)
 import Data.Semigroup (sconcat)
 import Data.Sequence (Seq (..))
 import qualified Data.Sequence as Seq
@@ -52,12 +53,12 @@ import IntLike.Map (IntLikeMap (..))
 import qualified IntLike.Map as ILM
 import IntLike.Set (IntLikeSet (..))
 import qualified IntLike.Set as ILS
-import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocCompactInc, assocInsertInc, assocLookupByValue, assocNew,
-                       assocPartialLookupByKey)
+import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocCompactInc, assocFwd, assocInsertInc, assocLookupByValue,
+                       assocNew, assocPartialLookupByKey)
 import Overeasy.Classes (Changed (..))
 import Overeasy.EquivFind (EquivFind (..), EquivMergeSetsRes (..), efAddInc, efCanonicalize, efCanonicalizePartial,
-                           efClosure, efCompactInc, efFindRoot, efLookupRoot, efMergeSetsInc, efNew, efRoots,
-                           efRootsSize, efSubset)
+                           efClosure, efCompactInc, efFindRoot, efLookupRoot, efMergeSetsInc, efNew, efRootsSize,
+                           efSubset)
 import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAddInc, sourceNew)
 import Overeasy.StateUtil (stateFold)
@@ -176,8 +177,8 @@ egNew :: EGraph d f
 egNew = EGraph (sourceNew (EClassId 0)) (sourceNew (ENodeId 0)) efNew ILM.empty assocNew ILM.empty
 
 -- | Yields all root classes
-egClasses :: State (EGraph d f) [EClassId]
-egClasses = gets (efRoots . egEquivFind)
+egClasses :: State (EGraph d f) (IntLikeSet EClassId)
+egClasses = gets (ILM.keysSet . egClassMap)
 
 -- | Find the canonical form of a node.
 -- If any classes are missing, the first missing is returned.
@@ -501,7 +502,7 @@ egCompactInc rm eg =
       assoc = egNodeAssoc eg
       hc = egHashCons eg
       cm = egClassMap eg
-      deadClasses = IntLikeSet (IntMap.keysSet (unIntLikeMap (efBwd rm)))
+      deadClasses = ILM.keysSet (efBwd rm)
       -- remove dead nodes from assoc
       (nodeReplacements, assoc') = assocCompactInc assoc
       -- select all live classes that are parents of dead nodes
@@ -520,5 +521,47 @@ egCompactInc rm eg =
       cm''' = foldl' (flip (ILM.adjust (egCompactSelfClass nodeReplacements))) cm'' (ILS.toList deadNodeSelfClasses)
   in eg { egEquivFind = ef', egNodeAssoc = assoc', egClassMap = cm''', egHashCons = hc' }
 
+-- private
 egCompact :: Foldable f => ClassReplacements -> State (EGraph d f) ()
 egCompact = modify' . egCompactInc
+
+-- | Reanalyze a subset of classes - touched roots from merging is sufficient to ensure
+-- complete reanalysis. (Note this is implemented in a simplistic way, just taking the
+-- fixed point of rounds of analysis. The number of rounds can be no more than the size
+-- of the given set.)
+-- It may be necessary to call this because merging may leave class analyses in an
+-- under-approximating state. This method gives you the true analysis by fixed point.
+egReanalyzeSubset :: (EAnalysis d f q, Functor f) => q -> IntLikeSet EClassId -> State (EGraph d f) ()
+egReanalyzeSubset q tr = goStart where
+  goStart = do
+    cm <- gets egClassMap
+    let am = ILM.map eciData cm
+    goRec am
+  goRec am0 = do
+    cm <- gets egClassMap
+    assoc <- gets egNodeAssoc
+    let fwd = assocFwd assoc
+    let onNode n =
+          let fc = ILM.partialLookup n fwd
+              fd = fmap (`ILM.partialLookup` am0) fc
+          in eaMake q fd
+    let calcClass cr =
+          let nodes = eciNodes (ILM.partialLookup cr cm)
+              (n0, ns) = fromMaybe (error "impossible") (ILS.minView nodes)
+              d0 = onNode n0
+          in foldl' (\d n -> d <> onNode n) d0 (ILS.toList ns)
+    let onClassRoot p@(_, amx) cr =
+          let d0 = ILM.partialLookup cr am0
+              d1 = calcClass cr
+          in if d0 == d1 then p else (True, ILM.insert cr d1 amx)
+    let (changed, am1) = foldl' onClassRoot (False, am0) (ILS.toList tr)
+    if changed
+      then goRec am1
+      else modify' $ \eg ->
+        let cm0 = egClassMap eg
+            cm1 = ILM.mapWithKey (\i c -> c { eciData = ILM.partialLookup i am1 } ) cm0
+        in eg { egClassMap = cm1 }
+
+-- | Reanalyze all classes in the graph.
+egReanalyze :: (EAnalysis d f q, Functor f) => q -> State (EGraph d f) ()
+egReanalyze q = egClasses >>= egReanalyzeSubset q

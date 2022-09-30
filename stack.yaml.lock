@@ -10,11 +10,11 @@ packages:
     git: git@github.com:ejconlon/int-like.git
     pantry-tree:
       size: 1134
-      sha256: eb8c6164e68d71ca83757cf63b79015847341c2165c34ba412eccffabd973d7f
-    commit: c277da03d6e0b61280f67169c4dc6219a2578faa
+      sha256: 26a891cc593707b897aef85f12b75f39e4f63babd1ca08e75edf17fd1ad693d8
+    commit: 83aa99544884d4e7d7c426279df0dcb6da9aac26
   original:
     git: git@github.com:ejconlon/int-like.git
-    commit: c277da03d6e0b61280f67169c4dc6219a2578faa
+    commit: 83aa99544884d4e7d7c426279df0dcb6da9aac26
 - completed:
     name: prop-unit
     version: 0.1.0
