@@ -6,9 +6,9 @@ module Overeasy.Classes
   ( Changed (..)
   , PartialOrd (..)
   , ordToPartialCompare
-  , BoundedJoinSemilattice (..)
+  , JoinSemilattice (..)
   , defaultJoinChanged
-  , ApplyAction (..)
+  , BoundedJoinSemilattice
   ) where
 
 import Control.DeepSeq (NFData)
@@ -42,15 +42,15 @@ instance PartialOrd () where
 ordToPartialCompare :: Ord d => d -> d -> Maybe Ordering
 ordToPartialCompare d1 d2 = Just (compare d1 d2)
 
--- A "bounded join semilattice":
--- mempty is bottom element of lattice, and mappend/<> is lattice join \/
--- Should obey:
---   forall d. partialCompare mempty d = Just LT
+-- A join semilattice:
+-- Must obey:
 --   forall d1, d2. partialCompare d1 (d1 \/ d2) = Just LT /\ partialCompare d2 (d1 \/ d2) = Just LT
 --   joinChanged = defaultJoinChanged
 --   join is idempotent, associative, commutative, has mempty as unit,
 --     and returns least upper bound
-class (PartialOrd d, Monoid d) => BoundedJoinSemilattice d where
+-- If it is a monoid, must obey:
+--   forall d. partialCompare mempty d = Just LT
+class (PartialOrd d, Semigroup d) => JoinSemilattice d where
   -- | Change-aware join (default is fine)
   joinChanged :: d -> d -> (Changed, d)
   joinChanged = defaultJoinChanged
@@ -62,16 +62,9 @@ defaultJoinChanged x y =
   in (c, z)
 
 -- The trivial lattice
-instance BoundedJoinSemilattice () where
+instance JoinSemilattice () where
   joinChanged _ _ = (ChangedNo, ())
 
--- A monoidal action to update state
--- Should obey:
---   applyAction mempty = id
---   applyAction (p1 <> p2) = applyAction p2 . applyAction p1
-class Monoid p => ApplyAction p s where
-  applyAction :: p -> s -> s
+class (JoinSemilattice d, Monoid d) => BoundedJoinSemilattice d
 
--- The trivial action
-instance ApplyAction () s where
-  applyAction = const id
+instance BoundedJoinSemilattice ()

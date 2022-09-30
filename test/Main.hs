@@ -29,9 +29,9 @@ import qualified IntLike.Set as ILS
 import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocBwd, assocCanCompact, assocCompact, assocEquiv, assocFromList,
                        assocFwd, assocInsert, assocLeaves, assocNew, assocPartialLookupByKey, assocRoots, assocSize)
 import Overeasy.Classes (Changed (..))
-import Overeasy.EGraph (EAnalysisAlgebra (..), EAnalysisOff (..), EClassId (..), EClassInfo (..), EGraph (..),
-                        ENodeId (..), MergeResult (..), egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge,
-                        egMergeMany, egNew, egNodeSize)
+import Overeasy.EGraph (EAnalysis, EClassId (..), EClassInfo (..), EGraph (..), ENodeId (..), MergeResult (..),
+                        egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egMergeMany, egNew, egNodeSize,
+                        noAnalysis)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMerge,
                            efMergeSets, efNew, efRoots, efRootsSize, efTotalSize)
 import PropUnit (DependencyType (..), Gen, MonadTest, Range, TestLimit, TestTree, after, assert, forAll, testGroup,
@@ -457,7 +457,7 @@ testEgUnit :: TestTree
 testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ do
   -- We're going to have our egraph track the equality `2 + 2 = 4`.
   -- We disable analysis
-  let ana = EAnalysisOff
+  let ana = noAnalysis
   -- Some simple terms:
   let termFour = ArithConst 4
       termTwo = ArithConst 2
@@ -516,8 +516,8 @@ type EGF = BinTreeF V
 type EGT = BinTree V
 type EGV = EGraph EGD EGF
 
-maxVAnalysis :: EAnalysisAlgebra EGD EGF
-maxVAnalysis = EAnalysisAlgebra $ \case
+maxVAnalysis :: EAnalysis EGD EGF
+maxVAnalysis = \case
   BinTreeLeafF v -> Max v
   BinTreeBranchF d1 d2 -> d1 <> d2
 
@@ -748,9 +748,8 @@ testEgCase (EgCase name rounds) = kase where
         i /== j
 
 testEgCases :: TestTree
-testEgCases = testGroup "Eg case" $ do
-  kase <- allEgCases
-  pure (testEgCase kase)
+testEgCases = testGroup "Eg case" $
+  testEgCase <$> allEgCases
 
 testEgNew :: TestTree
 testEgNew = testUnit "EG new" $ do
