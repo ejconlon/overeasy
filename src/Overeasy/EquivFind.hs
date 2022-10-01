@@ -321,4 +321,4 @@ efRemoveAll = state . efRemoveAllInc
 efUnsafeAddLeafInc :: Coercible x Int => x -> x -> EquivFind x -> EquivFind x
 efUnsafeAddLeafInc root leaf ef@(EquivFind fwd bwd) =
   let trueRoot = efLookupRoot root ef
-  in EquivFind (ILM.alter (fmap (ILS.insert leaf)) trueRoot fwd) (ILM.insert leaf trueRoot bwd)
+  in EquivFind (ILM.adjust (ILS.insert leaf) trueRoot fwd) (ILM.insert leaf trueRoot bwd)

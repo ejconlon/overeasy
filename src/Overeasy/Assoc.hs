@@ -29,6 +29,7 @@ module Overeasy.Assoc
   , assocRemoveAllInc
   , assocRemoveAll
   , assocUnion
+  , assocFootprint
   ) where
 
 import Control.DeepSeq (NFData)
@@ -43,7 +44,8 @@ import GHC.Generics (Generic)
 import IntLike.Map (IntLikeMap)
 import qualified IntLike.Map as ILM
 import IntLike.Set (IntLikeSet)
-import Overeasy.EquivFind (EquivAddRes (..), EquivFind, efAddInc, efBwd, efCanCompact, efCompactInc, efLeaves,
+import qualified IntLike.Set as ILS
+import Overeasy.EquivFind (EquivAddRes (..), EquivFind, efAddInc, efBwd, efCanCompact, efCompactInc, efEquivs, efLeaves,
                            efLookupRoot, efMember, efMembers, efNew, efRemoveAllInc, efRoots, efSingleton,
                            efUnsafeAddLeafInc, efUnsafeMerge)
 
@@ -229,3 +231,9 @@ assocUnion base (Assoc fwd _ equiv) = Assoc fwdFinal bwdFinal equivFinal where
   goLeaves equivGo (leaf, oldRoot) = efUnsafeAddLeafInc oldRoot leaf equivGo
   Assoc fwdFinal bwdFinal equivMid = foldl' goRoots base (ILM.toList fwd)
   equivFinal = foldl' goLeaves equivMid (ILM.toList (efBwd equiv))
+
+assocFootprint :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> IntLikeSet x
+assocFootprint a (Assoc _ bwd equiv) =
+  case HashMap.lookup a bwd of
+    Nothing -> ILS.empty
+    Just r -> efEquivs r equiv

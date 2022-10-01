@@ -1,26 +1,127 @@
--- | Methods to match patterns in 'EGraph's
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE UndecidableInstances #-}
+
+-- | Methods to match patterns in 'EGraph's (aka e-matching)
 module Overeasy.Matching
   ( Pat
-  -- , Subst
-  -- , ESearcher (..)
-  -- , EApplier (..)
+  , patVars
+  , Subst
+  , substVars
+  , VarId (..)
+  , MatchC
+  , PatGraph (..)
+  , patGraph
+  , Match (..)
+  , MatchPat (..)
+  , MatchF (..)
+  , MatchPatF (..)
+  , matchVars
+  , matchClasses
+  , MatchSubst (..)
+  , SolGraph (..)
+  , solGraph
+  , SolStream
+  , nextSol
+  , allSols
+  , solve
+  , match
   ) where
 
 import Control.DeepSeq (NFData)
-import Control.Monad.State.Strict (MonadState (..), State, gets)
-import Data.Functor.Foldable (cata)
+import Control.Monad (void)
+import Control.Monad.Identity (Identity (..))
+import Control.Monad.State.Strict (MonadState (..), State, gets, runState)
+import Data.Coerce (Coercible)
+import Data.Foldable (fold, foldMap', foldl')
+import Data.Functor.Foldable (Base, Corecursive (..), Recursive (..), cata)
 import Data.Hashable (Hashable)
-import IntLike.MultiMap (IntLikeMultiMap)
-import qualified IntLike.MultiMap as ILMM
-import Overeasy.Assoc (Assoc, assocInsertInc, assocLookupByValue, assocNew)
-import Overeasy.EGraph (EClassId)
+import Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as HashMap
+import Data.HashSet (HashSet)
+import qualified Data.HashSet as HashSet
+import IntLike.Map (IntLikeMap)
+import qualified IntLike.Map as ILM
+import IntLike.Set (IntLikeSet)
+import qualified IntLike.Set as ILS
+import Overeasy.Assoc (Assoc, assocEquiv, assocFootprint, assocFwd, assocInsertInc, assocLookupByValue, assocNew)
+import Overeasy.EGraph (EClassId (..), EGraph, ENodeId (..), eciNodes, egClassMap, egNodeAssoc)
+import Overeasy.EquivFind (efLookupRoot)
 import Overeasy.Source (Source, sourceAddInc, sourceNew)
+import Streaming.Prelude (Of, Stream)
+import qualified Streaming.Prelude as S
 import Unfree (Free, FreeF (..))
 
 -- | A pattern is exactly the free monad over the expression functor
 -- It has spots for var names ('FreePure') and spots for structural
 -- pieces ('FreeEmbed')
-type Pat f v = Free f v
+type Pat = Free
+
+type PatF = FreeF
+
+patVars :: (Foldable f, Eq v, Hashable v) => Pat f v -> HashSet v
+patVars = foldMap' HashSet.singleton
+
+type Subst a v = HashMap v a
+
+substVars :: Subst a v -> HashSet v
+substVars = HashMap.keysSet
+
+-- | A match is a pattern annotated with classes
+data Match a f v = Match
+  { matchClass :: !a
+  , matchPat :: !(MatchPat a f v)
+  } deriving stock (Functor, Foldable, Traversable)
+
+deriving stock instance (Eq a, Eq v, Eq (f (Match a f v))) => Eq (Match a f v)
+deriving stock instance (Show a, Show v, Show (f (Match a f v))) => Show (Match a f v)
+
+data MatchPat a f v =
+    MatchPatPure !v
+  | MatchPatEmbed !(f (Match a f v))
+  deriving stock (Functor, Foldable, Traversable)
+
+deriving stock instance (Eq v, Eq (f (Match a f v))) => Eq (MatchPat a f v)
+deriving stock instance (Show v, Show (f (Match a f v))) => Show (MatchPat a f v)
+
+-- | The base functor of 'Match'
+data MatchF a f v r = MatchF
+  { matchClassF :: !a
+  , matchPatF :: !(MatchPatF f v r)
+  } deriving stock (Functor, Foldable, Traversable)
+
+data MatchPatF f v r =
+    MatchPatPureF !v
+  | MatchPatEmbedF !(f r)
+  deriving stock (Functor, Foldable, Traversable)
+
+type instance Base (Match a f v) = MatchF a f v
+
+instance Functor f => Recursive (Match a f v) where
+  project (Match cl mp) = MatchF cl $ case mp of
+     MatchPatPure v -> MatchPatPureF v
+     MatchPatEmbed f -> MatchPatEmbedF f
+
+instance Functor f => Corecursive (Match a f v) where
+  embed (MatchF cl mpf) = Match cl $ case mpf of
+     MatchPatPureF v -> MatchPatPure v
+     MatchPatEmbedF f -> MatchPatEmbed f
+
+matchVars :: (Foldable f, Eq v, Hashable v) => Match a f v -> HashSet v
+matchVars = foldMap' HashSet.singleton
+
+matchClasses :: (Coercible a Int, Functor f, Foldable f) => Match a f v -> IntLikeSet a
+matchClasses = cata go where
+  go (MatchF cl mpf) = ILS.insert cl $ case mpf of
+    MatchPatPureF _ -> ILS.empty
+    MatchPatEmbedF fc -> fold fc
+
+data MatchSubst a f v = MatchSubst
+  { msMatch :: !(Match a f v)
+  , msSubst :: !(Subst a v)
+  }
+
+deriving stock instance (Eq a, Eq v, Eq (f (Match a f v))) => Eq (MatchSubst a f v)
+deriving stock instance (Show a, Show v, Show (f (Match a f v))) => Show (MatchSubst a f v)
 
 -- | An opaque var id
 -- Constructor exported for coercibility
@@ -28,73 +129,101 @@ newtype VarId = VarId { unVarId :: Int }
   deriving stock (Show)
   deriving newtype (Eq, Ord, Enum, Hashable, NFData)
 
-type PatPart f v = FreeF f v VarId
-
-data MatchState f v = MatchState
-  { msSrc :: !(Source VarId)
-  , msAssoc :: !(Assoc VarId (PatPart f v))
-  , msSol :: !(IntLikeMultiMap VarId EClassId)
+data PatGraph f v = PatGraph
+  { pgRoot :: !VarId
+  , pgNodes :: !(IntLikeMap VarId (PatF f v VarId))
+  , pgVars :: !(HashMap v VarId)
   }
 
-deriving stock instance (Eq v, Eq (f VarId)) => Eq (MatchState f v)
-deriving stock instance (Show v, Show (f VarId)) => Show (MatchState f v)
+deriving stock instance (Eq v, Eq (f VarId)) => Eq (PatGraph f v)
+deriving stock instance (Show v, Show (f VarId)) => Show (PatGraph f v)
 
-matchStateNew :: MatchState f v
-matchStateNew = MatchState (sourceNew (VarId 0)) assocNew ILMM.empty
-
-type MatchM f v = State (MatchState f v)
 type MatchC f v = (Traversable f, Eq v, Eq (f VarId), Hashable v, Hashable (f VarId))
 
-matchEnsurePart :: MatchC f v => PatPart f v -> MatchM f v VarId
-matchEnsurePart part = do
-  mi <- gets (assocLookupByValue part . msAssoc)
+data GraphState f v = GraphState
+  { gsSrc :: !(Source VarId)
+  , gsAssoc :: !(Assoc VarId (PatF f v VarId))
+  }
+
+emptyGraphState :: GraphState f v
+emptyGraphState = GraphState (sourceNew (VarId 0)) assocNew
+
+graphEnsurePart :: MatchC f v => PatF f v VarId -> State (GraphState f v) VarId
+graphEnsurePart part = do
+  mi <- gets (assocLookupByValue part . gsAssoc)
   case mi of
     Just i -> pure i
     Nothing -> state $ \st ->
-      let (i, src') = sourceAddInc (msSrc st)
-          (_, assoc') = assocInsertInc i part (msAssoc st)
-      in (i, st { msSrc = src', msAssoc = assoc' })
+      let (i, src') = sourceAddInc (gsSrc st)
+          (_, assoc') = assocInsertInc i part (gsAssoc st)
+      in (i, st { gsSrc = src', gsAssoc = assoc' })
 
-matchEnsurePat :: MatchC f v => Pat f v -> MatchM f v VarId
-matchEnsurePat = cata go where
+graphEnsurePat :: MatchC f v => Pat f v -> State (GraphState f v) VarId
+graphEnsurePat = cata go where
   go = \case
-    FreePureF v -> matchEnsurePart (FreePureF v)
+    FreePureF v -> graphEnsurePart (FreePureF v)
     FreeEmbedF fp -> do
       fi <- sequenceA fp
-      matchEnsurePart (FreeEmbedF fi)
+      graphEnsurePart (FreeEmbedF fi)
 
--- patVars :: Foldable f => Pat f v -> HashSet v
--- patVars = error "TODO"
+graphCanonicalize :: MatchC f v => GraphState f v -> IntLikeMap VarId (PatF f v VarId)
+graphCanonicalize (GraphState _ assoc) =
+  let fwd = assocFwd assoc
+      equiv = assocEquiv assoc
+  in fmap (fmap (`efLookupRoot` equiv)) fwd
 
--- What ACTUALLY TO DO
--- given a Source of PatId, insert all the layers of the pattern into an assoc
--- let g be f with some spots fixed with v
--- This way you have a mapping PatId -> g PatId
--- for each class, for each of these partitions match against nodes, yielding a
--- sequence of (f (Either id v, EClassId)) for all that class
--- Now you have
---   Map EClassId (Seq (f (Either PatId v, EClassId)))
---   Map PatId (Set EClassId)
--- DFS this graph to produce Subst v (aka Map v EClassId) or just
--- data Anno = Anno !EClassId !(Pat f Anno)
+patGraph :: MatchC f v => Pat f v -> PatGraph f v
+patGraph p =
+  let (i, st) = runState (graphEnsurePat p) emptyGraphState
+      m = graphCanonicalize st
+      n = HashMap.fromList (ILM.toList m >>= \(j, x) -> case x of { FreePureF v -> [(v, j)]; _ -> [] })
+  in PatGraph i m n
 
--- -- | A substitution is a map of var names to class ids
--- type Subst v = HashMap v EClassId
+data SolGraph a b f = SolGraph
+  { sgByVar :: !(IntLikeMap VarId (IntLikeMap a (IntLikeSet b)))
+  , sgByClass :: !(IntLikeMap a (IntLikeMap VarId (IntLikeSet b)))
+  , sgNodes :: !(IntLikeMap b (f a))
+  }
 
--- applySubst :: Traversable f => Pat f v -> Either v (Free f EClassId)
--- applySubst = error "TODO"
+deriving stock instance (Eq a, Eq b, Eq (f a)) => Eq (SolGraph a b f)
+deriving stock instance (Show a, Show b, Show (f a)) => Show (SolGraph a b f)
 
--- class Monoid s => EMatcher d f v s where
---   matchOne :: Pat f v -> EGraph d f -> EClassId -> s
---   matchAll :: Pat f v -> EGraph d f -> s
---   matchAll pat eg = foldMap (matchOne pat eg) (evalState egClasses eg)
+invertMM :: (Coercible x Int, Coercible y Int, Semigroup z) => IntLikeMap x (IntLikeMap y z) -> IntLikeMap y (IntLikeMap x z)
+invertMM = foldl' goOuter ILM.empty . ILM.toList where
+  goOuter m (x, myz) = foldl' (goInner x) m (ILM.toList myz)
+  goInner x m (y, z) = ILM.alter (Just . maybe (ILM.singleton x z) (goMerge x z)) y m
+  goMerge x z = ILM.alter (Just . maybe z (<> z)) x
 
--- data SubstMatch d v = SubstMatch !EClassId !d !(Subst v)
---   deriving stock (Eq, Ord, Show)
+solGraph :: (Functor f, Eq (f ()), Hashable (f ())) =>
+  PatGraph f v -> EGraph d f -> SolGraph EClassId ENodeId f
+solGraph pg eg =
+  -- For each class, use footprint of reverse node assoc to find set of node ids
+  let byVar = ILM.fromList $ ILM.toList (pgNodes pg) >>= \(i, pf) ->
+        case pf of
+          FreePureF _ -> []
+          FreeEmbedF fi ->
+            let fu = void fi
+                cs = ILM.fromList $ ILM.toList (egClassMap eg) >>= \(c, inf) ->
+                  let ns = eciNodes inf
+                      fp = assocFootprint fu ns
+                  in [(c, fp) | not (ILS.null fp)]
+            in [(i, cs)]
+      byClass = invertMM byVar
+      nodes = assocFwd (egNodeAssoc eg)
+  in SolGraph byVar byClass nodes
 
--- newtype SubstMatches d v = SubstMatches { unSubstMatches :: Seq (SubstMatch d v) }
---   deriving stock (Show)
---   deriving newtype (Eq, Ord, Semigroup, Monoid)
+type SolStream a f v = Stream (Of (MatchSubst a f v)) Identity ()
 
--- instance EMatcher d f v (SubstMatches d v) where
---   matchOne pat eg cid = error "TODO"
+nextSol :: SolStream a f v -> Maybe (MatchSubst a f v, SolStream a f v)
+nextSol = runIdentity . S.uncons
+
+allSols :: SolStream a f v -> [MatchSubst a f v]
+allSols = runIdentity . S.toList_
+
+solve :: PatGraph f v -> SolGraph a b f -> SolStream a f v
+solve = error "TODO"
+
+match :: (MatchC f v, Eq (f ()), Hashable (f ())) => Pat f v -> EGraph d f -> [MatchSubst EClassId f v]
+match p eg =
+  let pg = patGraph p
+  in allSols (solve pg (solGraph pg eg))
