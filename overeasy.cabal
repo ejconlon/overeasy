@@ -32,6 +32,7 @@ library
       Overeasy.Recursion
       Overeasy.Source
       Overeasy.StateUtil
+      Overeasy.Streams
   other-modules:
       Paths_overeasy
   hs-source-dirs:
@@ -70,9 +71,9 @@ library
     , deepseq ==1.4.*
     , hashable >=1.3 && <1.5
     , int-like ==0.1.*
+    , logict >=0.7 && <0.9
     , mtl ==2.2.*
     , recursion-schemes ==5.2.*
-    , streaming ==0.2.*
     , text >=1.2 && <2.1
     , transformers >=0.5 && <0.7
     , unfree ==0.1.*
@@ -123,11 +124,11 @@ test-suite overeasy-test
     , hashable >=1.3 && <1.5
     , hedgehog ==1.0.*
     , int-like ==0.1.*
+    , logict >=0.7 && <0.9
     , mtl ==2.2.*
     , overeasy
     , prop-unit ==0.1.*
     , recursion-schemes ==5.2.*
-    , streaming ==0.2.*
     , text >=1.2 && <2.1
     , transformers >=0.5 && <0.7
     , unfree ==0.1.*
