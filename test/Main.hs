@@ -588,7 +588,7 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     egClassSize eg === 3
     egNodeSize eg === 3
     pure x
-  -- We now match 2 + 2
+  -- We now match `2 + 2`
   testS $ \eg ->
     match pat eg ===
       [ MatchSubst
@@ -615,6 +615,20 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     egFindTerm termFour eg === Just cidFour
     egFindTerm termPlus eg === Just cidFour
     egFindTerm termTwo eg === Just cidTwo
+  -- We still match `2 + 2`, but the class is different
+  testS $ \eg ->
+    match pat eg ===
+      [ MatchSubst
+          (Match cidFour
+            (MatchPatEmbed
+              (ArithPlusF
+                (Match cidTwo (MatchPatPure "x"))
+                (Match cidTwo (MatchPatPure "y"))
+              )
+            )
+          )
+          (HashMap.fromList [("x", cidTwo), ("y", cidTwo)])
+      ]
 
 type EGD = Max V
 type EGF = BinTreeF V
