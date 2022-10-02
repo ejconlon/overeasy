@@ -35,10 +35,12 @@ import Overeasy.EGraph (EAnalysis, EClassId (..), EClassInfo (..), EGraph (..), 
                         noAnalysis)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMember,
                            efMembers, efMerge, efMergeSets, efNew, efRemoveAll, efRoots, efRootsSize, efTotalSize)
+import Overeasy.Matching (Match (..), MatchPat (..), MatchSubst (..), Pat, match)
 import PropUnit (DependencyType (..), Gen, MonadTest, PropertyT, Range, TestLimit, TestTree, after, assert, forAll,
                  testGroup, testMain, testProp, testUnit, (/==), (===))
-import Test.Overeasy.Arith (Arith (..), ArithF)
+import Test.Overeasy.Arith (Arith (..), ArithF (ArithPlusF))
 import Test.Overeasy.BinTree (BinTree, pattern BinTreeBranch, BinTreeF (..), pattern BinTreeLeaf)
+import Unfree (pattern FreeEmbed, pattern FreePure)
 
 fullyEvaluate :: (MonadIO m, NFData a) => a -> m a
 fullyEvaluate = liftIO . evaluate . force
@@ -532,6 +534,7 @@ testAssocUnit = testUnit "Assoc unit" $ do
   assocLeaves a3 === []
 
 type EGA = EGraph () ArithF
+type EGP = Pat ArithF String
 
 testEgUnit :: TestTree
 testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ do
@@ -542,10 +545,15 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
   let termFour = ArithConst 4
       termTwo = ArithConst 2
       termPlus = ArithPlus termTwo termTwo
+  -- And a simple pattern:
+  let pat = FreeEmbed (ArithPlusF (FreePure "x") (FreePure "y")) :: EGP
   -- Test that the empty egraph is sane
   testS $ \eg -> do
     egClassSize eg === 0
     egNodeSize eg === 0
+  -- Nothing is matched
+  testS $ \eg ->
+    match pat eg === []
   -- Add the term `4`
   cidFour <- applyTestS (egAddTerm ana termFour) $ \(c, x) eg -> do
     c === ChangedYes
@@ -568,6 +576,9 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     egFindTerm termFour eg === Just x
     egClassSize eg === 2
     egNodeSize eg === 2
+  -- Still, nothing is matched
+  testS $ \eg ->
+    match pat eg === []
   -- Add the term `2 + 2`
   cidPlus <- applyTestS (egAddTerm ana termPlus) $ \(c, x) eg -> do
     c === ChangedYes
@@ -577,6 +588,20 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     egClassSize eg === 3
     egNodeSize eg === 3
     pure x
+  -- We now match 2 + 2
+  testS $ \eg ->
+    match pat eg ===
+      [ MatchSubst
+          (Match cidPlus
+            (MatchPatEmbed
+              (ArithPlusF
+                (Match cidTwo (MatchPatPure "x"))
+                (Match cidTwo (MatchPatPure "y"))
+              )
+            )
+          )
+          (HashMap.fromList [("x", cidTwo), ("y", cidTwo)])
+      ]
   -- Merge `4` and `4` and assert things haven't changed
   applyTestS (egMerge cidFour cidFour) $ \m _ -> do
     case m of

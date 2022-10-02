@@ -30,15 +30,19 @@ import Control.Applicative (Alternative (..))
 import Control.DeepSeq (NFData)
 import Control.Monad (void)
 import Control.Monad.Reader (asks)
-import Control.Monad.State.Strict (MonadState (..), State, evalState, gets, modify', runState)
+import Control.Monad.State.Strict (MonadState (..), State, evalState, execState, gets, modify', runState)
+import Data.Bifunctor (bimap)
 import Data.Coerce (Coercible)
-import Data.Foldable (fold, foldMap')
+import Data.Foldable (fold, foldMap', foldl', for_, toList)
 import Data.Functor.Foldable (Base, Corecursive (..), Recursive (..), cata)
 import Data.Hashable (Hashable)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
+import Data.Maybe (fromMaybe)
+import Debug.Trace (trace)
+import GHC.Stack (HasCallStack)
 import IntLike.Map (IntLikeMap)
 import qualified IntLike.Map as ILM
 import IntLike.Set (IntLikeSet)
@@ -50,6 +54,10 @@ import Overeasy.EquivFind (efLookupRoot)
 import Overeasy.Source (Source, sourceAddInc, sourceNew)
 import Overeasy.Streams (Stream, chooseWith, streamAll)
 import Unfree (Free, FreeF (..))
+
+-- TODO This is a hack to get the call stack - remove it
+partialLookup :: (HasCallStack, Coercible k Int) => k -> IntLikeMap k v -> v
+partialLookup k m = fromMaybe (error "missing key") (ILM.lookup k m)
 
 -- | A pattern is exactly the free monad over the expression functor
 -- It has spots for var names ('FreePure') and spots for structural
@@ -182,7 +190,7 @@ patGraph p =
 data SolGraph c f = SolGraph
   { sgByVar :: !(IntLikeMap VarId (IntLikeSet c)) -- (IntLikeMap a (IntLikeSet b)))
   -- Map of var -> class -> nodes
-  -- Contains all vars represented as embedded patterns.
+  -- Contains all vars.
   -- If the inner map is empty, that means the pattern was not matched.
   -- The inner set will not be empty.
   -- , sgByClass :: !(IntLikeMap a (IntLikeMap VarId (IntLikeSet b)))
@@ -202,24 +210,53 @@ deriving stock instance (Show c, Show (f c)) => Show (SolGraph c f)
 --   goInner x m (y, z) = ILM.alter (Just . maybe (ILM.singleton x z) (goMerge x z)) y m
 --   goMerge x z = ILM.alter (Just . maybe z (<> z)) x
 
-type SolGraphC f = (Functor f, Eq (f ()), Hashable (f ()))
+type SolGraphC f = (Functor f, Foldable f, Eq (f ()), Hashable (f ()))
 
 solGraph :: SolGraphC f => PatGraph f v -> EGraph d f -> SolGraph EClassId f
 solGraph pg eg =
   -- For each class, use footprint of reverse node assoc to find set of node ids
-  let byVar = ILM.fromList $ ILM.toList (pgNodes pg) >>= \(i, pf) ->
+  -- Start with just the embedded nodes
+  let byVarEmbed = ILM.fromList $ ILM.toList (pgNodes pg) >>= \(i, pf) ->
         case pf of
           FreePureF _ -> []
           FreeEmbedF fi ->
             let fu = void fi
-                cs = ILM.toList (egClassMap eg) >>= \(c, inf) ->
+                cns = ILM.toList (egClassMap eg) >>= \(c, inf) ->
                   let ns = eciNodes inf
                       fp = assocFootprint fu ns
-                  in [c | not (ILS.null fp)]
-            in [(i, ILS.fromList cs)]
+                  in [(c, fp) | not (ILS.null fp)]
+            in [(i, bimap ILS.fromList mconcat (unzip cns))]
+      byVar = genByVar byVarEmbed (pgNodes pg) (assocFwd (egNodeAssoc eg))
       hc = egHashCons eg
-      nodes = fmap (`ILM.partialLookup` hc) (assocBwd (egNodeAssoc eg))
+      nodes = fmap (`partialLookup` hc) (assocBwd (egNodeAssoc eg))
   in SolGraph byVar nodes
+
+data Record =
+    RecordPure !VarId !(IntLikeSet EClassId)
+  | RecordEmbed
+  deriving stock (Eq, Show)
+
+type Records = [Record]
+
+initRecords :: Foldable f => IntLikeMap VarId (PatF f v VarId) -> f VarId -> Records
+initRecords nodes = fmap (\i -> case partialLookup i nodes of { FreePureF _ -> RecordPure i ILS.empty; _ -> RecordEmbed }) . toList
+
+updateRecords :: Foldable f => Records -> f EClassId -> Records
+updateRecords rs = zipWith (\r c -> case r of { RecordPure v cs -> RecordPure v (ILS.insert c cs); _ -> r } ) rs . toList
+
+genByVar :: Foldable f => IntLikeMap VarId (IntLikeSet EClassId, IntLikeSet ENodeId) -> IntLikeMap VarId (PatF f v VarId) -> IntLikeMap ENodeId (f EClassId) -> IntLikeMap VarId (IntLikeSet EClassId)
+genByVar byVarEmbed nodes fwd = execState (for_ (ILM.toList nodes) go) (fmap fst byVarEmbed) where
+  go (i, pf) =
+    case pf of
+      FreePureF _ -> pure ()
+      FreeEmbedF fi -> do
+        -- We've gone through embedded patterns before so we're able
+        -- to look up nodes for each pattern
+        let (_, ns) = partialLookup i byVarEmbed
+        -- For each node, update positionally what it could be
+        let rs = foldl' (\rsx n -> let fc = partialLookup n fwd in updateRecords rsx fc) (initRecords nodes fi) (ILS.toList ns)
+        -- Finally update the map; if missing set the positions as is, otherwise take intersection
+        modify' $ \m -> foldl' (\mx r -> case r of {RecordPure j cs -> ILM.alter (Just . maybe cs (ILS.intersection cs)) j mx; _ -> mx}) m rs
 
 data SolEnv c f v = SolEnv
   { sePatGraph :: !(PatGraph f v)
@@ -241,14 +278,14 @@ constructMatch nodes classes i0 = evalState (go i0) ILM.empty where
     case ILM.lookup i cache of
       Just res -> pure res
       Nothing -> do
-        let c = ILM.partialLookup i classes
-        mp <- case ILM.partialLookup i nodes of
+        let c = partialLookup i classes
+        mp <- case partialLookup i nodes of
           FreePureF v -> pure $! MatchPatPure v
           FreeEmbedF f -> fmap MatchPatEmbed (traverse go f)
         pure $! Match c mp
 
 constructSubst :: HashMap v VarId -> IntLikeMap VarId a -> Subst a v
-constructSubst vars classes = fmap (`ILM.partialLookup` classes) vars
+constructSubst vars classes = fmap (`partialLookup` classes) vars
 
 solveYield :: Traversable f => SolStream c f v (MatchSubst c f v)
 solveYield = do
@@ -280,11 +317,11 @@ solveRec i = do
     Just s -> pure s
     -- Unseen
     Nothing -> do
-      n <- asks (ILM.partialLookup i . pgNodes . sePatGraph)
+      n <- asks (partialLookup i . pgNodes . sePatGraph)
       case n of
         -- Free var, choose a solution for each class in `sgByVar i`
         FreePureF _ -> do
-          cs <- asks (ILM.partialLookup i . sgByVar . seSolGraph)
+          cs <- asks (partialLookup i . sgByVar . seSolGraph)
           solveChoose i cs
         -- Embedded functor, traverse and emit solution if present
         FreeEmbedF fi -> do
@@ -294,11 +331,12 @@ solveRec i = do
             Nothing -> empty
             Just c -> solveSet i c
 
-match :: (PatGraphC f v, SolGraphC f, SolveC EClassId f v) => Pat f v -> EGraph d f -> [MatchSubst EClassId f v]
+match :: (PatGraphC f v, SolGraphC f, SolveC EClassId f v, Show v, Show (f VarId), Show (f EClassId)) => Pat f v -> EGraph d f -> [MatchSubst EClassId f v]
 match p eg =
   let pg = patGraph p
       sg = solGraph pg eg
-  in if any ILS.null (ILM.elems (sgByVar sg))
+  in trace ("PG " ++ show pg) $ trace ("SG "++ show sg) $
+    if any ILS.null (ILM.elems (sgByVar sg))
     -- If any var id has no patches, the pattern won't match, so don't try to solve
-    then []
-    else streamAll solve (SolEnv pg sg) (SolState ILM.empty)
+      then []
+      else streamAll solve (SolEnv pg sg) (SolState ILM.empty)
