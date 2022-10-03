@@ -40,9 +40,7 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
-import Data.Maybe (fromMaybe)
 import Debug.Trace (trace)
-import GHC.Stack (HasCallStack)
 import IntLike.Map (IntLikeMap)
 import qualified IntLike.Map as ILM
 import IntLike.Set (IntLikeSet)
@@ -54,10 +52,6 @@ import Overeasy.EquivFind (efLookupRoot)
 import Overeasy.Source (Source, sourceAddInc, sourceNew)
 import Overeasy.Streams (Stream, chooseWith, streamAll)
 import Unfree (Free, FreeF (..))
-
--- TODO This is a hack to get the call stack - remove it
-partialLookup :: (HasCallStack, Coercible k Int) => k -> IntLikeMap k v -> v
-partialLookup k m = fromMaybe (error "missing key") (ILM.lookup k m)
 
 -- | A pattern is exactly the free monad over the expression functor
 -- It has spots for var names ('FreePure') and spots for structural
@@ -228,7 +222,7 @@ solGraph pg eg =
             in [(i, bimap ILS.fromList mconcat (unzip cns))]
       byVar = genByVar byVarEmbed (pgNodes pg) (assocFwd (egNodeAssoc eg))
       hc = egHashCons eg
-      nodes = fmap (`partialLookup` hc) (assocBwd (egNodeAssoc eg))
+      nodes = fmap (`ILM.partialLookup` hc) (assocBwd (egNodeAssoc eg))
   in SolGraph byVar nodes
 
 data Record =
@@ -239,7 +233,7 @@ data Record =
 type Records = [Record]
 
 initRecords :: Foldable f => IntLikeMap VarId (PatF f v VarId) -> f VarId -> Records
-initRecords nodes = fmap (\i -> case partialLookup i nodes of { FreePureF _ -> RecordPure i ILS.empty; _ -> RecordEmbed }) . toList
+initRecords nodes = fmap (\i -> case ILM.partialLookup i nodes of { FreePureF _ -> RecordPure i ILS.empty; _ -> RecordEmbed }) . toList
 
 updateRecords :: Foldable f => Records -> f EClassId -> Records
 updateRecords rs = zipWith (\r c -> case r of { RecordPure v cs -> RecordPure v (ILS.insert c cs); _ -> r } ) rs . toList
@@ -252,9 +246,9 @@ genByVar byVarEmbed nodes fwd = execState (for_ (ILM.toList nodes) go) (fmap fst
       FreeEmbedF fi -> do
         -- We've gone through embedded patterns before so we're able
         -- to look up nodes for each pattern
-        let (_, ns) = partialLookup i byVarEmbed
+        let (_, ns) = ILM.partialLookup i byVarEmbed
         -- For each node, update positionally what it could be
-        let rs = foldl' (\rsx n -> let fc = partialLookup n fwd in updateRecords rsx fc) (initRecords nodes fi) (ILS.toList ns)
+        let rs = foldl' (\rsx n -> let fc = ILM.partialLookup n fwd in updateRecords rsx fc) (initRecords nodes fi) (ILS.toList ns)
         -- Finally update the map; if missing set the positions as is, otherwise take intersection
         modify' $ \m -> foldl' (\mx r -> case r of {RecordPure j cs -> ILM.alter (Just . maybe cs (ILS.intersection cs)) j mx; _ -> mx}) m rs
 
@@ -278,14 +272,14 @@ constructMatch nodes classes i0 = evalState (go i0) ILM.empty where
     case ILM.lookup i cache of
       Just res -> pure res
       Nothing -> do
-        let c = partialLookup i classes
-        mp <- case partialLookup i nodes of
+        let c = ILM.partialLookup i classes
+        mp <- case ILM.partialLookup i nodes of
           FreePureF v -> pure $! MatchPatPure v
           FreeEmbedF f -> fmap MatchPatEmbed (traverse go f)
         pure $! Match c mp
 
 constructSubst :: HashMap v VarId -> IntLikeMap VarId a -> Subst a v
-constructSubst vars classes = fmap (`partialLookup` classes) vars
+constructSubst vars classes = fmap (`ILM.partialLookup` classes) vars
 
 solveYield :: Traversable f => SolStream c f v (MatchSubst c f v)
 solveYield = do
@@ -317,11 +311,11 @@ solveRec i = do
     Just s -> pure s
     -- Unseen
     Nothing -> do
-      n <- asks (partialLookup i . pgNodes . sePatGraph)
+      n <- asks (ILM.partialLookup i . pgNodes . sePatGraph)
       case n of
         -- Free var, choose a solution for each class in `sgByVar i`
         FreePureF _ -> do
-          cs <- asks (partialLookup i . sgByVar . seSolGraph)
+          cs <- asks (ILM.partialLookup i . sgByVar . seSolGraph)
           solveChoose i cs
         -- Embedded functor, traverse and emit solution if present
         FreeEmbedF fi -> do

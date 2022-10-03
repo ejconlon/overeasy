@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE UndecidableInstances #-}
 
--- | An E-Graph implementation
+-- | See 'EGraph'.
 module Overeasy.EGraph
   ( EClassId (..)
   , ENodeId (..)
@@ -54,25 +54,25 @@ import qualified IntLike.Set as ILS
 import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocCompactInc, assocFwd, assocInsertInc, assocLookupByValue,
                        assocMember, assocMembers, assocNew, assocPartialLookupByKey, assocRemoveAllInc, assocSingleton,
                        assocUnion)
-import Overeasy.Classes (Changed (..))
 import Overeasy.EquivFind (EquivFind (..), EquivMergeSetsRes (..), efAddInc, efCanonicalize, efCanonicalizePartial,
                            efClosure, efCompactInc, efFindRoot, efLookupRoot, efMergeSetsInc, efNew, efRootsSize,
                            efSubset)
-import Overeasy.Recursion (RecursiveWhole, foldWholeM)
 import Overeasy.Source (Source, sourceAddInc, sourceNew)
-import Overeasy.StateUtil (stateFold)
+import Overeasy.Util (Changed (..), RecursiveWhole, foldWholeM, stateFold)
 
--- | An opaque class id
--- Constructor exported for coercibility
+-- | An opaque class id.
+-- Constructor exported for coercibility.
+-- Num instance for literals only.
 newtype EClassId = EClassId { unEClassId :: Int }
   deriving stock (Show)
-  deriving newtype (Eq, Ord, Enum, Hashable, NFData)
+  deriving newtype (Eq, Ord, Enum, Hashable, NFData, Num)
 
 -- | An opaque node id
--- Constructor exported for coercibility
+-- Constructor exported for coercibility.
+-- Num instance for literals only.
 newtype ENodeId = ENodeId { unENodeId :: Int }
   deriving stock (Show)
-  deriving newtype (Eq, Ord, Enum, Hashable, NFData)
+  deriving newtype (Eq, Ord, Enum, Hashable, NFData, Num)
 
 -- | The definition of an 'EGraph' analysis.
 -- 'd' must be a join semilattice.
@@ -92,7 +92,7 @@ data ENodeTriple d = ENodeTriple
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)
 
--- | Info stored for every class: analysis data and class members.
+-- | Info stored for every class: analysis data, class members (nodes), and parent nodes.
 data EClassInfo d f = EClassInfo
   { eciData :: !d
   , eciNodes :: !(Assoc ENodeId (f ()))
@@ -126,14 +126,23 @@ data MergeResult a =
   -- ^ Some classes merged, returns root map or merged class id
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
--- private ctor
+-- | An E-Graph implementation
 data EGraph d f = EGraph
   { egClassSource :: !(Source EClassId)
+  -- ^ Id source for classes
   , egNodeSource :: !(Source ENodeId)
+  -- ^ Id source for nodes
   , egEquivFind :: !(EquivFind EClassId)
+  -- ^ Class equivalences
   , egClassMap :: !(IntLikeMap EClassId (EClassInfo d f))
+  -- ^ Map of class to info
+  -- Invariant: Only contains root classes.
   , egNodeAssoc :: !(Assoc ENodeId (f EClassId))
+  -- ^ Assoc of node id to node structure
+  -- Invariant: only contains canonical structures (with root classes).
   , egHashCons :: !(IntLikeMap ENodeId EClassId)
+  -- ^ Map of node to class
+  -- Invariant: only contains root classes.
   } deriving stock (Generic)
 
 deriving stock instance (Eq d, Eq (f EClassId), Eq (f ())) => Eq (EGraph d f)
@@ -241,7 +250,6 @@ egAddNodeSub ana fcd = do
       in ((ChangedYes, ENodeTriple n x d), eg')
 
 -- private
--- Similar in structure to foldWholeTrackM
 egAddTermSub :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId), Hashable (f ())) => EAnalysis d f -> t -> State (EGraph d f) (AddNodeRes d, ENodeTriple d)
 egAddTermSub ana = go where
   go t = do

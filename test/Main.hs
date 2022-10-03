@@ -29,13 +29,13 @@ import qualified IntLike.Set as ILS
 import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocBwd, assocCanCompact, assocCompact, assocEquiv, assocFromList,
                        assocFwd, assocInsert, assocLeaves, assocMember, assocMembers, assocNew, assocPartialLookupByKey,
                        assocRoots, assocSize)
-import Overeasy.Classes (Changed (..))
 import Overeasy.EGraph (EAnalysis, EClassId (..), EClassInfo (..), EGraph (..), ENodeId (..), MergeResult (..),
                         egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egMergeMany, egNew, egNodeSize,
                         noAnalysis)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMember,
                            efMembers, efMerge, efMergeSets, efNew, efRemoveAll, efRoots, efRootsSize, efTotalSize)
 import Overeasy.Matching (Match (..), MatchPat (..), MatchSubst (..), Pat, match)
+import Overeasy.Util (Changed (..))
 import PropUnit (DependencyType (..), Gen, MonadTest, PropertyT, Range, TestLimit, TestTree, after, assert, forAll,
                  testGroup, testMain, testProp, testUnit, (/==), (===))
 import Test.Overeasy.Arith (Arith (..), ArithF (ArithPlusF))

@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 
--- | A source of unique ids
+-- See 'Source'.
 module Overeasy.Source
   ( Source
   , sourceSize
@@ -17,9 +17,10 @@ import Control.Monad.State.Strict (State, modify', state)
 import Data.Coerce (Coercible, coerce)
 import GHC.Generics (Generic)
 
--- private ctor
+-- | A source of unique ids
 data Source x = Source
-  { sourceSize :: !Int  -- ^ How many ids have ever been created?
+  { sourceSize :: !Int
+  -- ^ How many ids have ever been created?
   , sourceNextId :: !Int
   } deriving stock (Eq, Show, Generic)
     deriving anyclass (NFData)

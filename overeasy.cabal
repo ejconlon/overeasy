@@ -27,14 +27,12 @@ source-repository head
 library
   exposed-modules:
       Overeasy.Assoc
-      Overeasy.Classes
       Overeasy.EGraph
       Overeasy.EquivFind
       Overeasy.Matching
-      Overeasy.Recursion
       Overeasy.Source
-      Overeasy.StateUtil
       Overeasy.Streams
+      Overeasy.Util
   other-modules:
       Paths_overeasy
   hs-source-dirs:
