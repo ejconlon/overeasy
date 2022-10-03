@@ -1,7 +1,8 @@
+-- | Stuff for streaming search results.
 module Overeasy.Streams
   ( chooseWith
   , choose
-  , Stream (..)
+  , Stream
   , streamAll
   ) where
 

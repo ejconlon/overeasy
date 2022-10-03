@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 
--- See 'Source'.
+-- | See 'Source'.
 module Overeasy.Source
   ( Source
   , sourceSize

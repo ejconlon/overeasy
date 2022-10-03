@@ -675,11 +675,9 @@ assertEgInvariants eg = do
     when (ILS.member n rootNodes) $ do
       -- for all children that are not of the node's own class
       let children = ILS.filter (/= c) (foldMap ILS.singleton (assocPartialLookupByKey n assoc))
-      -- traceM (unwords ["VERIFYING", show n, show c, show children])
       for_ (ILS.toList children) $ \y -> do
         -- look up child and assert in child's parents
         let parents = eciParents (ILM.partialLookup y cm)
-        -- traceM (unwords ["->", show y, show parents])
         assert (ILS.member n parents)
   -- For every class
   cmNodes <- flipFoldM ILS.empty (ILM.toList cm) $ \accNodesSet (c, eci) -> do
