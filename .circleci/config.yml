@@ -77,9 +77,8 @@ workflows:
     jobs:
       - stack_build:
           lts_ghc_ver: 9.0.2
-      # TODO resurrect when deps on hackage
-      # - cabal_build:
-      #     name: cabal_build_9_0
-      #     ghc_ver: 9.0.2
-      #     requires:
-      #       - stack_build
+      - cabal_build:
+          name: cabal_build_9_0
+          ghc_ver: 9.0.2
+          requires:
+            - stack_build

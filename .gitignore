@@ -1,5 +1,6 @@
 /.hie
 /.stack-work
+/.vscode
 /dist
 /dist-newstyle
 *~

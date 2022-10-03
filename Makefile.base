@@ -20,7 +20,7 @@ docs:
 
 .PHONY: deps
 deps:
-	stack build --copy-compiler-tool hlint stylish-haskell implicit-hie
+	stack build --copy-compiler-tool hlint implicit-hie ghcid
 
 .PHONY: format
 format:
