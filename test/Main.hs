@@ -34,11 +34,11 @@ import Overeasy.EGraph (EAnalysis, EClassId (..), EClassInfo (..), EGraph (..), 
                         noAnalysis)
 import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMember,
                            efMembers, efMerge, efMergeSets, efNew, efRemoveAll, efRoots, efRootsSize, efTotalSize)
+import Overeasy.Example (Arith (..), ArithF (..))
 import Overeasy.Matching (Match (..), MatchPat (..), MatchSubst (..), Pat, match)
 import Overeasy.Util (Changed (..))
 import PropUnit (DependencyType (..), Gen, MonadTest, PropertyT, Range, TestLimit, TestTree, after, assert, forAll,
                  testGroup, testMain, testProp, testUnit, (/==), (===))
-import Test.Overeasy.Arith (Arith (..), ArithF (ArithPlusF))
 import Test.Overeasy.BinTree (BinTree, pattern BinTreeBranch, BinTreeF (..), pattern BinTreeLeaf)
 import Unfree (pattern FreeEmbed, pattern FreePure)
 

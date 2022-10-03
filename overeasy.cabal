@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           overeasy
-version:        0.1.0
+version:        0.1.1
 synopsis:       A purely functional E-Graph library
 description:    Please see the README on GitHub at <https://github.com/ejconlon/overeasy#readme>
 category:       Data Structures
@@ -29,6 +29,7 @@ library
       Overeasy.Assoc
       Overeasy.EGraph
       Overeasy.EquivFind
+      Overeasy.Example
       Overeasy.Matching
       Overeasy.Source
       Overeasy.Streams
@@ -84,7 +85,6 @@ test-suite overeasy-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
-      Test.Overeasy.Arith
       Test.Overeasy.BinTree
       Paths_overeasy
   hs-source-dirs:
