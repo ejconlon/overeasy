@@ -5,38 +5,26 @@
 
 packages:
 - completed:
-    name: int-like
-    version: 0.1.0
-    git: git@github.com:ejconlon/int-like.git
+    hackage: int-like-0.1.1@sha256:07edfd99581f97b0384611660f9453d34bcdf17e19a4907d195d288e3dcee735,3093
     pantry-tree:
-      size: 1134
-      sha256: 26a891cc593707b897aef85f12b75f39e4f63babd1ca08e75edf17fd1ad693d8
-    commit: 83aa99544884d4e7d7c426279df0dcb6da9aac26
+      size: 556
+      sha256: a81c294faf72ab621b70cada1bd53c53eb1c36fe9e2ab18d3354192c0824a16e
   original:
-    git: git@github.com:ejconlon/int-like.git
-    commit: 83aa99544884d4e7d7c426279df0dcb6da9aac26
+    hackage: int-like-0.1.1
 - completed:
-    name: prop-unit
-    version: 0.1.0
-    git: git@github.com:ejconlon/prop-unit.git
+    hackage: prop-unit-0.1.0@sha256:19a8942d0aa89ada2fd3944d7a63a63cbaf3909b6d6e43977cdc234e223dd906,2922
     pantry-tree:
-      size: 840
-      sha256: 1194fa87c2c23896080a54018f682b6e4a6094fc2156822179380a3e51fc9c92
-    commit: d562ed5c39b4b87b4c226126f249f0e97d89c2dd
+      size: 309
+      sha256: 0e7efcd2d185adc28d04a0ca399b1b623da123b390316e852d83d740b1f00126
   original:
-    git: git@github.com:ejconlon/prop-unit.git
-    commit: d562ed5c39b4b87b4c226126f249f0e97d89c2dd
+    hackage: prop-unit-0.1.0
 - completed:
-    name: unfree
-    version: 0.1.0
-    git: git@github.com:ejconlon/unfree.git
+    hackage: unfree-0.1.0@sha256:c8cd0181a0a6386e00671963be318e5fbfdbb114c2aeece9552bef88d1af0b76,2990
     pantry-tree:
-      size: 882
-      sha256: 784eafe8da10687e79f86d1764bee7a961761880309c3999afdecd9a0e6e9fac
-    commit: c4eaee614c8a62d8c489dbdc9806db7c735435db
+      size: 304
+      sha256: de5b09c5c48e32e242875bb773f209acc66cc9e2c11ab679e976ead7a1a94f2f
   original:
-    git: git@github.com:ejconlon/unfree.git
-    commit: c4eaee614c8a62d8c489dbdc9806db7c735435db
+    hackage: unfree-0.1.0
 snapshots:
 - completed:
     size: 619403

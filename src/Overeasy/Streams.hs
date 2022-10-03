@@ -1,7 +1,8 @@
+-- | A wrapper over 'LogicT' to keep things easy.
 module Overeasy.Streams
   ( chooseWith
   , choose
-  , Stream
+  , Stream (..)
   , streamAll
   ) where
 

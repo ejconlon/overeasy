@@ -7,9 +7,6 @@ packages:
 - .
 
 extra-deps:
-- git: git@github.com:ejconlon/int-like.git
-  commit: 83aa99544884d4e7d7c426279df0dcb6da9aac26
-- git: git@github.com:ejconlon/prop-unit.git
-  commit: d562ed5c39b4b87b4c226126f249f0e97d89c2dd
-- git: git@github.com:ejconlon/unfree.git
-  commit: c4eaee614c8a62d8c489dbdc9806db7c735435db
+- int-like-0.1.1
+- prop-unit-0.1.0
+- unfree-0.1.0
