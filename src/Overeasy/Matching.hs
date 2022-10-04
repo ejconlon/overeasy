@@ -5,12 +5,14 @@
 module Overeasy.Matching
   ( Pat
   , patVars
+  , PatGroup
   , Subst
   , substVars
   , VarId (..)
   , PatGraphC
   , PatGraph (..)
   , patGraph
+  , singlePatGraph
   , Match (..)
   , MatchPat (..)
   , MatchF (..)
@@ -30,6 +32,7 @@ module Overeasy.Matching
 import Control.Applicative (Alternative (..))
 import Control.DeepSeq (NFData)
 import Control.Monad (void)
+import Control.Monad.Identity (Identity (..))
 import Control.Monad.Reader (asks)
 import Control.Monad.State.Strict (MonadState (..), State, evalState, execState, gets, modify', runState)
 import Data.Bifunctor (bimap)
@@ -64,6 +67,11 @@ type PatF = FreeF
 -- | The set of vars for a pattern.
 patVars :: (Foldable f, Eq v, Hashable v) => Pat f v -> HashSet v
 patVars = foldMap' HashSet.singleton
+
+-- | A pattern group is some container with patterns inside.
+-- This container might be 'Identity' for one pattern, or a list or
+-- map for many patterns.
+type PatGroup g f v = g (Pat f v)
 
 -- | A substitution.
 type Subst c v = HashMap v c
@@ -142,17 +150,19 @@ newtype VarId = VarId { unVarId :: Int }
 
 -- | A pattern graph - can be created once for each pattern and reused
 -- for many iterations of search.
-data PatGraph f v = PatGraph
-  { pgRoot :: !VarId
+-- 'g' is the pattern group functor.
+-- 'f' is the language functor.
+data PatGraph g f v = PatGraph
+  { pgRoots :: !(g VarId)
   , pgNodes :: !(IntLikeMap VarId (PatF f v VarId))
   , pgVars :: !(HashMap v VarId)
   }
 
-deriving stock instance (Eq v, Eq (f VarId)) => Eq (PatGraph f v)
-deriving stock instance (Show v, Show (f VarId)) => Show (PatGraph f v)
+deriving stock instance (Eq v, Eq (g VarId), Eq (f VarId)) => Eq (PatGraph g f v)
+deriving stock instance (Show v, Show (g VarId), Show (f VarId)) => Show (PatGraph g f v)
 
 -- | The set of constraints necessary to build a pattern graph.
-type PatGraphC f v = (Traversable f, Eq v, Eq (f VarId), Hashable v, Hashable (f VarId))
+type PatGraphC f v = (Traversable f, Traversable f, Eq v, Eq (f VarId), Hashable v, Hashable (f VarId))
 
 data GraphState f v = GraphState
   { gsSrc :: !(Source VarId)
@@ -186,13 +196,19 @@ graphCanonicalize (GraphState _ assoc) =
       equiv = assocEquiv assoc
   in fmap (fmap (`efLookupRoot` equiv)) fwd
 
--- | Builds a pattern graph from a pattern.
-patGraph :: PatGraphC f v => Pat f v -> PatGraph f v
-patGraph p =
-  let (i, st) = runState (graphEnsurePat p) emptyGraphState
+-- | Builds a pattern graph from a group of patterns.
+patGraph :: (Traversable g, PatGraphC f v) => PatGroup g f v -> PatGraph g f v
+patGraph ps =
+  let (gr, st) = runState (traverse graphEnsurePat ps) emptyGraphState
       m = graphCanonicalize st
       n = HashMap.fromList (ILM.toList m >>= \(j, x) -> case x of { FreePureF v -> [(v, j)]; _ -> [] })
-  in PatGraph i m n
+  in PatGraph gr m n
+
+-- | Builds a pattern graph from a single pattern.
+-- If you have more than one pattern, building the group all at once is going to
+-- make finding solutions more efficient.
+singlePatGraph :: PatGraphC f v => Pat f v -> PatGraph Identity f v
+singlePatGraph = patGraph . Identity
 
 -- | A solution graph - must be created from an e-graph each merge/rebuild.
 data SolGraph c f = SolGraph
@@ -212,7 +228,7 @@ deriving stock instance (Show c, Show (f c)) => Show (SolGraph c f)
 type SolGraphC f = (Functor f, Foldable f, Eq (f ()), Hashable (f ()))
 
 -- | Builds a solution graph from an e-graph.
-solGraph :: SolGraphC f => PatGraph f v -> EGraph d f -> SolGraph EClassId f
+solGraph :: SolGraphC f => PatGraph g f v -> EGraph d f -> SolGraph EClassId f
 solGraph pg eg =
   -- For each class, use footprint of reverse node assoc to find set of node ids
   -- Start with just the embedded nodes
@@ -258,8 +274,8 @@ genByVar byVarEmbed nodes fwd = execState (for_ (ILM.toList nodes) go) (fmap fst
         -- Finally update the map; if missing set the positions as is, otherwise take intersection
         modify' $ \m -> foldl' (\mx r -> case r of {RecordPure j cs -> ILM.alter (Just . maybe cs (ILS.intersection cs)) j mx; _ -> mx}) m rs
 
-data SolEnv c f v = SolEnv
-  { sePatGraph :: !(PatGraph f v)
+data SolEnv c g f v = SolEnv
+  { sePatGraph :: !(PatGraph g f v)
   , seSolGraph :: !(SolGraph c f)
   }
 
@@ -267,9 +283,8 @@ newtype SolState c = SolState
   { ssClasses :: IntLikeMap VarId c
   } deriving (Eq, Show)
 
--- | A stream of solutions. Can be demanded all at once, unconsed one at a time,
--- or interleaved.
-type SolStream c f v z = Stream (SolEnv c f v) (SolState c) z
+-- | A stream of solutions. Can be demanded all at once or interleaved.
+type SolStream c g f v z = Stream (SolEnv c g f v) (SolState c) z
 
 -- | The set of constraints necessary to search for solutions.
 type SolveC c f v = (Traversable f, Coercible c Int, Eq v, Hashable v, Eq (f c), Hashable (f c))
@@ -290,30 +305,31 @@ constructMatch nodes classes i0 = evalState (go i0) ILM.empty where
 constructSubst :: HashMap v VarId -> IntLikeMap VarId a -> Subst a v
 constructSubst vars classes = fmap (`ILM.partialLookup` classes) vars
 
-solveYield :: Traversable f => SolStream c f v (MatchSubst c f v)
-solveYield = do
+solveYield :: Traversable f => VarId -> SolStream c g f v (MatchSubst c f v)
+solveYield i = do
   pg <- asks sePatGraph
   classes <- gets ssClasses
-  let mat = constructMatch (pgNodes pg) classes (pgRoot pg)
+  let mat = constructMatch (pgNodes pg) classes i
       subst = constructSubst (pgVars pg) classes
       ms = MatchSubst mat subst
   pure ms
 
 -- | Produces a stream of solutions (e-matches).
-solve :: SolveC c f v => SolStream c f v (MatchSubst c f v)
+solve :: (Foldable g, SolveC c f v) => SolStream c g f v (MatchSubst c f v)
 solve = do
-  i <- asks (pgRoot . sePatGraph)
-  void (solveRec i)
-  solveYield
+  roots <- asks (pgRoots . sePatGraph)
+  chooseWith roots $ \i -> do
+    void (solveRec i)
+    solveYield i
 
-solveChoose :: SolveC c f v => VarId -> IntLikeSet c -> SolStream c f v c
+solveChoose :: SolveC c f v => VarId -> IntLikeSet c -> SolStream c g f v c
 solveChoose i cs = chooseWith (ILS.toList cs) (solveSet i)
 
-solveSet :: VarId -> c -> SolStream c f v c
+solveSet :: VarId -> c -> SolStream c g f v c
 solveSet i c =
   c <$ modify' (\ss -> ss { ssClasses = ILM.insert i c (ssClasses ss) })
 
-solveRec :: SolveC c f v => VarId -> SolStream c f v c
+solveRec :: SolveC c f v => VarId -> SolStream c g f v c
 solveRec i = do
   ms <- gets (ILM.lookup i . ssClasses)
   case ms of
@@ -336,11 +352,10 @@ solveRec i = do
             Just c -> solveSet i c
 
 -- | The easiest way to do e-matching: given a pattern and an e-graph, yield the list of matches.
--- Note that it might be more efficient to keep a 'PatGraph' on hand and uncons the matches
--- one by one.
+-- Note that it's more efficient to keep a 'PatGraph' and use the same solution graph for multiple patterns.)
 match :: (PatGraphC f v, SolGraphC f, SolveC EClassId f v) => Pat f v -> EGraph d f -> [MatchSubst EClassId f v]
 match p eg =
-  let pg = patGraph p
+  let pg = singlePatGraph p
       sg = solGraph pg eg
   in if any ILS.null (ILM.elems (sgByVar sg))
     -- If any var id has no patches, the pattern won't match, so don't try to solve
