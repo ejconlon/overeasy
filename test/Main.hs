@@ -4,15 +4,24 @@ import Control.DeepSeq (NFData, force)
 import Control.Exception (evaluate)
 import Control.Monad (foldM, unless, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.State.Strict (MonadState (..), State, StateT, evalState, evalStateT, execState, execStateT, gets,
-                                   runState)
+import Control.Monad.State.Strict
+  ( MonadState (..)
+  , State
+  , StateT
+  , evalState
+  , evalStateT
+  , execState
+  , execStateT
+  , gets
+  , runState
+  )
 import Control.Monad.Trans (MonadTrans (..))
 import Data.Bifunctor (bimap)
 import Data.Char (chr, ord)
 import Data.Coerce (coerce)
 import Data.Foldable (for_)
-import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HashMap
+import Data.Hashable (Hashable)
 import Data.List (delete)
 import Data.Maybe (fromJust, isJust)
 import Data.Semigroup (Max (..))
@@ -26,20 +35,81 @@ import IntLike.Map (IntLikeMap)
 import qualified IntLike.Map as ILM
 import IntLike.Set (IntLikeSet)
 import qualified IntLike.Set as ILS
-import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocBwd, assocCanCompact, assocCompact, assocEquiv, assocFromList,
-                       assocFwd, assocInsert, assocLeaves, assocMember, assocMembers, assocNew, assocPartialLookupByKey,
-                       assocRoots, assocSize)
-import Overeasy.EGraph (EAnalysis, EClassId (..), EClassInfo (..), EGraph (..), ENodeId (..), MergeResult (..),
-                        egAddTerm, egCanonicalize, egClassSize, egFindTerm, egMerge, egMergeMany, egNew, egNodeSize,
-                        noAnalysis)
-import Overeasy.EquivFind (EquivFind (..), efAdd, efCanCompact, efCompact, efFindRoot, efLeaves, efLeavesSize, efMember,
-                           efMembers, efMerge, efMergeSets, efNew, efRemoveAll, efRoots, efRootsSize, efTotalSize)
+import Overeasy.Assoc
+  ( Assoc
+  , AssocInsertRes (..)
+  , assocBwd
+  , assocCanCompact
+  , assocCompact
+  , assocEquiv
+  , assocFromList
+  , assocFwd
+  , assocInsert
+  , assocLeaves
+  , assocMember
+  , assocMembers
+  , assocNew
+  , assocPartialLookupByKey
+  , assocRoots
+  , assocSize
+  )
+import Overeasy.EGraph
+  ( EAnalysis
+  , EClassId (..)
+  , EClassInfo (..)
+  , EGraph (..)
+  , ENodeId (..)
+  , MergeResult (..)
+  , egAddTerm
+  , egCanonicalize
+  , egClassSize
+  , egFindTerm
+  , egMerge
+  , egMergeMany
+  , egNew
+  , egNodeSize
+  , noAnalysis
+  )
+import Overeasy.EquivFind
+  ( EquivFind (..)
+  , efAdd
+  , efCanCompact
+  , efCompact
+  , efFindRoot
+  , efLeaves
+  , efLeavesSize
+  , efMember
+  , efMembers
+  , efMerge
+  , efMergeSets
+  , efNew
+  , efRemoveAll
+  , efRoots
+  , efRootsSize
+  , efTotalSize
+  )
 import Overeasy.Example (Arith (..), ArithF (..))
 import Overeasy.Matching (Match (..), MatchPat (..), MatchSubst (..), Pat, match)
 import Overeasy.Util (Changed (..))
-import PropUnit (DependencyType (..), Gen, MonadTest, PropertyT, Range, TestLimit, TestTree, after, assert, forAll,
-                 testGroup, testMain, testProp, testUnit, (/==), (===))
-import Test.Overeasy.BinTree (BinTree, pattern BinTreeBranch, BinTreeF (..), pattern BinTreeLeaf)
+import PropUnit
+  ( DependencyType (..)
+  , Gen
+  , MonadTest
+  , PropertyT
+  , Range
+  , TestLimit
+  , TestTree
+  , after
+  , assert
+  , forAll
+  , testGroup
+  , testMain
+  , testProp
+  , testUnit
+  , (/==)
+  , (===)
+  )
+import Test.Overeasy.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
 import Unfree (pattern FreeEmbed, pattern FreePure)
 
 fullyEvaluate :: (MonadIO m, NFData a) => a -> m a
@@ -66,7 +136,7 @@ runS = flip evalStateT
 flipFoldM :: Monad m => b -> [a] -> (b -> a -> m b) -> m b
 flipFoldM b as f = foldM f b as
 
-newtype V = V { unV :: Int }
+newtype V = V {unV :: Int}
   deriving newtype (Eq, Ord, Hashable, NFData)
 
 instance Show V where
@@ -298,7 +368,7 @@ testEfUnit = testGroup "EF unit" [testEfSimple, testEfRec, testEfMany, testEfSet
 
 genDistinctPairFromList :: Eq a => [a] -> Gen (a, a)
 genDistinctPairFromList = \case
-  xs@(_:_:_) -> do
+  xs@(_ : _ : _) -> do
     a <- Gen.element xs
     b <- Gen.element (delete a xs)
     pure (a, b)
@@ -314,14 +384,14 @@ genV :: Int -> Gen V
 genV maxElems =
   let minVal = ord 'a'
       maxVal = minVal + maxElems - 1
-  in fmap V (Gen.int (Range.linear minVal maxVal))
+  in  fmap V (Gen.int (Range.linear minVal maxVal))
 
 genMembers :: Int -> Gen [V]
 genMembers maxElems = do
   let nElemsRange = Range.linear 0 maxElems
       minVal = ord 'a'
   n <- Gen.int nElemsRange
-  pure (fmap (\i -> V (minVal + i)) [0..n-1])
+  pure (fmap (\i -> V (minVal + i)) [0 .. n - 1])
 
 mkInitEf :: [V] -> EF
 mkInitEf vs = execState (for_ vs efAdd) efNew
@@ -428,52 +498,76 @@ data AssocCase = AssocCase !String ![(Int, Char)] ![(Int, Char, Int, AssocInsert
 allAssocCases :: [AssocCase]
 allAssocCases =
   let start = [(0, 'a'), (1, 'b'), (2, 'c')]
-  in [ AssocCase "base" start [] start
-     , AssocCase "ident" start
-        [(0, 'a', 0, AssocInsertResUnchanged)]
-        start
-     , AssocCase "superfluous" start
-        [(4, 'a', 0, AssocInsertResMerged (ILS.singleton 4))]
-        start
-     , AssocCase "internal" start
-        [(0, 'b', 0, AssocInsertResMerged (ILS.singleton 1))]
-        [(0, 'b'), (2, 'c')]
-     , AssocCase "external" start
-        [(0, 'd', 0, AssocInsertResUpdated)]
-        [(0, 'd'), (1, 'b'), (2, 'c')]
-     , AssocCase "additional" start
-        [(4, 'd', 4, AssocInsertResCreated)]
-        [(0, 'a'), (1, 'b'), (2, 'c'), (4, 'd')]
-     , AssocCase "chain fwd" start
-        -- The singleton set in the second result is just the children (and self) of the clobbered node
-        -- We don't have to lookup the old clobbered nodes for 1 bc when this is used everything will be merged
-        [(0, 'b', 0, AssocInsertResMerged (ILS.singleton 1)), (1, 'c', 0, AssocInsertResMerged (ILS.singleton 2))]
-        [(0, 'c')]
-     , AssocCase "chain bwd" start
-        -- The set in the second result is not a singleton here because it already had children
-        [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (0, 'c', 0, AssocInsertResMerged (ILS.fromList [1,2]))]
-        [(0, 'c')]
-     , AssocCase "chain self" start
-        [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (2, 'c', 1, AssocInsertResUnchanged)]
-        [(0, 'a'), (1, 'c')]
-     , AssocCase "chain change" start
-        [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (2, 'd', 1, AssocInsertResUpdated)]
-        [(0, 'a'), (1, 'd')]
-     , AssocCase "chain back id" start
-        [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (1, 'b', 1, AssocInsertResUpdated)]
-        [(0, 'a'), (1, 'b')]
-     , AssocCase "chain back del" start
-        [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (2, 'b', 1, AssocInsertResUpdated)]
-        [(0, 'a'), (1, 'b')]
-     , AssocCase "chain change rev" start
-        [(2, 'd', 2, AssocInsertResUpdated), (1, 'c', 1, AssocInsertResUpdated)]
-        [(0, 'a'), (1, 'c'), (2, 'd')]
-     ]
+  in  [ AssocCase "base" start [] start
+      , AssocCase
+          "ident"
+          start
+          [(0, 'a', 0, AssocInsertResUnchanged)]
+          start
+      , AssocCase
+          "superfluous"
+          start
+          [(4, 'a', 0, AssocInsertResMerged (ILS.singleton 4))]
+          start
+      , AssocCase
+          "internal"
+          start
+          [(0, 'b', 0, AssocInsertResMerged (ILS.singleton 1))]
+          [(0, 'b'), (2, 'c')]
+      , AssocCase
+          "external"
+          start
+          [(0, 'd', 0, AssocInsertResUpdated)]
+          [(0, 'd'), (1, 'b'), (2, 'c')]
+      , AssocCase
+          "additional"
+          start
+          [(4, 'd', 4, AssocInsertResCreated)]
+          [(0, 'a'), (1, 'b'), (2, 'c'), (4, 'd')]
+      , AssocCase
+          "chain fwd"
+          start
+          -- The singleton set in the second result is just the children (and self) of the clobbered node
+          -- We don't have to lookup the old clobbered nodes for 1 bc when this is used everything will be merged
+          [(0, 'b', 0, AssocInsertResMerged (ILS.singleton 1)), (1, 'c', 0, AssocInsertResMerged (ILS.singleton 2))]
+          [(0, 'c')]
+      , AssocCase
+          "chain bwd"
+          start
+          -- The set in the second result is not a singleton here because it already had children
+          [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (0, 'c', 0, AssocInsertResMerged (ILS.fromList [1, 2]))]
+          [(0, 'c')]
+      , AssocCase
+          "chain self"
+          start
+          [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (2, 'c', 1, AssocInsertResUnchanged)]
+          [(0, 'a'), (1, 'c')]
+      , AssocCase
+          "chain change"
+          start
+          [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (2, 'd', 1, AssocInsertResUpdated)]
+          [(0, 'a'), (1, 'd')]
+      , AssocCase
+          "chain back id"
+          start
+          [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (1, 'b', 1, AssocInsertResUpdated)]
+          [(0, 'a'), (1, 'b')]
+      , AssocCase
+          "chain back del"
+          start
+          [(1, 'c', 1, AssocInsertResMerged (ILS.singleton 2)), (2, 'b', 1, AssocInsertResUpdated)]
+          [(0, 'a'), (1, 'b')]
+      , AssocCase
+          "chain change rev"
+          start
+          [(2, 'd', 2, AssocInsertResUpdated), (1, 'c', 1, AssocInsertResUpdated)]
+          [(0, 'a'), (1, 'c'), (2, 'd')]
+      ]
 
 mkAssoc :: [(Int, Char)] -> AV
 mkAssoc rawPairs =
   let pairs = fmap (bimap ENodeId toV) rawPairs
-  in assocFromList pairs
+  in  assocFromList pairs
 
 runAV :: Monad m => [(Int, Char)] -> StateT AV m () -> m ()
 runAV = runS . mkAssoc
@@ -534,6 +628,7 @@ testAssocUnit = testUnit "Assoc unit" $ do
   assocLeaves a3 === []
 
 type EGA = EGraph () ArithF
+
 type EGP = Pat ArithF String
 
 testEgUnit :: TestTree
@@ -590,18 +685,19 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     pure x
   -- We now match `2 + 2`
   testS $ \eg ->
-    match pat eg ===
-      [ MatchSubst
-          (Match cidPlus
-            (MatchPatEmbed
-              (ArithPlusF
-                (Match cidTwo (MatchPatPure "x"))
-                (Match cidTwo (MatchPatPure "y"))
+    match pat eg
+      === [ MatchSubst
+              ( Match
+                  cidPlus
+                  ( MatchPatEmbed
+                      ( ArithPlusF
+                          (Match cidTwo (MatchPatPure "x"))
+                          (Match cidTwo (MatchPatPure "y"))
+                      )
+                  )
               )
-            )
-          )
-          (HashMap.fromList [("x", cidTwo), ("y", cidTwo)])
-      ]
+              (HashMap.fromList [("x", cidTwo), ("y", cidTwo)])
+          ]
   -- Merge `4` and `4` and assert things haven't changed
   applyTestS (egMerge cidFour cidFour) $ \m _ -> do
     case m of
@@ -617,22 +713,26 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
     egFindTerm termTwo eg === Just cidTwo
   -- We still match `2 + 2`, but the class is different
   testS $ \eg ->
-    match pat eg ===
-      [ MatchSubst
-          (Match cidFour
-            (MatchPatEmbed
-              (ArithPlusF
-                (Match cidTwo (MatchPatPure "x"))
-                (Match cidTwo (MatchPatPure "y"))
+    match pat eg
+      === [ MatchSubst
+              ( Match
+                  cidFour
+                  ( MatchPatEmbed
+                      ( ArithPlusF
+                          (Match cidTwo (MatchPatPure "x"))
+                          (Match cidTwo (MatchPatPure "y"))
+                      )
+                  )
               )
-            )
-          )
-          (HashMap.fromList [("x", cidTwo), ("y", cidTwo)])
-      ]
+              (HashMap.fromList [("x", cidTwo), ("y", cidTwo)])
+          ]
 
 type EGD = Max V
+
 type EGF = BinTreeF V
+
 type EGT = BinTree V
+
 type EGV = EGraph EGD EGF
 
 maxVAnalysis :: EAnalysis EGD EGF
@@ -703,19 +803,21 @@ assertEgInvariants eg = do
   -- Now test recanonicalization - we already know assoc fwd and bwd are 1-1
   for_ (HashMap.toList bwd) $ \(fc, _) ->
     let recanon = evalState (egCanonicalize fc) eg
-    in recanon === Right fc
+    in  recanon === Right fc
 
 data EgRound = EgRound
   { egRoundTerms :: ![EGT]
   , egRoundSets :: ![[EGT]]
   , egRoundEqTests :: ![[EGT]]
   , egRoundNeqTests :: ![(EGT, EGT)]
-  } deriving stock (Eq, Show)
+  }
+  deriving stock (Eq, Show)
 
 data EgCase = EgCase
   { egCaseName :: !String
   , egCaseRounds :: ![EgRound]
-  } deriving stock (Eq, Show)
+  }
+  deriving stock (Eq, Show)
 
 allEgCases :: [EgCase]
 allEgCases =
@@ -739,88 +841,106 @@ allEgCases =
       grandparentEAD = BinTreeBranch leafE parentAD
       simpleGrandparentTerms = [grandparentAAC, grandparentAAD]
       complexGrandparentTerms = [grandparentBAC, grandparentEAD]
-  in [ EgCase "simple"
+  in  [ EgCase
+          "simple"
           [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC)]
           , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafB, leafC)]
           ]
-     , EgCase "transitive one round"
-        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
-        , EgRound [] [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
-        ]
-     , EgCase "transitive two round"
-        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
-        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
-        , EgRound [] [[leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
-        ]
-     , EgCase "simple parents"
-        [ EgRound simpleParentTerms [] [] [(leafC, leafD), (parentAC, parentAD)]
-        , EgRound [] [[leafC, leafD]] [[parentAC, parentAD]] []
-        ]
-     , EgCase "complex parents one round"
-        [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
-        , EgRound [] [[leafA, leafB], [leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
-        ]
-     , EgCase "complex parents two round"
-        [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
-        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafC, leafD), (parentAC, parentBD)]
-        , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
-        ]
-     , EgCase "simple grandparents"
-        [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
-        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
-        ]
-     , EgCase "complex grandparents bottom up"
-        [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
-        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD]] [(leafB, leafE), (grandparentBAC, grandparentEAD)]
-        , EgRound [] [[leafB, leafE]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
-        ]
-     , EgCase "complex grandparents top down"
-        [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
-        , EgRound [] [[leafB, leafE]] [[leafB, leafE]] [(leafC, leafD), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
-        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
-        ]
-     , EgCase "connect"
-        [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
-        , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
-        , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD]] [(leafA, leafD)]
-        , EgRound [] [[leafB, leafD]] [[leafA, leafB, leafC, leafD]] []
-        ]
-     , EgCase "mid grandparents"
-        [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
-        , EgRound [] [[parentAC, parentAD]] [[parentAC, parentAD], [grandparentAAC, grandparentAAD]] [(leafC, leafD)]
-        , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
-        ]
-     , EgCase "unify node"
-        [ EgRound [BinTreeBranch parentAC leafA, parentAA] [] [] [(parentAC, parentAA)]
-        , EgRound [] [[leafA, leafC]] [[parentAC, parentAA]] []
-        ]
-     , EgCase "self parent"
-        [ EgRound [BinTreeBranch parentAC leafB] [] [] []
-        , EgRound [] [[parentAC, leafA]] [] []
-        ]
-     , EgCase "self parent again"
-        [ EgRound [leafB, parentAA] [] [] []
-        , EgRound [] [[leafB, leafA], [leafB, parentAA]] [] []
-        ]
-     , EgCase "dead add parent"
-        [ EgRound [parentAC, leafB] [[leafA, parentAC], [leafA, leafC]] [[parentAC, leafC]] [(leafA, leafB)]
-        , EgRound [parentCA] [] [[parentCA, parentAC]] []
-        ]
-     , EgCase "repro 1"
-        [ EgRound [BinTreeBranch parentAA parentAB] [[leafB, leafA]] [] [(leafB, parentAA)]
-        , EgRound [leafA] [[parentAA, leafA]] [[leafB, parentAA]] []
-        ]
-     ,  let grandparent = BinTreeBranch parentAA leafB
-            greatGrandparent = BinTreeBranch grandparent leafA
-        in EgCase "repro 2"
-          [ EgRound [greatGrandparent, leafA, leafC] [[greatGrandparent, parentAA], [leafA, leafB]] [] []
-          , EgRound [leafA, leafA] [[leafA, grandparent]] [] []
-          , EgRound [leafA, leafA, leafA] [[parentAA, leafA]] [] []
+      , EgCase
+          "transitive one round"
+          [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+          , EgRound [] [[leafA, leafB], [leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
           ]
-     ]
+      , EgCase
+          "transitive two round"
+          [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+          , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
+          , EgRound [] [[leafB, leafC]] [[leafA, leafB, leafC]] [(leafA, leafD)]
+          ]
+      , EgCase
+          "simple parents"
+          [ EgRound simpleParentTerms [] [] [(leafC, leafD), (parentAC, parentAD)]
+          , EgRound [] [[leafC, leafD]] [[parentAC, parentAD]] []
+          ]
+      , EgCase
+          "complex parents one round"
+          [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
+          , EgRound [] [[leafA, leafB], [leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
+          ]
+      , EgCase
+          "complex parents two round"
+          [ EgRound complexParentTerms [] [] [(leafA, leafB), (leafC, leafD), (parentAC, parentBD)]
+          , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafC, leafD), (parentAC, parentBD)]
+          , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD], [parentAC, parentBD]] []
+          ]
+      , EgCase
+          "simple grandparents"
+          [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
+          , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
+          ]
+      , EgCase
+          "complex grandparents bottom up"
+          [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+          , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD]] [(leafB, leafE), (grandparentBAC, grandparentEAD)]
+          , EgRound [] [[leafB, leafE]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
+          ]
+      , EgCase
+          "complex grandparents top down"
+          [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+          , EgRound [] [[leafB, leafE]] [[leafB, leafE]] [(leafC, leafD), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+          , EgRound [] [[leafC, leafD]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
+          ]
+      , EgCase
+          "connect"
+          [ EgRound leafTerms [] [] [(leafA, leafB), (leafA, leafC), (leafB, leafC), (leafA, leafD)]
+          , EgRound [] [[leafA, leafB]] [[leafA, leafB]] [(leafA, leafC), (leafA, leafD)]
+          , EgRound [] [[leafC, leafD]] [[leafA, leafB], [leafC, leafD]] [(leafA, leafD)]
+          , EgRound [] [[leafB, leafD]] [[leafA, leafB, leafC, leafD]] []
+          ]
+      , EgCase
+          "mid grandparents"
+          [ EgRound simpleGrandparentTerms [] [] [(leafC, leafD), (parentAC, parentAD), (grandparentAAC, grandparentAAD)]
+          , EgRound [] [[parentAC, parentAD]] [[parentAC, parentAD], [grandparentAAC, grandparentAAD]] [(leafC, leafD)]
+          , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD], [grandparentAAC, grandparentAAD]] []
+          ]
+      , EgCase
+          "unify node"
+          [ EgRound [BinTreeBranch parentAC leafA, parentAA] [] [] [(parentAC, parentAA)]
+          , EgRound [] [[leafA, leafC]] [[parentAC, parentAA]] []
+          ]
+      , EgCase
+          "self parent"
+          [ EgRound [BinTreeBranch parentAC leafB] [] [] []
+          , EgRound [] [[parentAC, leafA]] [] []
+          ]
+      , EgCase
+          "self parent again"
+          [ EgRound [leafB, parentAA] [] [] []
+          , EgRound [] [[leafB, leafA], [leafB, parentAA]] [] []
+          ]
+      , EgCase
+          "dead add parent"
+          [ EgRound [parentAC, leafB] [[leafA, parentAC], [leafA, leafC]] [[parentAC, leafC]] [(leafA, leafB)]
+          , EgRound [parentCA] [] [[parentCA, parentAC]] []
+          ]
+      , EgCase
+          "repro 1"
+          [ EgRound [BinTreeBranch parentAA parentAB] [[leafB, leafA]] [] [(leafB, parentAA)]
+          , EgRound [leafA] [[parentAA, leafA]] [[leafB, parentAA]] []
+          ]
+      , let grandparent = BinTreeBranch parentAA leafB
+            greatGrandparent = BinTreeBranch grandparent leafA
+        in  EgCase
+              "repro 2"
+              [ EgRound [greatGrandparent, leafA, leafC] [[greatGrandparent, parentAA], [leafA, leafB]] [] []
+              , EgRound [leafA, leafA] [[leafA, grandparent]] [] []
+              , EgRound [leafA, leafA, leafA] [[parentAA, leafA]] [] []
+              ]
+      ]
 
 testEgCase :: EgCase -> TestTree
-testEgCase (EgCase name rounds) = kase where
+testEgCase (EgCase name rounds) = kase
+ where
   findMayTerm t = fmap (egFindTerm t) get
   findTerm t = fmap fromJust (findMayTerm t)
   findTerms ts = fmap ILS.fromList (for ts findTerm)
@@ -866,8 +986,9 @@ testEgCase (EgCase name rounds) = kase where
         i /== j
 
 testEgCases :: TestTree
-testEgCases = testGroup "Eg case" $
-  testEgCase <$> allEgCases
+testEgCases =
+  testGroup "Eg case" $
+    testEgCase <$> allEgCases
 
 testEgNew :: TestTree
 testEgNew = testUnit "EG new" $ do
@@ -880,11 +1001,13 @@ genNodePairs :: Range Int -> EGV -> Gen [(EClassId, EClassId)]
 genNodePairs nOpsRange eg = genListOfDistinctPairs nOpsRange (ILM.keys (egClassMap eg))
 
 genSomeList :: [a] -> Gen [a]
-genSomeList xs = go where
+genSomeList xs = go
+ where
   go = Gen.recursive Gen.choice [Gen.constant [], fmap pure (Gen.element xs)] [Gen.subterm2 go go (++)]
 
 genBinTree :: Gen a -> Gen (BinTree a)
-genBinTree genA = genEither where
+genBinTree genA = genEither
+ where
   genLeaf = fmap BinTreeLeaf genA
   genBranch = Gen.subterm2 genEither genEither BinTreeBranch
   genEither = Gen.recursive Gen.choice [genLeaf] [genBranch]
@@ -895,17 +1018,18 @@ genBinTreeMembers maxElems = Gen.list (Range.linear 0 maxElems) (genBinTree (gen
 -- An alternative to 'genBinTreeMembers' that makes smaller trees
 mkSimpleTreeLevels :: Int -> [BinTree V]
 mkSimpleTreeLevels maxElems =
-  let letters = take maxElems (['a'..'z'] ++ ['A'..'Z'])
+  let letters = take maxElems (['a' .. 'z'] ++ ['A' .. 'Z'])
       zeroLevel = fmap (BinTreeLeaf . toV) letters
       mkLevel y x = (BinTreeBranch <$> x <*> y) ++ (BinTreeBranch <$> y <*> x)
       mkLevels y = foldr (\x r -> mkLevel y x ++ r) (BinTreeBranch <$> y <*> y)
       oneLevel = mkLevels zeroLevel []
       twoLevel = mkLevels oneLevel [zeroLevel]
       anyLevel = zeroLevel ++ oneLevel ++ twoLevel
-  in anyLevel
+  in  anyLevel
 
 testEgProp :: TestLimit -> TestTree
-testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testProp "EG prop" lim prop where
+testEgProp lim = after AllSucceed "EG unit" $ after AllSucceed "EG cases" $ testProp "EG prop" lim prop
+ where
   maxElems = 10
   termGen = genBinTreeMembers maxElems
   -- Guarantee yourself small trees with this:
@@ -940,7 +1064,9 @@ testILM = testUnit "ILM unit" $ do
   mLeft <> mRight === mMerged
 
 main :: IO ()
-main = testMain $ \lim -> testGroup "Overeasy"
+main = testMain $ \lim ->
+  testGroup
+    "Overeasy"
     [ testILM
     , testEfUnit
     , testAssocUnit

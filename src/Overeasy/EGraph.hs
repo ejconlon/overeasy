@@ -33,7 +33,8 @@ module Overeasy.EGraph
   , egMergeMany
   , egReanalyzeSubset
   , egReanalyze
-  ) where
+  )
+where
 
 import Control.DeepSeq (NFData)
 import Control.Monad (unless, void)
@@ -51,26 +52,50 @@ import IntLike.Map (IntLikeMap (..))
 import qualified IntLike.Map as ILM
 import IntLike.Set (IntLikeSet (..))
 import qualified IntLike.Set as ILS
-import Overeasy.Assoc (Assoc, AssocInsertRes (..), assocCompactInc, assocFwd, assocInsertInc, assocLookupByValue,
-                       assocMember, assocMembers, assocNew, assocPartialLookupByKey, assocRemoveAllInc, assocSingleton,
-                       assocUnion)
-import Overeasy.EquivFind (EquivFind (..), EquivMergeSetsRes (..), efAddInc, efCanonicalize, efCanonicalizePartial,
-                           efClosure, efCompactInc, efFindRoot, efLookupRoot, efMergeSetsInc, efNew, efRootsSize,
-                           efSubset)
+import Overeasy.Assoc
+  ( Assoc
+  , AssocInsertRes (..)
+  , assocCompactInc
+  , assocFwd
+  , assocInsertInc
+  , assocLookupByValue
+  , assocMember
+  , assocMembers
+  , assocNew
+  , assocPartialLookupByKey
+  , assocRemoveAllInc
+  , assocSingleton
+  , assocUnion
+  )
+import Overeasy.EquivFind
+  ( EquivFind (..)
+  , EquivMergeSetsRes (..)
+  , efAddInc
+  , efCanonicalize
+  , efCanonicalizePartial
+  , efClosure
+  , efCompactInc
+  , efFindRoot
+  , efLookupRoot
+  , efMergeSetsInc
+  , efNew
+  , efRootsSize
+  , efSubset
+  )
 import Overeasy.Source (Source, sourceAddInc, sourceNew)
 import Overeasy.Util (Changed (..), RecursiveWhole, foldWholeM, stateFold)
 
 -- | An opaque class id.
 -- Constructor exported for coercibility.
 -- Num instance for literals only.
-newtype EClassId = EClassId { unEClassId :: Int }
+newtype EClassId = EClassId {unEClassId :: Int}
   deriving stock (Show)
   deriving newtype (Eq, Ord, Enum, Hashable, NFData, Num)
 
 -- | An opaque node id
 -- Constructor exported for coercibility.
 -- Num instance for literals only.
-newtype ENodeId = ENodeId { unENodeId :: Int }
+newtype ENodeId = ENodeId {unENodeId :: Int}
   deriving stock (Show)
   deriving newtype (Eq, Ord, Enum, Hashable, NFData, Num)
 
@@ -89,18 +114,22 @@ data ENodeTriple d = ENodeTriple
   { entNode :: !ENodeId
   , entClass :: !EClassId
   , entData :: !d
-  } deriving stock (Eq, Show, Generic)
-    deriving anyclass (NFData)
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (NFData)
 
 -- | Info stored for every class: analysis data, class members (nodes), and parent nodes.
 data EClassInfo d f = EClassInfo
   { eciData :: !d
   , eciNodes :: !(Assoc ENodeId (f ()))
   , eciParents :: !(IntLikeSet ENodeId)
-  } deriving stock (Generic)
+  }
+  deriving stock (Generic)
 
 deriving stock instance (Eq d, Eq (f ())) => Eq (EClassInfo d f)
+
 deriving stock instance (Show d, Show (f ())) => Show (EClassInfo d f)
+
 deriving anyclass instance (NFData d, NFData (f ())) => NFData (EClassInfo d f)
 
 -- | A set of class ids to merge
@@ -115,15 +144,15 @@ type WorkList = Seq WorkItem
 type ClassReplacements = EquivFind EClassId
 
 -- | Merging classes can result in a few outcomes:
-data MergeResult a =
+data MergeResult a
+  = -- | All classes already merged, no change
     MergeResultUnchanged
-  -- ^ All classes already merged, no change
-  | MergeResultMissing !WorkItem
-  -- ^ Some classes missing, returns first problematic worklist entry
-  -- (note that not all classes in worklist item will be missing,
-  -- only at least one from the set)
-  | MergeResultChanged !a
-  -- ^ Some classes merged, returns root map or merged class id
+  | -- | Some classes missing, returns first problematic worklist entry
+    -- (note that not all classes in worklist item will be missing,
+    -- only at least one from the set)
+    MergeResultMissing !WorkItem
+  | -- | Some classes merged, returns root map or merged class id
+    MergeResultChanged !a
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 -- | An E-Graph implementation
@@ -143,10 +172,13 @@ data EGraph d f = EGraph
   , egHashCons :: !(IntLikeMap ENodeId EClassId)
   -- ^ Map of node to class
   -- Invariant: only contains root classes.
-  } deriving stock (Generic)
+  }
+  deriving stock (Generic)
 
 deriving stock instance (Eq d, Eq (f EClassId), Eq (f ())) => Eq (EGraph d f)
+
 deriving stock instance (Show d, Show (f EClassId), Show (f ())) => Show (EGraph d f)
+
 deriving anyclass instance (NFData d, NFData (f EClassId), NFData (f ())) => NFData (EGraph d f)
 
 -- | Number of equivalent classes in the 'EGraph' (see 'ufSize')
@@ -201,11 +233,11 @@ egCanonicalizeInternal x = state $ \eg ->
       node = assocPartialLookupByKey x assoc
       fz = efCanonicalizePartial node ef
       ((y, res), assoc') = assocInsertInc x fz assoc
-  in case res of
-    AssocInsertResUnchanged -> ((y, Nothing), eg)
-    AssocInsertResMerged toDelete ->
-      ((y, Just toDelete), eg { egNodeAssoc = assoc' })
-    _ -> ((y, Nothing), eg { egNodeAssoc = assoc' })
+  in  case res of
+        AssocInsertResUnchanged -> ((y, Nothing), eg)
+        AssocInsertResMerged toDelete ->
+          ((y, Just toDelete), eg {egNodeAssoc = assoc'})
+        _ -> ((y, Nothing), eg {egNodeAssoc = assoc'})
 
 -- private
 data AddNodeRes d = AddNodeRes !Changed !(Seq (ENodeTriple d))
@@ -246,12 +278,13 @@ egAddNodeSub ana fcd = do
           d = ana (fmap entData fcd)
           eci = EClassInfo d (assocSingleton n (void fcd)) ILS.empty
           classMap' = ILM.insert x eci (egClassMap eg)
-          eg' = eg { egNodeSource = nodeSource', egClassSource = classSource', egEquivFind = ef', egNodeAssoc = assoc', egHashCons = hc', egClassMap = classMap' }
-      in ((ChangedYes, ENodeTriple n x d), eg')
+          eg' = eg {egNodeSource = nodeSource', egClassSource = classSource', egEquivFind = ef', egNodeAssoc = assoc', egHashCons = hc', egClassMap = classMap'}
+      in  ((ChangedYes, ENodeTriple n x d), eg')
 
 -- private
 egAddTermSub :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId), Hashable (f ())) => EAnalysis d f -> t -> State (EGraph d f) (AddNodeRes d, ENodeTriple d)
-egAddTermSub ana = go where
+egAddTermSub ana = go
+ where
   go t = do
     -- unwrap to work with the functor layer
     let ft = project t
@@ -266,8 +299,8 @@ egAddTermSub ana = go where
     unless (Seq.null children) $
       modify' $ \eg ->
         -- Add node to class parents (unless it's a self parent)
-        let cm' = foldl' (\cm (ENodeTriple _ c _) -> ILM.adjust (\v -> if assocMember n (eciNodes v) then v else v { eciParents = ILS.insert n (eciParents v) }) c cm) (egClassMap eg) children
-        in eg { egClassMap = cm' }
+        let cm' = foldl' (\cm (ENodeTriple _ c _) -> ILM.adjust (\v -> if assocMember n (eciNodes v) then v else v {eciParents = ILS.insert n (eciParents v)}) c cm) (egClassMap eg) children
+        in  eg {egClassMap = cm'}
     pure (AddNodeRes (changed1 <> changed2) (Seq.singleton z), z)
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
@@ -279,16 +312,19 @@ egAddTerm ana t = fmap (\(AddNodeRes c _, ENodeTriple _ x _) -> (c, x)) (egAddTe
 -- Returns 'Nothing' if the classes are not found or if they're already equal.
 -- Otherwise returns the class remapping.
 -- Note that it's MUCH more efficient to accumulate a 'WorkList' and use 'egMergeMany'.
-egMerge :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Eq (f ()), Hashable (f ()))
-  => EClassId -> EClassId -> State (EGraph d f) (MergeResult EClassId)
+egMerge
+  :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Eq (f ()), Hashable (f ()))
+  => EClassId
+  -> EClassId
+  -> State (EGraph d f) (MergeResult EClassId)
 egMerge i j = do
   mr <- egMergeMany (Seq.singleton (ILS.fromList [i, j]))
   -- We're guaranteed to have one and only one root in the map, so this won't fail
   pure (fmap (fst . head . ILM.toList . efFwd . fst) mr)
 
 -- private
-data BuildWorkResult a =
-    BuildWorkResultUnchanged
+data BuildWorkResult a
+  = BuildWorkResultUnchanged
   | BuildWorkResultMissing !WorkItem
   | BuildWorkResultOk !a
 
@@ -300,18 +336,20 @@ egBuildWorkItem cs = do
     Nothing -> BuildWorkResultMissing cs
     Just roots ->
       let rootsSet = ILS.fromList roots
-      in if ILS.size rootsSet < 2
-        then BuildWorkResultUnchanged
-        else BuildWorkResultOk rootsSet
+      in  if ILS.size rootsSet < 2
+            then BuildWorkResultUnchanged
+            else BuildWorkResultOk rootsSet
 
 -- private
 egBuildWorklist :: WorkList -> State (EGraph d f) (BuildWorkResult WorkList)
-egBuildWorklist = go Empty where
+egBuildWorklist = go Empty
+ where
   go !acc = \case
     Empty ->
-      pure $! if Seq.null acc
-        then BuildWorkResultUnchanged
-        else BuildWorkResultOk acc
+      pure $!
+        if Seq.null acc
+          then BuildWorkResultUnchanged
+          else BuildWorkResultOk acc
     cs :<| wl' -> do
       rcs <- egBuildWorkItem cs
       case rcs of
@@ -328,8 +366,10 @@ egBuildWorklist = go Empty where
 -- canonicalize with the returned mapping.
 -- Also note that the analysis of a given class is going to be an UNDER-APPROXIMATION
 -- of the true analysis value, because per-node analyses are not recomputed.
-egMergeMany :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Eq (f ()), Hashable (f ()))
-  => WorkList -> State (EGraph d f) (MergeResult (ClassReplacements, IntLikeSet EClassId))
+egMergeMany
+  :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Eq (f ()), Hashable (f ()))
+  => WorkList
+  -> State (EGraph d f) (MergeResult (ClassReplacements, IntLikeSet EClassId))
 egMergeMany wl0 = do
   br <- egBuildWorklist wl0
   case br of
@@ -342,25 +382,27 @@ egMergeMany wl0 = do
 -- 1. map of old class -> new class for changed classes only
 -- 2. closure of remapped classes (includes roots)
 egRebuildMerge :: WorkList -> State (EGraph d f) (IntLikeMap EClassId EClassId, IntLikeSet EClassId)
-egRebuildMerge wl = finalRes where
+egRebuildMerge wl = finalRes
+ where
   finalRes = state $ \eg ->
     let ef = egEquivFind eg
-    in case efMergeSetsInc (toList wl) ef of
-      EquivMergeSetsResChanged roots classRemapSet ef' ->
-        let classRemap = ILM.fromList (fmap (\c -> (c, efLookupRoot c ef')) (ILS.toList classRemapSet))
-            closure = efClosure (ILS.toList roots) ef'
-        in ((classRemap, closure), eg { egEquivFind = ef' })
-      _ -> ((ILM.empty, ILS.empty), eg)
+    in  case efMergeSetsInc (toList wl) ef of
+          EquivMergeSetsResChanged roots classRemapSet ef' ->
+            let classRemap = ILM.fromList (fmap (\c -> (c, efLookupRoot c ef')) (ILS.toList classRemapSet))
+                closure = efClosure (ILS.toList roots) ef'
+            in  ((classRemap, closure), eg {egEquivFind = ef'})
+          _ -> ((ILM.empty, ILS.empty), eg)
 
 -- private
 -- Loop through nodes of all changed classes and update the hashcons to point to new classes
 egRebuildHashCons :: IntLikeMap EClassId EClassId -> State (EGraph d f) ()
 egRebuildHashCons classRemap =
-  modify' (\eg -> let hc' = foldl' (go (egClassMap eg)) (egHashCons eg) (ILM.toList classRemap) in eg { egHashCons = hc' }) where
+  modify' (\eg -> let hc' = foldl' (go (egClassMap eg)) (egHashCons eg) (ILM.toList classRemap) in eg {egHashCons = hc'})
+ where
   go cm hc (oldClassId, newClassId) =
     let eci = ILM.partialLookup oldClassId cm
         nodes = eciNodes eci
-    in foldl' (flip (`ILM.insert` newClassId)) hc (assocMembers nodes)
+    in  foldl' (flip (`ILM.insert` newClassId)) hc (assocMembers nodes)
 
 -- private
 -- For each touched class, recanonicalize all its nodes
@@ -384,9 +426,9 @@ egRebuildAssoc origHc classRemap touchedClasses = do
         Just equivNs ->
           let allNs = ILS.insert newN equivNs
               allEquivClasses = ILS.map (`ILM.partialLookup` hc) allNs
-          in if ILS.size allEquivClasses > 1
-            then pure (True, parentWl' :|> allEquivClasses)
-            else pure (changed', parentWl')
+          in  if ILS.size allEquivClasses > 1
+                then pure (True, parentWl' :|> allEquivClasses)
+                else pure (changed', parentWl')
     -- Emit observing parents if:
     --   1. class has changed
     --   2. any nodes have changed during canonicalization
@@ -428,7 +470,7 @@ egRebuildClassSingle newClass oldClasses initCm =
       finalParents = ILS.difference candParents (ILS.fromList (assocMembers finalNodes))
       finalInfo = EClassInfo finalData finalNodes finalParents
       finalCm = ILM.insert newClass finalInfo initCm
-  in finalCm
+  in  finalCm
 
 -- private
 -- Rebuilds the classmap: merges old class infos into root class infos
@@ -442,7 +484,7 @@ egRebuildClassMap touchedClasses = state $ \eg ->
       classReplacements = efSubset (ILS.toList roots) ef
       -- Rebuild the class map
       cm' = foldl' (\cm (r, vs) -> egRebuildClassSingle r vs cm) (egClassMap eg) (ILM.toList (efFwd classReplacements))
-  in (classReplacements, eg { egClassMap = cm' })
+  in  (classReplacements, eg {egClassMap = cm'})
 
 -- private
 -- Rebuilds the 'EGraph' - merges classes as requested in the worklist and recanonicalizes.
@@ -451,7 +493,8 @@ egRebuildClassMap touchedClasses = state $ \eg ->
 -- 1. class remapping (roots -> removed classes)
 -- 2. touched root classes
 egRebuild :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Eq (f ()), Hashable (f ())) => WorkList -> State (EGraph d f) (ClassReplacements, IntLikeSet EClassId)
-egRebuild wl0 = goRec where
+egRebuild wl0 = goRec
+ where
   goRec = do
     -- Note the existing hashcons
     origHc <- gets egHashCons
@@ -490,7 +533,8 @@ egCompactSelfClass nodeReplacements (EClassInfo dat nodes parents) =
 -- private
 -- Find all classes that have dead nodes
 findDeadNodeParentClasses :: Foldable f => Assoc ENodeId (f EClassId) -> [ENodeId] -> IntLikeSet EClassId
-findDeadNodeParentClasses assoc = foldl' go ILS.empty where
+findDeadNodeParentClasses assoc = foldl' go ILS.empty
+ where
   go s n = foldl' (flip ILS.insert) s (assocPartialLookupByKey n assoc)
 
 -- private
@@ -518,7 +562,7 @@ egCompactInc rm eg =
       cm'' = foldl' (flip (ILM.adjust (egCompactParentClass nodeReplacements))) cm' (ILS.toList deadNodeParentClasses)
       -- rewrite dead self nodes in classmap
       cm''' = foldl' (flip (ILM.adjust (egCompactSelfClass nodeReplacements))) cm'' (ILS.toList deadNodeSelfClasses)
-  in eg { egEquivFind = ef', egNodeAssoc = assoc', egClassMap = cm''', egHashCons = hc' }
+  in  eg {egEquivFind = ef', egNodeAssoc = assoc', egClassMap = cm''', egHashCons = hc'}
 
 -- private
 egCompact :: (Foldable f, Eq (f ()), Hashable (f ())) => ClassReplacements -> State (EGraph d f) ()
@@ -531,7 +575,8 @@ egCompact = modify' . egCompactInc
 -- It may be necessary to call this because merging may leave class analyses in an
 -- under-approximating state. This method gives you the true analysis by fixed point.
 egReanalyzeSubset :: (Eq d, Semigroup d, Functor f) => EAnalysis d f -> IntLikeSet EClassId -> State (EGraph d f) ()
-egReanalyzeSubset ana tr = goStart where
+egReanalyzeSubset ana tr = goStart
+ where
   goStart = do
     cm <- gets egClassMap
     let am = ILM.map eciData cm
@@ -543,25 +588,25 @@ egReanalyzeSubset ana tr = goStart where
     let onNode n =
           let fc = ILM.partialLookup n fwd
               fd = fmap (`ILM.partialLookup` am0) fc
-          in ana fd
+          in  ana fd
     let calcClass cr =
           let nodes = eciNodes (ILM.partialLookup cr cm)
-          in case ILM.keys (assocFwd nodes) of
-            n0:ns ->
-              let d0 = onNode n0
-              in foldl' (\d n -> d <> onNode n) d0 ns
-            [] -> error "impossible"
+          in  case ILM.keys (assocFwd nodes) of
+                n0 : ns ->
+                  let d0 = onNode n0
+                  in  foldl' (\d n -> d <> onNode n) d0 ns
+                [] -> error "impossible"
     let onClassRoot p@(_, amx) cr =
           let d0 = ILM.partialLookup cr am0
               d1 = calcClass cr
-          in if d0 == d1 then p else (True, ILM.insert cr d1 amx)
+          in  if d0 == d1 then p else (True, ILM.insert cr d1 amx)
     let (changed, am1) = foldl' onClassRoot (False, am0) (ILS.toList tr)
     if changed
       then goRec am1
       else modify' $ \eg ->
         let cm0 = egClassMap eg
-            cm1 = ILM.mapWithKey (\i c -> c { eciData = ILM.partialLookup i am1 } ) cm0
-        in eg { egClassMap = cm1 }
+            cm1 = ILM.mapWithKey (\i c -> c {eciData = ILM.partialLookup i am1}) cm0
+        in  eg {egClassMap = cm1}
 
 -- | Reanalyze all classes in the graph.
 egReanalyze :: (Eq d, Semigroup d, Functor f) => EAnalysis d f -> State (EGraph d f) ()

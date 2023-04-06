@@ -10,7 +10,8 @@ module Overeasy.Source
   , sourceSkipInc
   , sourceSkip
   , sourcePeek
-  ) where
+  )
+where
 
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (State, modify', state)
@@ -22,8 +23,9 @@ data Source x = Source
   { sourceSize :: !Int
   -- ^ How many ids have ever been created?
   , sourceNextId :: !Int
-  } deriving stock (Eq, Show, Generic)
-    deriving anyclass (NFData)
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (NFData)
 
 -- | Creates a new 'Source' from a starting id
 sourceNew :: Coercible x Int => x -> Source x
@@ -41,7 +43,7 @@ sourceAdd = state sourceAddInc
 sourceSkipInc :: Coercible x Int => x -> Source x -> Source x
 sourceSkipInc y (Source s x) =
   let z = coerce y
-  in Source (s + 1) (max x (z + 1))
+  in  Source (s + 1) (max x (z + 1))
 
 -- | Skips past the given id (statefully)
 sourceSkip :: Coercible x Int => x -> State (Source x) ()

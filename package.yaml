@@ -81,4 +81,4 @@ tests:
     dependencies:
     - overeasy
     - prop-unit >= 0.1 && < 0.2
-    - hedgehog >= 1.0 && < 1.1
+    - hedgehog >= 1.0 && < 1.2

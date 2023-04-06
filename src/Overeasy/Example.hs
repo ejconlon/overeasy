@@ -8,7 +8,8 @@ module Overeasy.Example
   , exampleGraph
   , examplePat
   , exampleMain
-  ) where
+  )
+where
 
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (execState)
@@ -21,8 +22,8 @@ import Unfree (pattern FreeEmbed, pattern FreePure)
 
 -- | Arithmetic expressions.
 -- 'ArithF' is the base functor for this type.
-data Arith =
-    ArithPlus Arith Arith
+data Arith
+  = ArithPlus Arith Arith
   | ArithTimes Arith Arith
   | ArithShiftL Arith !Int
   | ArithShiftR Arith !Int
@@ -34,9 +35,13 @@ data Arith =
 makeBaseFunctor ''Arith
 
 deriving stock instance Eq a => Eq (ArithF a)
+
 deriving stock instance Show a => Show (ArithF a)
+
 deriving stock instance Generic (ArithF a)
+
 deriving anyclass instance Hashable a => Hashable (ArithF a)
+
 deriving anyclass instance NFData a => NFData (ArithF a)
 
 -- | Creates a simple e-graph with the equality `2 + 2 = 4`.

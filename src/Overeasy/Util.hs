@@ -10,7 +10,8 @@ module Overeasy.Util
   , stateOption
   , stateFailChanged
   , stateFold
-  ) where
+  )
+where
 
 import Control.DeepSeq (NFData)
 import Control.Monad (foldM, forM_)
@@ -27,7 +28,8 @@ type RecursiveWhole t f = (Recursive t, Whole t f)
 
 -- | Traverses a recursive structure
 foldWholeM :: (RecursiveWhole t f, Traversable f, Monad m) => (f a -> m a) -> t -> m a
-foldWholeM h = go where
+foldWholeM h = go
+ where
   go t = do
     let ft = project t
     fa <- traverse go ft

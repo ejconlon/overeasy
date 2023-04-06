@@ -1,7 +1,0 @@
-cradle:
-  stack:
-    - path: "./src"
-      component: "overeasy:lib"
-
-    - path: "./test"
-      component: "overeasy:test:overeasy-test"
