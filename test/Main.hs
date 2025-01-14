@@ -1,5 +1,6 @@
 module Main (main) where
 
+import Bowtie.Free (pattern FreeEmbed, pattern FreePure)
 import Control.DeepSeq (NFData, force)
 import Control.Exception (evaluate)
 import Control.Monad (foldM, unless, when)
@@ -20,9 +21,8 @@ import Data.Bifunctor (bimap)
 import Data.Char (chr, ord)
 import Data.Coerce (coerce)
 import Data.Foldable (for_)
-import qualified Data.HashMap.Strict as HashMap
-import Data.Hashable (Hashable)
 import Data.List (delete)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, isJust)
 import Data.Semigroup (Max (..))
 import qualified Data.Sequence as Seq
@@ -95,7 +95,6 @@ import PropUnit
   ( DependencyType (..)
   , Gen
   , MonadTest
-  , PropertyT
   , Range
   , TestLimit
   , TestTree
@@ -110,18 +109,17 @@ import PropUnit
   , (===)
   )
 import Test.Overeasy.BinTree (BinTree, BinTreeF (..), pattern BinTreeBranch, pattern BinTreeLeaf)
-import Unfree (pattern FreeEmbed, pattern FreePure)
 
 fullyEvaluate :: (MonadIO m, NFData a) => a -> m a
 fullyEvaluate = liftIO . evaluate . force
 
-applyS :: Monad m => State s a -> StateT s m a
+applyS :: (Monad m) => State s a -> StateT s m a
 applyS = state . runState
 
-testS :: Monad m => (s -> m a) -> StateT s m a
+testS :: (Monad m) => (s -> m a) -> StateT s m a
 testS p = get >>= lift . p
 
-applyTestS :: Monad m => State s a -> (a -> s -> m b) -> StateT s m b
+applyTestS :: (Monad m) => State s a -> (a -> s -> m b) -> StateT s m b
 applyTestS act check = do
   a <- applyS act
   s <- get
@@ -130,14 +128,14 @@ applyTestS act check = do
 foldS_ :: (Monad m, Foldable t) => s -> t a -> (a -> StateT s m ()) -> m s
 foldS_ z as f = execStateT (for_ as f) z
 
-runS :: Monad m => s -> StateT s m () -> m ()
+runS :: (Monad m) => s -> StateT s m () -> m ()
 runS = flip evalStateT
 
-flipFoldM :: Monad m => b -> [a] -> (b -> a -> m b) -> m b
+flipFoldM :: (Monad m) => b -> [a] -> (b -> a -> m b) -> m b
 flipFoldM b as f = foldM f b as
 
 newtype V = V {unV :: Int}
-  deriving newtype (Eq, Ord, Hashable, NFData)
+  deriving newtype (Eq, Ord, NFData)
 
 instance Show V where
   show = show . fromV
@@ -206,7 +204,7 @@ testEfSimple = testUnit "EF simple" $ runS efNew $ do
   applyTestS (efMerge (toV 'c') (toV 'a')) $ \res _ -> res === Nothing
   applyTestS (efMerge (toV 'b') (toV 'z')) $ \res _ -> res === Nothing
 
-resetEf :: StateT EF (PropertyT IO) ()
+resetEf :: (MonadTest m) => StateT EF m ()
 resetEf = do
   put efNew
   _ <- applyS (efAdd (toV 'a'))
@@ -217,7 +215,7 @@ resetEf = do
   efFwd ef === multiMapV [('a', "c"), ('b', "")]
   efBwd ef === mapV [('c', 'a')]
 
-addExtraEf :: StateT EF (PropertyT IO) ()
+addExtraEf :: (MonadTest m) => StateT EF m ()
 addExtraEf = do
   _ <- applyS (efAdd (toV 'd'))
   _ <- applyS (efMerge (toV 'a') (toV 'd'))
@@ -366,7 +364,7 @@ testEfCompact = testUnit "EF compact" $ runS efNew $ do
 testEfUnit :: TestTree
 testEfUnit = testGroup "EF unit" [testEfSimple, testEfRec, testEfMany, testEfSets, testEfCompact, testEfRemove]
 
-genDistinctPairFromList :: Eq a => [a] -> Gen (a, a)
+genDistinctPairFromList :: (Eq a) => [a] -> Gen (a, a)
 genDistinctPairFromList = \case
   xs@(_ : _ : _) -> do
     a <- Gen.element xs
@@ -374,7 +372,7 @@ genDistinctPairFromList = \case
     pure (a, b)
   _ -> error "List needs more than two elements"
 
-genListOfDistinctPairs :: Eq a => Range Int -> [a] -> Gen [(a, a)]
+genListOfDistinctPairs :: (Eq a) => Range Int -> [a] -> Gen [(a, a)]
 genListOfDistinctPairs nOpsRange vs =
   if length vs < 2
     then pure []
@@ -458,25 +456,25 @@ testEfProp lim = after AllSucceed "EF unit" $ testProp "EF prop" lim $ do
 type AV = Assoc ENodeId V
 
 -- | Asserts assoc is compact - should also check 'assertAssocInvariants'
-assertAssocCompact :: (MonadTest m, Eq a, Hashable a, Show a) => Assoc ENodeId a -> m ()
+assertAssocCompact :: (MonadTest m, Ord a, Show a) => Assoc ENodeId a -> m ()
 assertAssocCompact av = do
   let fwd = assocFwd av
       bwd = assocBwd av
   -- Assert that the assoc has been rebuilt
   assert $ not (assocCanCompact av)
   -- Look at sizes to confirm that assoc could map 1-1
-  ILM.size fwd === HashMap.size bwd
+  ILM.size fwd === Map.size bwd
   -- Go through keys forward
   for_ (ILM.toList fwd) $ \(x, fc) -> do
     -- Assert is found in backward map AND maps back
-    HashMap.lookup fc bwd === Just x
+    Map.lookup fc bwd === Just x
   -- Go through keys backward
-  for_ (HashMap.toList bwd) $ \(fc, x) ->
+  for_ (Map.toList bwd) $ \(fc, x) ->
     -- Assert is present in forward map AND maps back
     ILM.lookup x fwd === Just fc
 
 -- | Asserts assoc is correctly structured (compact or not)
-assertAssocInvariants :: (MonadTest m, Eq a, Hashable a) => Assoc ENodeId a -> m ()
+assertAssocInvariants :: (MonadTest m, Ord a) => Assoc ENodeId a -> m ()
 assertAssocInvariants av = do
   let fwd = assocFwd av
       bwd = assocBwd av
@@ -485,9 +483,9 @@ assertAssocInvariants av = do
   -- Go through keys forward
   for_ (ILM.toList fwd) $ \(_, fc) -> do
     -- Assert is found in backward map
-    assert $ HashMap.member fc bwd
+    assert $ Map.member fc bwd
   -- Go through keys backward
-  for_ (HashMap.toList bwd) $ \(_, x) ->
+  for_ (Map.toList bwd) $ \(_, x) ->
     -- Assert is present in forward map
     assert $ ILM.member x fwd
   -- Assert that fwd keys are exactly the equiv roots
@@ -569,7 +567,7 @@ mkAssoc rawPairs =
   let pairs = fmap (bimap ENodeId toV) rawPairs
   in  assocFromList pairs
 
-runAV :: Monad m => [(Int, Char)] -> StateT AV m () -> m ()
+runAV :: (Monad m) => [(Int, Char)] -> StateT AV m () -> m ()
 runAV = runS . mkAssoc
 
 testAssocCase :: AssocCase -> TestTree
@@ -696,7 +694,7 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
                       )
                   )
               )
-              (HashMap.fromList [("x", cidTwo), ("y", cidTwo)])
+              (Map.fromList [("x", cidTwo), ("y", cidTwo)])
           ]
   -- Merge `4` and `4` and assert things haven't changed
   applyTestS (egMerge cidFour cidFour) $ \m _ -> do
@@ -724,7 +722,7 @@ testEgUnit = after AllSucceed "Assoc unit" $ testUnit "EG unit" $ runS egNew $ d
                       )
                   )
               )
-              (HashMap.fromList [("x", cidTwo), ("y", cidTwo)])
+              (Map.fromList [("x", cidTwo), ("y", cidTwo)])
           ]
 
 type EGD = Max V
@@ -740,7 +738,7 @@ maxVAnalysis = \case
   BinTreeLeafF v -> Max v
   BinTreeBranchF d1 d2 -> d1 <> d2
 
-assertEgInvariants :: (MonadTest m, Traversable f, Eq (f EClassId), Hashable (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
+assertEgInvariants :: (MonadTest m, Traversable f, Ord (f EClassId), Show (f EClassId)) => EGraph d f -> m ()
 assertEgInvariants eg = do
   let assoc = egNodeAssoc eg
       hc = egHashCons eg
@@ -801,7 +799,7 @@ assertEgInvariants eg = do
   -- Assert hc keys are exactly the class nodes
   cmNodes === hcNodes
   -- Now test recanonicalization - we already know assoc fwd and bwd are 1-1
-  for_ (HashMap.toList bwd) $ \(fc, _) ->
+  for_ (Map.toList bwd) $ \(fc, _) ->
     let recanon = evalState (egCanonicalize fc) eg
     in  recanon === Right fc
 
@@ -880,13 +878,21 @@ allEgCases =
           ]
       , EgCase
           "complex grandparents bottom up"
-          [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+          [ EgRound
+              complexGrandparentTerms
+              []
+              []
+              [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
           , EgRound [] [[leafC, leafD]] [[leafC, leafD], [parentAC, parentAD]] [(leafB, leafE), (grandparentBAC, grandparentEAD)]
           , EgRound [] [[leafB, leafE]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
           ]
       , EgCase
           "complex grandparents top down"
-          [ EgRound complexGrandparentTerms [] [] [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
+          [ EgRound
+              complexGrandparentTerms
+              []
+              []
+              [(leafC, leafD), (leafB, leafE), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
           , EgRound [] [[leafB, leafE]] [[leafB, leafE]] [(leafC, leafD), (parentAC, parentAD), (grandparentBAC, grandparentEAD)]
           , EgRound [] [[leafC, leafD]] [[leafC, leafD], [leafB, leafE], [parentAC, parentAD], [grandparentBAC, grandparentEAD]] []
           ]

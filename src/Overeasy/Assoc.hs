@@ -37,9 +37,8 @@ import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (MonadState (..), State, modify')
 import Data.Coerce (Coercible)
 import Data.Foldable (foldl')
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
-import Data.Hashable (Hashable)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust)
 import GHC.Generics (Generic)
 import IntLike.Map (IntLikeMap)
@@ -72,7 +71,7 @@ import Overeasy.EquivFind
 data Assoc x a = Assoc
   { assocFwd :: !(IntLikeMap x a)
   -- ^ Map from id to element
-  , assocBwd :: !(HashMap a x)
+  , assocBwd :: !(Map a x)
   -- ^ Map from element to id
   , assocEquiv :: !(EquivFind x)
   -- ^ Equivalence classes of ids
@@ -86,11 +85,11 @@ assocSize = ILM.size . assocFwd
 
 -- | Creates an empty assoc
 assocNew :: Assoc x a
-assocNew = Assoc ILM.empty HashMap.empty efNew
+assocNew = Assoc ILM.empty Map.empty efNew
 
 -- | Creates a singleton assoc
-assocSingleton :: (Coercible x Int, Hashable a) => x -> a -> Assoc x a
-assocSingleton x a = Assoc (ILM.singleton x a) (HashMap.singleton a x) (efSingleton x)
+assocSingleton :: (Coercible x Int) => x -> a -> Assoc x a
+assocSingleton x a = Assoc (ILM.singleton x a) (Map.singleton a x) (efSingleton x)
 
 -- | The result of inserting into the assoc, if you're interested.
 data AssocInsertRes x
@@ -101,7 +100,7 @@ data AssocInsertRes x
   deriving stock (Eq, Show)
 
 -- | Insert into the assoc (raw version)
-assocInsertInc :: (Coercible x Int, Ord x, Eq a, Hashable a) => x -> a -> Assoc x a -> ((x, AssocInsertRes x), Assoc x a)
+assocInsertInc :: (Coercible x Int, Ord x, Ord a) => x -> a -> Assoc x a -> ((x, AssocInsertRes x), Assoc x a)
 assocInsertInc x a1 assoc@(Assoc fwd bwd equiv) = finalRes
  where
   finalRes =
@@ -117,95 +116,91 @@ assocInsertInc x a1 assoc@(Assoc fwd bwd equiv) = finalRes
           then -- the value has not changed, don't need to change assoc
             ((w, AssocInsertResUnchanged), assoc)
           else -- value has changed, need to check if it's fresh
-          case HashMap.lookup a1 bwd of
-            -- never seen; insert and return
-            Nothing ->
-              let fwd' = ILM.insert w a1 fwd
-                  bwd' = HashMap.insert a1 w (HashMap.delete a0 bwd)
-              in  ((w, AssocInsertResUpdated), Assoc fwd' bwd' equiv)
-            -- mapped to another set of nodes, merge
-            Just v ->
-              let (toKeep, toDelete, equiv') = efUnsafeMerge w v equiv
-                  res = AssocInsertResMerged toDelete
-              in  if toKeep == w
-                    then -- w wins
-
-                      let fwd' = ILM.insert w a1 (ILM.delete v fwd)
-                          bwd' = HashMap.insert a1 w (HashMap.delete a0 bwd)
-                      in  ((w, res), Assoc fwd' bwd' equiv')
-                    else -- v wins
-
-                      let fwd' = ILM.delete w fwd
-                          bwd' = HashMap.delete a0 bwd
-                      in  ((v, res), Assoc fwd' bwd' equiv')
+            case Map.lookup a1 bwd of
+              -- never seen; insert and return
+              Nothing ->
+                let fwd' = ILM.insert w a1 fwd
+                    bwd' = Map.insert a1 w (Map.delete a0 bwd)
+                in  ((w, AssocInsertResUpdated), Assoc fwd' bwd' equiv)
+              -- mapped to another set of nodes, merge
+              Just v ->
+                let (toKeep, toDelete, equiv') = efUnsafeMerge w v equiv
+                    res = AssocInsertResMerged toDelete
+                in  if toKeep == w
+                      then -- w wins
+                        let fwd' = ILM.insert w a1 (ILM.delete v fwd)
+                            bwd' = Map.insert a1 w (Map.delete a0 bwd)
+                        in  ((w, res), Assoc fwd' bwd' equiv')
+                      else -- v wins
+                        let fwd' = ILM.delete w fwd
+                            bwd' = Map.delete a0 bwd
+                        in  ((v, res), Assoc fwd' bwd' equiv')
   insertRoot w equiv' =
     -- w is new root that doesn't exist
-    case HashMap.lookup a1 bwd of
+    case Map.lookup a1 bwd of
       -- never seen; insert and return
       Nothing ->
         let fwd' = ILM.insert w a1 fwd
-            bwd' = HashMap.insert a1 w bwd
+            bwd' = Map.insert a1 w bwd
         in  ((w, AssocInsertResCreated), Assoc fwd' bwd' equiv')
       Just v ->
         let (toKeep, toDelete, equiv'') = efUnsafeMerge w v equiv'
             res = AssocInsertResMerged toDelete
         in  if toKeep == w
               then -- w wins
-
                 let fwd' = ILM.insert w a1 (ILM.delete v fwd)
-                    bwd' = HashMap.insert a1 w bwd
+                    bwd' = Map.insert a1 w bwd
                 in  ((w, res), Assoc fwd' bwd' equiv'')
               else -- v wins
-
                 let fwd' = ILM.delete w fwd
                 in  ((v, res), Assoc fwd' bwd equiv'')
 
 -- | Insert into the assoc (the state version)
-assocInsert :: (Coercible x Int, Ord x, Eq a, Hashable a) => x -> a -> State (Assoc x a) (x, AssocInsertRes x)
+assocInsert :: (Coercible x Int, Ord x, Ord a) => x -> a -> State (Assoc x a) (x, AssocInsertRes x)
 assocInsert x a = state (assocInsertInc x a)
 
 -- | Build an assoc from a list of pairs
-assocFromList :: (Coercible x Int, Ord x, Eq a, Hashable a) => [(x, a)] -> Assoc x a
+assocFromList :: (Coercible x Int, Ord x, Ord a) => [(x, a)] -> Assoc x a
 assocFromList = foldl' (\assoc (x, a) -> snd (assocInsertInc x a assoc)) assocNew
 
 -- | Turn an assoc into a list of pairs (NOTE - emits only root keys!)
-assocToList :: Coercible x Int => Assoc x a -> [(x, a)]
+assocToList :: (Coercible x Int) => Assoc x a -> [(x, a)]
 assocToList = ILM.toList . assocFwd
 
 -- | Is the given key in the assoc?
-assocMember :: Coercible x Int => x -> Assoc x a -> Bool
+assocMember :: (Coercible x Int) => x -> Assoc x a -> Bool
 assocMember x (Assoc _ _ equiv) = efMember x equiv
 
 -- | Forward lookup
-assocLookupByKey :: Coercible x Int => x -> Assoc x a -> Maybe a
+assocLookupByKey :: (Coercible x Int) => x -> Assoc x a -> Maybe a
 assocLookupByKey x (Assoc fwd _ equiv) = ILM.lookup (efLookupRoot x equiv) fwd
 
 -- | PARTIAL forward lookup
-assocPartialLookupByKey :: Coercible x Int => x -> Assoc x a -> a
+assocPartialLookupByKey :: (Coercible x Int) => x -> Assoc x a -> a
 assocPartialLookupByKey x = fromJust . assocLookupByKey x
 
 -- | Backward lookup
-assocLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> Maybe x
-assocLookupByValue a = HashMap.lookup a . assocBwd
+assocLookupByValue :: (Ord a) => a -> Assoc x a -> Maybe x
+assocLookupByValue a = Map.lookup a . assocBwd
 
 -- | PARTIAL backward lookup
-assocPartialLookupByValue :: (Eq a, Hashable a) => a -> Assoc x a -> x
-assocPartialLookupByValue a = flip (HashMap.!) a . assocBwd
+assocPartialLookupByValue :: (Ord a) => a -> Assoc x a -> x
+assocPartialLookupByValue a = flip (Map.!) a . assocBwd
 
 -- | Finds the root for the given key (id if not found)
-assocLookupRoot :: Coercible x Int => x -> Assoc x a -> x
+assocLookupRoot :: (Coercible x Int) => x -> Assoc x a -> x
 assocLookupRoot x = efLookupRoot x . assocEquiv
 
 -- | List all root (live, non-compactible) keys
-assocRoots :: Coercible x Int => Assoc x a -> [x]
+assocRoots :: (Coercible x Int) => Assoc x a -> [x]
 assocRoots = efRoots . assocEquiv
 
 -- | List all leaf (dead, compactible) keys
-assocLeaves :: Coercible x Int => Assoc x a -> [x]
+assocLeaves :: (Coercible x Int) => Assoc x a -> [x]
 assocLeaves = efLeaves . assocEquiv
 
 -- | List all entries (root and leaf)
-assocMembers :: Coercible x Int => Assoc x a -> [x]
+assocMembers :: (Coercible x Int) => Assoc x a -> [x]
 assocMembers = efMembers . assocEquiv
 
 -- | Are there dead keys in the equiv from 'assocInsert'?
@@ -213,7 +208,7 @@ assocCanCompact :: Assoc x a -> Bool
 assocCanCompact = efCanCompact . assocEquiv
 
 -- | Removes all dead keys in the equiv (raw version).
-assocCompactInc :: Coercible x Int => Assoc x a -> (IntLikeMap x x, Assoc x a)
+assocCompactInc :: (Coercible x Int) => Assoc x a -> (IntLikeMap x x, Assoc x a)
 assocCompactInc assoc@(Assoc fwd bwd equiv) =
   let replacements = efBwd equiv
       assoc' =
@@ -224,11 +219,11 @@ assocCompactInc assoc@(Assoc fwd bwd equiv) =
 
 -- | Removes all dead keys in the equiv (state version).
 -- Returns map of dead leaf node -> live root node
-assocCompact :: Coercible x Int => State (Assoc x a) (IntLikeMap x x)
+assocCompact :: (Coercible x Int) => State (Assoc x a) (IntLikeMap x x)
 assocCompact = state assocCompactInc
 
 -- | Removes the given keys from the assoc (raw version)
-assocRemoveAllInc :: (Coercible x Int, Eq a, Hashable a) => [x] -> Assoc x a -> Assoc x a
+assocRemoveAllInc :: (Coercible x Int, Ord a) => [x] -> Assoc x a -> Assoc x a
 assocRemoveAllInc xs (Assoc fwd0 bwd0 equiv0) = Assoc fwdFinal bwdFinal equivFinal
  where
   (remap, equivFinal) = efRemoveAllInc xs equiv0
@@ -243,22 +238,22 @@ assocRemoveAllInc xs (Assoc fwd0 bwd0 equiv0) = Assoc fwdFinal bwdFinal equivFin
           -- Singleton root, delete
           Nothing ->
             let fwd' = ILM.delete x fwd
-                bwd' = HashMap.delete a bwd
+                bwd' = Map.delete a bwd
             in  (fwd', bwd')
           -- Remapped root, rotate
           Just y ->
             let fwd' = ILM.delete x (ILM.insert y a fwd)
-                bwd' = HashMap.insert a y bwd
+                bwd' = Map.insert a y bwd
             in  (fwd', bwd')
 
 -- | Removes the given keys from the assoc (state version).
 -- Values will only be removed from the assoc if the key is a singleton root.
 -- If a key is not found, it is simply ignored.
-assocRemoveAll :: (Coercible x Int, Eq a, Hashable a) => [x] -> State (Assoc x a) ()
+assocRemoveAll :: (Coercible x Int, Ord a) => [x] -> State (Assoc x a) ()
 assocRemoveAll = modify' . assocRemoveAllInc
 
 -- | Join two assocs (uses the first as the base)
-assocUnion :: (Coercible x Int, Ord x, Eq a, Hashable a) => Assoc x a -> Assoc x a -> Assoc x a
+assocUnion :: (Coercible x Int, Ord x, Ord a) => Assoc x a -> Assoc x a -> Assoc x a
 assocUnion base (Assoc fwd _ equiv) = Assoc fwdFinal bwdFinal equivFinal
  where
   goRoots assocGo (x, a) = snd (assocInsertInc x a assocGo)
@@ -267,8 +262,8 @@ assocUnion base (Assoc fwd _ equiv) = Assoc fwdFinal bwdFinal equivFinal
   equivFinal = foldl' goLeaves equivMid (ILM.toList (efBwd equiv))
 
 -- | Returns the footprint of the given value - all keys that map to it (root and leaf)
-assocFootprint :: (Coercible x Int, Eq a, Hashable a) => a -> Assoc x a -> IntLikeSet x
+assocFootprint :: (Coercible x Int, Ord a) => a -> Assoc x a -> IntLikeSet x
 assocFootprint a (Assoc _ bwd equiv) =
-  case HashMap.lookup a bwd of
+  case Map.lookup a bwd of
     Nothing -> ILS.empty
     Just r -> efEquivs r equiv

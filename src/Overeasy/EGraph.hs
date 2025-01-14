@@ -41,7 +41,6 @@ import Control.Monad (unless, void)
 import Control.Monad.State.Strict (State, gets, modify', state)
 import Data.Foldable (foldl', toList)
 import Data.Functor.Foldable (project)
-import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (maybeToList)
 import Data.Semigroup (sconcat)
@@ -90,14 +89,14 @@ import Overeasy.Util (Changed (..), RecursiveWhole, foldWholeM, stateFold)
 -- Num instance for literals only.
 newtype EClassId = EClassId {unEClassId :: Int}
   deriving stock (Show)
-  deriving newtype (Eq, Ord, Enum, Hashable, NFData, Num)
+  deriving newtype (Eq, Ord, Enum, NFData, Num)
 
 -- | An opaque node id
 -- Constructor exported for coercibility.
 -- Num instance for literals only.
 newtype ENodeId = ENodeId {unENodeId :: Int}
   deriving stock (Show)
-  deriving newtype (Eq, Ord, Enum, Hashable, NFData, Num)
+  deriving newtype (Eq, Ord, Enum, NFData, Num)
 
 -- | The definition of an 'EGraph' analysis.
 -- 'd' must be a join semilattice.
@@ -195,13 +194,13 @@ egClassInfo c = ILM.lookup c . egClassMap
 
 -- | Find the class of the given node, if it exists.
 -- Note that you may have to canonicalize first to find it!
-egFindNode :: (Eq (f EClassId), Hashable (f EClassId)) => f EClassId -> EGraph d f -> Maybe EClassId
+egFindNode :: (Ord (f EClassId)) => f EClassId -> EGraph d f -> Maybe EClassId
 egFindNode fc eg = do
   n <- assocLookupByValue fc (egNodeAssoc eg)
   ILM.lookup n (egHashCons eg)
 
 -- | Find the class of the given term, if it exists
-egFindTerm :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId)) => t -> EGraph d f -> Maybe EClassId
+egFindTerm :: (RecursiveWhole t f, Traversable f, Ord (f EClassId)) => t -> EGraph d f -> Maybe EClassId
 egFindTerm t eg = foldWholeM (`egFindNode` eg) t
 
 -- | Creates a new 'EGraph'
@@ -214,19 +213,20 @@ egClasses = gets (ILM.keysSet . egClassMap)
 
 -- | Find the canonical form of a node.
 -- If any classes are missing, the first missing is returned.
-egCanonicalize :: Traversable f => f EClassId -> State (EGraph d f) (Either EClassId (f EClassId))
+egCanonicalize :: (Traversable f) => f EClassId -> State (EGraph d f) (Either EClassId (f EClassId))
 egCanonicalize fc = gets (efCanonicalize fc . egEquivFind)
 
 -- | Find the canonical form of a node.
 -- If any classes are missing, simply skip them.
-egCanonicalizePartial :: Traversable f => f EClassId -> State (EGraph d f) (f EClassId)
+egCanonicalizePartial :: (Traversable f) => f EClassId -> State (EGraph d f) (f EClassId)
 egCanonicalizePartial fc = gets (efCanonicalizePartial fc . egEquivFind)
 
 -- private
 -- Variant of canonicalization used in rebuilding - updates node assocs and returns
 -- 1. New canonical node id (could be the same)
 -- 2. Maybe a set of node ids to delete (no longer canonical)
-egCanonicalizeInternal :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => ENodeId -> State (EGraph d f) (ENodeId, Maybe (IntLikeSet ENodeId))
+egCanonicalizeInternal
+  :: (Traversable f, Ord (f EClassId)) => ENodeId -> State (EGraph d f) (ENodeId, Maybe (IntLikeSet ENodeId))
 egCanonicalizeInternal x = state $ \eg ->
   let ef = egEquivFind eg
       assoc = egNodeAssoc eg
@@ -252,7 +252,11 @@ instance Monoid (AddNodeRes d) where
   mappend = (<>)
 
 -- private
-egAddNodeSub :: (Functor f, Eq (f EClassId), Hashable (f EClassId), Hashable (f ())) => EAnalysis d f -> f (ENodeTriple d) -> State (EGraph d f) (Changed, ENodeTriple d)
+egAddNodeSub
+  :: (Functor f, Ord (f EClassId))
+  => EAnalysis d f
+  -> f (ENodeTriple d)
+  -> State (EGraph d f) (Changed, ENodeTriple d)
 egAddNodeSub ana fcd = do
   let fc = fmap entClass fcd
   -- important: node should already be canonicalized!
@@ -278,11 +282,23 @@ egAddNodeSub ana fcd = do
           d = ana (fmap entData fcd)
           eci = EClassInfo d (assocSingleton n (void fcd)) ILS.empty
           classMap' = ILM.insert x eci (egClassMap eg)
-          eg' = eg {egNodeSource = nodeSource', egClassSource = classSource', egEquivFind = ef', egNodeAssoc = assoc', egHashCons = hc', egClassMap = classMap'}
+          eg' =
+            eg
+              { egNodeSource = nodeSource'
+              , egClassSource = classSource'
+              , egEquivFind = ef'
+              , egNodeAssoc = assoc'
+              , egHashCons = hc'
+              , egClassMap = classMap'
+              }
       in  ((ChangedYes, ENodeTriple n x d), eg')
 
 -- private
-egAddTermSub :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId), Hashable (f ())) => EAnalysis d f -> t -> State (EGraph d f) (AddNodeRes d, ENodeTriple d)
+egAddTermSub
+  :: (RecursiveWhole t f, Traversable f, Ord (f EClassId))
+  => EAnalysis d f
+  -> t
+  -> State (EGraph d f) (AddNodeRes d, ENodeTriple d)
 egAddTermSub ana = go
  where
   go t = do
@@ -299,13 +315,22 @@ egAddTermSub ana = go
     unless (Seq.null children) $
       modify' $ \eg ->
         -- Add node to class parents (unless it's a self parent)
-        let cm' = foldl' (\cm (ENodeTriple _ c _) -> ILM.adjust (\v -> if assocMember n (eciNodes v) then v else v {eciParents = ILS.insert n (eciParents v)}) c cm) (egClassMap eg) children
+        let cm' =
+              foldl'
+                ( \cm (ENodeTriple _ c _) -> ILM.adjust (\v -> if assocMember n (eciNodes v) then v else v {eciParents = ILS.insert n (eciParents v)}) c cm
+                )
+                (egClassMap eg)
+                children
         in  eg {egClassMap = cm'}
     pure (AddNodeRes (changed1 <> changed2) (Seq.singleton z), z)
 
 -- | Adds a term (recursively) to the graph. If already in the graph, returns 'ChangedNo' and existing class id. Otherwise
 -- returns 'ChangedYes' and a new class id.
-egAddTerm :: (RecursiveWhole t f, Traversable f, Eq (f EClassId), Hashable (f EClassId), Hashable (f ())) => EAnalysis d f -> t -> State (EGraph d f) (Changed, EClassId)
+egAddTerm
+  :: (RecursiveWhole t f, Traversable f, Ord (f EClassId))
+  => EAnalysis d f
+  -> t
+  -> State (EGraph d f) (Changed, EClassId)
 egAddTerm ana t = fmap (\(AddNodeRes c _, ENodeTriple _ x _) -> (c, x)) (egAddTermSub ana t)
 
 -- | Merges two classes:
@@ -313,7 +338,7 @@ egAddTerm ana t = fmap (\(AddNodeRes c _, ENodeTriple _ x _) -> (c, x)) (egAddTe
 -- Otherwise returns the class remapping.
 -- Note that it's MUCH more efficient to accumulate a 'WorkList' and use 'egMergeMany'.
 egMerge
-  :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Eq (f ()), Hashable (f ()))
+  :: (Semigroup d, Traversable f, Ord (f EClassId), Ord (f ()))
   => EClassId
   -> EClassId
   -> State (EGraph d f) (MergeResult EClassId)
@@ -367,7 +392,7 @@ egBuildWorklist = go Empty
 -- Also note that the analysis of a given class is going to be an UNDER-APPROXIMATION
 -- of the true analysis value, because per-node analyses are not recomputed.
 egMergeMany
-  :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Eq (f ()), Hashable (f ()))
+  :: (Semigroup d, Traversable f, Ord (f EClassId), Ord (f ()))
   => WorkList
   -> State (EGraph d f) (MergeResult (ClassReplacements, IntLikeSet EClassId))
 egMergeMany wl0 = do
@@ -409,7 +434,12 @@ egRebuildHashCons classRemap =
 -- Return pair of
 -- 1. Set of parent class ids that can observe changes (i.e. need recanonicalization/reanalysis)
 -- 2. Worklist of induced parent equalities found by recanonicalization
-egRebuildAssoc :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => IntLikeMap ENodeId EClassId -> IntLikeMap EClassId EClassId -> IntLikeSet EClassId -> State (EGraph d f) (IntLikeSet EClassId, WorkList)
+egRebuildAssoc
+  :: (Traversable f, Ord (f EClassId))
+  => IntLikeMap ENodeId EClassId
+  -> IntLikeMap EClassId EClassId
+  -> IntLikeSet EClassId
+  -> State (EGraph d f) (IntLikeSet EClassId, WorkList)
 egRebuildAssoc origHc classRemap touchedClasses = do
   hc <- gets egHashCons
   cm <- gets egClassMap
@@ -440,7 +470,12 @@ egRebuildAssoc origHc classRemap touchedClasses = do
 
 -- private
 -- One round of rebuilding
-egRebuildNodeRound :: (Traversable f, Eq (f EClassId), Hashable (f EClassId)) => IntLikeMap ENodeId EClassId -> WorkList -> IntLikeSet EClassId -> State (EGraph d f) (IntLikeSet EClassId, WorkList, IntLikeSet EClassId)
+egRebuildNodeRound
+  :: (Traversable f, Ord (f EClassId))
+  => IntLikeMap ENodeId EClassId
+  -> WorkList
+  -> IntLikeSet EClassId
+  -> State (EGraph d f) (IntLikeSet EClassId, WorkList, IntLikeSet EClassId)
 egRebuildNodeRound origHc wl parents = do
   -- First merge all classes together and get merged class sets
   (classRemap, classClosure) <- egRebuildMerge wl
@@ -458,7 +493,12 @@ egRebuildNodeRound origHc wl parents = do
 
 -- private
 -- Rebuild just the class info corresponding to 'newClass'
-egRebuildClassSingle :: (Semigroup d, Eq (f ()), Hashable (f ())) => EClassId -> IntLikeSet EClassId -> IntLikeMap EClassId (EClassInfo d f) -> IntLikeMap EClassId (EClassInfo d f)
+egRebuildClassSingle
+  :: (Semigroup d, Ord (f ()))
+  => EClassId
+  -> IntLikeSet EClassId
+  -> IntLikeMap EClassId (EClassInfo d f)
+  -> IntLikeMap EClassId (EClassInfo d f)
 egRebuildClassSingle newClass oldClasses initCm =
   let EClassInfo rootData rootNodes rootParents = ILM.partialLookup newClass initCm
       finalData = sconcat (rootData :| fmap (\c -> eciData (ILM.partialLookup c initCm)) (ILS.toList oldClasses))
@@ -475,7 +515,7 @@ egRebuildClassSingle newClass oldClasses initCm =
 -- private
 -- Rebuilds the classmap: merges old class infos into root class infos
 -- Returns list of modified root classes
-egRebuildClassMap :: (Semigroup d, Eq (f ()), Hashable (f ())) => IntLikeSet EClassId -> State (EGraph d f) ClassReplacements
+egRebuildClassMap :: (Semigroup d, Ord (f ())) => IntLikeSet EClassId -> State (EGraph d f) ClassReplacements
 egRebuildClassMap touchedClasses = state $ \eg ->
   let ef = egEquivFind eg
       -- Find roots corresponding to all touched classes
@@ -492,7 +532,10 @@ egRebuildClassMap touchedClasses = state $ \eg ->
 -- Returns
 -- 1. class remapping (roots -> removed classes)
 -- 2. touched root classes
-egRebuild :: (Semigroup d, Traversable f, Eq (f EClassId), Hashable (f EClassId), Eq (f ()), Hashable (f ())) => WorkList -> State (EGraph d f) (ClassReplacements, IntLikeSet EClassId)
+egRebuild
+  :: (Semigroup d, Traversable f, Ord (f EClassId), Ord (f ()))
+  => WorkList
+  -> State (EGraph d f) (ClassReplacements, IntLikeSet EClassId)
 egRebuild wl0 = goRec
  where
   goRec = do
@@ -526,20 +569,20 @@ egCompactParentClass nodeReplacements (EClassInfo dat nodes parents) =
 
 -- private
 -- Remove dead nodes from given class info
-egCompactSelfClass :: (Eq (f ()), Hashable (f ())) => IntLikeMap ENodeId ENodeId -> EClassInfo d f -> EClassInfo d f
+egCompactSelfClass :: (Ord (f ())) => IntLikeMap ENodeId ENodeId -> EClassInfo d f -> EClassInfo d f
 egCompactSelfClass nodeReplacements (EClassInfo dat nodes parents) =
   EClassInfo dat (assocRemoveAllInc (ILM.keys nodeReplacements) nodes) parents
 
 -- private
 -- Find all classes that have dead nodes
-findDeadNodeParentClasses :: Foldable f => Assoc ENodeId (f EClassId) -> [ENodeId] -> IntLikeSet EClassId
+findDeadNodeParentClasses :: (Foldable f) => Assoc ENodeId (f EClassId) -> [ENodeId] -> IntLikeSet EClassId
 findDeadNodeParentClasses assoc = foldl' go ILS.empty
  where
   go s n = foldl' (flip ILS.insert) s (assocPartialLookupByKey n assoc)
 
 -- private
 -- Remove all dead nodes and classes from the graph
-egCompactInc :: (Foldable f, Eq (f ()), Hashable (f ())) => ClassReplacements -> EGraph d f -> EGraph d f
+egCompactInc :: (Foldable f, Ord (f ())) => ClassReplacements -> EGraph d f -> EGraph d f
 egCompactInc rm eg =
   let ef = egEquivFind eg
       assoc = egNodeAssoc eg
@@ -565,7 +608,7 @@ egCompactInc rm eg =
   in  eg {egEquivFind = ef', egNodeAssoc = assoc', egClassMap = cm''', egHashCons = hc'}
 
 -- private
-egCompact :: (Foldable f, Eq (f ()), Hashable (f ())) => ClassReplacements -> State (EGraph d f) ()
+egCompact :: (Foldable f, Ord (f ())) => ClassReplacements -> State (EGraph d f) ()
 egCompact = modify' . egCompactInc
 
 -- | Reanalyze a subset of classes - touched roots from merging is sufficient to ensure

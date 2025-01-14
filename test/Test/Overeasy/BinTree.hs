@@ -8,20 +8,18 @@ module Test.Overeasy.BinTree
   )
 where
 
-import Control.Applicative (liftA2)
 import Control.DeepSeq (NFData)
 import Data.Bifoldable (Bifoldable (..))
 import Data.Bifunctor (Bifunctor (..))
 import Data.Bitraversable (Bitraversable (..))
 import Data.Functor.Foldable (Base, Corecursive (..), Recursive (..))
-import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
 
 data BinTreeF a r
   = BinTreeLeafF !a
   | BinTreeBranchF r r
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Generic)
-  deriving anyclass (Hashable, NFData)
+  deriving anyclass (NFData)
 
 instance Bifunctor BinTreeF where
   bimap f g = \case
@@ -39,7 +37,7 @@ instance Bitraversable BinTreeF where
     BinTreeBranchF x y -> liftA2 BinTreeBranchF (g x) (g y)
 
 newtype BinTree a = BinTree {unBinTree :: BinTreeF a (BinTree a)}
-  deriving newtype (Eq, Ord, Show, Hashable, NFData)
+  deriving newtype (Eq, Ord, Show, NFData)
 
 pattern BinTreeLeaf :: a -> BinTree a
 pattern BinTreeLeaf a = BinTree (BinTreeLeafF a)

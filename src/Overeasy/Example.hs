@@ -11,14 +11,13 @@ module Overeasy.Example
   )
 where
 
+import Bowtie.Free (pattern FreeEmbed, pattern FreePure)
 import Control.DeepSeq (NFData)
 import Control.Monad.State.Strict (execState)
 import Data.Functor.Foldable.TH (makeBaseFunctor)
-import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
 import Overeasy.EGraph (EClassId (..), EGraph, egAddTerm, egMerge, egNew, noAnalysis)
 import Overeasy.Matching (Pat, match)
-import Unfree (pattern FreeEmbed, pattern FreePure)
 
 -- | Arithmetic expressions.
 -- 'ArithF' is the base functor for this type.
@@ -29,20 +28,20 @@ data Arith
   | ArithShiftR Arith !Int
   | ArithConst !Int
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Hashable, NFData)
+  deriving anyclass (NFData)
 
 -- Generates 'ArithF' and other recursion-schemes boilerplate
 makeBaseFunctor ''Arith
 
-deriving stock instance Eq a => Eq (ArithF a)
+deriving stock instance (Eq a) => Eq (ArithF a)
 
-deriving stock instance Show a => Show (ArithF a)
+deriving stock instance (Ord a) => Ord (ArithF a)
+
+deriving stock instance (Show a) => Show (ArithF a)
 
 deriving stock instance Generic (ArithF a)
 
-deriving anyclass instance Hashable a => Hashable (ArithF a)
-
-deriving anyclass instance NFData a => NFData (ArithF a)
+deriving anyclass instance (NFData a) => NFData (ArithF a)
 
 -- | Creates a simple e-graph with the equality `2 + 2 = 4`.
 exampleGraph :: EGraph () ArithF

@@ -97,15 +97,15 @@ efNew :: EquivFind x
 efNew = EquivFind ILM.empty ILM.empty
 
 -- | Creates a singleton equiv
-efSingleton :: Coercible x Int => x -> EquivFind x
+efSingleton :: (Coercible x Int) => x -> EquivFind x
 efSingleton x = EquivFind (ILM.singleton x ILS.empty) ILM.empty
 
 -- private
-allocMM :: Coercible x Int => x -> IntLikeMap x (IntLikeSet x) -> IntLikeMap x (IntLikeSet x)
+allocMM :: (Coercible x Int) => x -> IntLikeMap x (IntLikeSet x) -> IntLikeMap x (IntLikeSet x)
 allocMM = ILM.alter (<|> Just ILS.empty)
 
 -- private
-insertMM :: Coercible x Int => x -> x -> IntLikeMap x (IntLikeSet x) -> IntLikeMap x (IntLikeSet x)
+insertMM :: (Coercible x Int) => x -> x -> IntLikeMap x (IntLikeSet x) -> IntLikeMap x (IntLikeSet x)
 insertMM x y = ILM.alter (\case Nothing -> Just (ILS.singleton y); Just s -> Just (ILS.insert y s)) x
 
 -- | Result of adding something to the equiv, if you're interested.
@@ -117,7 +117,7 @@ data EquivAddRes x
   deriving anyclass (NFData)
 
 -- | Add the given key to the equiv (raw version).
-efAddInc :: Coercible x Int => x -> EquivFind x -> (EquivAddRes x, EquivFind x)
+efAddInc :: (Coercible x Int) => x -> EquivFind x -> (EquivAddRes x, EquivFind x)
 efAddInc x ef@(EquivFind fwd bwd) =
   case ILM.lookup x bwd of
     Nothing ->
@@ -127,28 +127,28 @@ efAddInc x ef@(EquivFind fwd bwd) =
     Just y -> (EquivAddResAlreadyLeafOf y, ef)
 
 -- | Add the given key to the equiv (raw version).
-efAdd :: Coercible x Int => x -> State (EquivFind x) (EquivAddRes x)
+efAdd :: (Coercible x Int) => x -> State (EquivFind x) (EquivAddRes x)
 efAdd = state . efAddInc
 
 -- | All keys equivalent to the given key in the equiv.
 -- Always returns a set with the given key, even if it's not present.
-efEquivs :: Coercible x Int => x -> EquivFind x -> IntLikeSet x
+efEquivs :: (Coercible x Int) => x -> EquivFind x -> IntLikeSet x
 efEquivs x ef = let r = efLookupRoot x ef in ILS.insert r (efLookupLeaves r ef)
 
 -- | Set of all keys equivalent to the given keys in the equiv.
-efClosure :: Coercible x Int => [x] -> EquivFind x -> IntLikeSet x
+efClosure :: (Coercible x Int) => [x] -> EquivFind x -> IntLikeSet x
 efClosure xs ef = foldl' (\c x -> if ILS.member x c then c else ILS.union (efEquivs x ef) c) ILS.empty xs
 
 -- | Find the root equivalent to the given key (if it exists).
-efFindRoot :: Coercible x Int => x -> EquivFind x -> Maybe x
+efFindRoot :: (Coercible x Int) => x -> EquivFind x -> Maybe x
 efFindRoot x ef = ILM.lookup x (efBwd ef) <|> if ILM.member x (efFwd ef) then Just x else Nothing
 
 -- | Find the leaves equivalent to the given key (if they exist).
-efFindLeaves :: Coercible x Int => x -> EquivFind x -> Maybe (IntLikeSet x)
+efFindLeaves :: (Coercible x Int) => x -> EquivFind x -> Maybe (IntLikeSet x)
 efFindLeaves x ef = ILM.lookup x (efFwd ef)
 
 -- | Returns an EquivFind subset representing the given list of keys.
-efSubset :: Coercible x Int => [x] -> EquivFind x -> EquivFind x
+efSubset :: (Coercible x Int) => [x] -> EquivFind x -> EquivFind x
 efSubset xs0 ef0 = foldl' go efNew xs0
  where
   go (EquivFind fwd1 bwd1) x =
@@ -157,16 +157,16 @@ efSubset xs0 ef0 = foldl' go efNew xs0
     in  EquivFind (ILM.insert r ls fwd1) (foldl' (\b l -> ILM.insert l r b) bwd1 (ILS.toList ls))
 
 -- | Like 'efFindRoot' but returns same key if not found - does not guarantee presence in map.
-efLookupRoot :: Coercible x Int => x -> EquivFind x -> x
+efLookupRoot :: (Coercible x Int) => x -> EquivFind x -> x
 efLookupRoot x = fromMaybe x . ILM.lookup x . efBwd
 
 -- | Like 'efFindLeaves' but returns empty set if not found - does not guarantee presence in map.
-efLookupLeaves :: Coercible x Int => x -> EquivFind x -> IntLikeSet x
+efLookupLeaves :: (Coercible x Int) => x -> EquivFind x -> IntLikeSet x
 efLookupLeaves x = fromMaybe ILS.empty . ILM.lookup x . efFwd
 
 -- | Returns the set of roots for the given set of keys, or an error with the first key
 -- not found in the equiv.
-efFindAll :: Coercible x Int => [x] -> EquivFind x -> Either x (IntLikeSet x)
+efFindAll :: (Coercible x Int) => [x] -> EquivFind x -> Either x (IntLikeSet x)
 efFindAll xs ef = go ILS.empty xs
  where
   go !acc = \case
@@ -177,19 +177,19 @@ efFindAll xs ef = go ILS.empty xs
         Just z -> go (ILS.insert z acc) ys
 
 -- | Is the key in the equiv?
-efMember :: Coercible x Int => x -> EquivFind x -> Bool
+efMember :: (Coercible x Int) => x -> EquivFind x -> Bool
 efMember x (EquivFind fwd bwd) = ILM.member x fwd || ILM.member x bwd
 
 -- | List all roots in the equiv.
-efRoots :: Coercible x Int => EquivFind x -> [x]
+efRoots :: (Coercible x Int) => EquivFind x -> [x]
 efRoots = ILM.keys . efFwd
 
 -- | List all leaves in the equiv.
-efLeaves :: Coercible x Int => EquivFind x -> [x]
+efLeaves :: (Coercible x Int) => EquivFind x -> [x]
 efLeaves = ILM.keys . efBwd
 
 -- | List all members (roots and leaves) in the equiv.
-efMembers :: Coercible x Int => EquivFind x -> [x]
+efMembers :: (Coercible x Int) => EquivFind x -> [x]
 efMembers ef = efRoots ef ++ efLeaves ef
 
 -- | The result of trying to merge two keys, if you care.
@@ -249,7 +249,7 @@ data EquivMergeSetsRes x
   deriving anyclass (NFData)
 
 -- | Merge sets of keys (raw version).
-efMergeSetsInc :: Coercible x Int => [IntLikeSet x] -> EquivFind x -> EquivMergeSetsRes x
+efMergeSetsInc :: (Coercible x Int) => [IntLikeSet x] -> EquivFind x -> EquivMergeSetsRes x
 efMergeSetsInc css0 u0 = res
  where
   res =
@@ -279,7 +279,7 @@ efMergeSetsInc css0 u0 = res
               in  go newRoots newClassRemapSet newU dss
 
 -- | Merge sets of keys (state version).
-efMergeSets :: Coercible x Int => [IntLikeSet x] -> State (EquivFind x) (Maybe (IntLikeSet x, IntLikeSet x))
+efMergeSets :: (Coercible x Int) => [IntLikeSet x] -> State (EquivFind x) (Maybe (IntLikeSet x, IntLikeSet x))
 efMergeSets css = state $ \ef ->
   case efMergeSetsInc css ef of
     EquivMergeSetsResChanged roots classRemapSet ef' -> (Just (roots, classRemapSet), ef')
@@ -290,7 +290,7 @@ efCanCompact :: EquivFind x -> Bool
 efCanCompact = not . ILM.null . efBwd
 
 -- | See 'efCompact' (this is the raw version).
-efCompactInc :: Coercible x Int => EquivFind x -> (IntLikeMap x (IntLikeSet x), EquivFind x)
+efCompactInc :: (Coercible x Int) => EquivFind x -> (IntLikeMap x (IntLikeSet x), EquivFind x)
 efCompactInc (EquivFind origFwd origBwd) = finalRes
  where
   finalRes =
@@ -304,11 +304,11 @@ efCompactInc (EquivFind origFwd origBwd) = finalRes
         in  (ILM.insert r xs rootMap, if ILS.null xs then fwd else ILM.insert r ILS.empty fwd)
 
 -- | Removes leaves and returns map of root to deleted leaf.
-efCompact :: Coercible x Int => State (EquivFind x) (IntLikeMap x (IntLikeSet x))
+efCompact :: (Coercible x Int) => State (EquivFind x) (IntLikeMap x (IntLikeSet x))
 efCompact = state efCompactInc
 
 -- | See 'efRemoveAll' (this is the raw version).
-efRemoveAllInc :: Coercible x Int => [x] -> EquivFind x -> (IntLikeMap x x, EquivFind x)
+efRemoveAllInc :: (Coercible x Int) => [x] -> EquivFind x -> (IntLikeMap x x, EquivFind x)
 efRemoveAllInc xs (EquivFind fwd0 bwd0) = (remapFinal, EquivFind fwdFinal bwdFinal)
  where
   (fwdFinal, bwdFinal, remapFinal) = foldl' go (fwd0, bwd0, ILM.empty) xs
@@ -345,13 +345,13 @@ efRemoveAllInc xs (EquivFind fwd0 bwd0) = (remapFinal, EquivFind fwdFinal bwdFin
 -- If it is a root of a larger class, select the min leaf and make it root.
 -- Returns a map of old roots to new roots (only those changed in the process -
 -- possibly empty). If a key is not found, it is simply ignored.
-efRemoveAll :: Coercible x Int => [x] -> State (EquivFind x) (IntLikeMap x x)
+efRemoveAll :: (Coercible x Int) => [x] -> State (EquivFind x) (IntLikeMap x x)
 efRemoveAll = state . efRemoveAllInc
 
 -- | Given root, add leaf. Requires that root be present in the map
 -- and that leaf would be picked as a leaf. (Therefore, unsafe.)
 -- Exposed for efficient merging.
-efUnsafeAddLeafInc :: Coercible x Int => x -> x -> EquivFind x -> EquivFind x
+efUnsafeAddLeafInc :: (Coercible x Int) => x -> x -> EquivFind x -> EquivFind x
 efUnsafeAddLeafInc root leaf ef@(EquivFind fwd bwd) =
   let trueRoot = efLookupRoot root ef
   in  EquivFind (ILM.adjust (ILS.insert leaf) trueRoot fwd) (ILM.insert leaf trueRoot bwd)

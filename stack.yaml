@@ -1,4 +1,4 @@
-resolver: lts-20.17
+resolver: lts-23.3
 
 ghc-options:
   "$everything": -haddock
@@ -7,6 +7,6 @@ packages:
 - .
 
 extra-deps:
-- int-like-0.1.1
-- prop-unit-0.1.1
-- unfree-0.1.0
+- bowtie-0.5.0
+- int-like-0.1.4
+- prop-unit-1.0.1
